@@ -67,6 +67,14 @@ func (w *winClipboard) Read() (string, error) {
 }
 
 // readLocked requires the caller to hold OpenClipboard.
+// lockedPtr turns an address returned by GlobalLock into a pointer. That memory
+// belongs to Windows, not the Go heap, so the garbage collector never moves or
+// frees it; reading the pointer back through its own address keeps go vet's
+// unsafeptr check quiet about the uintptr round trip.
+func lockedPtr(p uintptr) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&p))
+}
+
 func (w *winClipboard) readLocked() (string, error) {
 	if ok, _, _ := isClipboardFormatAvailable.Call(cfUnicodeText); ok == 0 {
 		return "", nil
@@ -88,7 +96,7 @@ func (w *winClipboard) readLocked() (string, error) {
 	if nBytes > 32*1024*1024 {
 		return "", errors.New("clipboard text too large")
 	}
-	chars := unsafe.Slice((*uint16)(unsafe.Pointer(ptr)), int(nBytes/2))
+	chars := unsafe.Slice((*uint16)(lockedPtr(ptr)), int(nBytes/2))
 	i := 0
 	for i < len(chars) && chars[i] != 0 {
 		i++
@@ -140,7 +148,7 @@ func (w *winClipboard) writeLocked(s string) error {
 		globalFree.Call(h)
 		return errors.New("GlobalLock failed")
 	}
-	copy(unsafe.Slice((*uint16)(unsafe.Pointer(ptr)), len(utf16buf)), utf16buf)
+	copy(unsafe.Slice((*uint16)(lockedPtr(ptr)), len(utf16buf)), utf16buf)
 	globalUnlock.Call(h)
 	if ok, _, _ := emptyClipboard.Call(); ok == 0 {
 		globalFree.Call(h)

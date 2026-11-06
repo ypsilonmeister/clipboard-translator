@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon.png" alt="Clipboard Translator icon" width="128"></p>
+
 # clipboard-translator
 
 Japanese <-> English clipboard translator for Windows. Select text, press
@@ -54,6 +56,28 @@ go build -ldflags "-H=windowsgui -s -w" -o ClipboardTranslator.exe .
 # Debug build: keeps the console and prints the log to it
 go build -o ClipboardTranslator.exe .
 ```
+
+The icon and the version info shown in Explorer are linked in from
+`resource_windows_amd64.syso`, which the Go toolchain picks up automatically.
+It is generated with the standard library only:
+
+```powershell
+go run ./tools/mkicon                    # assets/icon-source.jpg -> assets/icon.ico, assets/icon.png
+go run ./tools/mksyso -version 0.4.1     # assets/icon.ico + version -> resource_windows_amd64.syso
+```
+
+The committed `.syso` carries the version of the last release; the release
+workflow regenerates it from the tag.
+
+## Continuous integration and releases
+
+- `.github/workflows/ci.yml` runs `gofmt`, `go vet`, `go test` and a release-flag
+  build on Windows for every push to `main` and every pull request, and checks
+  that the non-Windows stubs still compile.
+- Pushing a tag such as `v0.5.0` runs `.github/workflows/release.yml`: it builds
+  the exe with the tag as its version, packages
+  `Portable-Clipboard-Translator-Windows-x64-<tag>.zip` and attaches it to the
+  GitHub release (an existing release for the tag only gets the zip).
 
 ## Configuration
 

@@ -33,6 +33,10 @@ const (
 	niifNoSound = 0x10
 
 	idiApplication = 32512
+	appIconID      = 1 // RT_GROUP_ICON id written by tools/mksyso
+	imageIcon      = 1
+	smCxSmIcon     = 49
+	smCySmIcon     = 50
 	swShowNormal   = 1
 	mbOK           = 0x0
 	mbIconError    = 0x10
@@ -57,6 +61,8 @@ var (
 	defWindowProcW       = user32.NewProc("DefWindowProcW")
 	dispatchMessageW     = user32.NewProc("DispatchMessageW")
 	loadIconW            = user32.NewProc("LoadIconW")
+	loadImageW           = user32.NewProc("LoadImageW")
+	getSystemMetrics     = user32.NewProc("GetSystemMetrics")
 	createPopupMenu      = user32.NewProc("CreatePopupMenu")
 	appendMenuW          = user32.NewProc("AppendMenuW")
 	trackPopupMenu       = user32.NewProc("TrackPopupMenu")
@@ -149,6 +155,19 @@ func newTray(logPath string) Tray {
 	return t
 }
 
+// loadAppIcon returns the icon embedded in the executable at the size the tray
+// uses (it follows the display scaling). A build without the resource (for
+// example without resource_windows_amd64.syso) gets the stock application icon.
+func loadAppIcon(hInst uintptr) uintptr {
+	cx, _, _ := getSystemMetrics.Call(smCxSmIcon)
+	cy, _, _ := getSystemMetrics.Call(smCySmIcon)
+	if h, _, _ := loadImageW.Call(hInst, appIconID, imageIcon, cx, cy, 0); h != 0 {
+		return h
+	}
+	h, _, _ := loadIconW.Call(0, idiApplication)
+	return h
+}
+
 func (t *winTray) init() error {
 	hInst, _, _ := getModuleHandleW.Call(0)
 	className := u16("ClipboardTranslatorTray")
@@ -169,7 +188,7 @@ func (t *winTray) init() error {
 		return err
 	}
 	t.hwnd = hwnd
-	t.icon, _, _ = loadIconW.Call(0, idiApplication)
+	t.icon = loadAppIcon(hInst)
 	m, _, _ := registerWindowMsgW.Call(uintptr(unsafe.Pointer(u16("TaskbarCreated"))))
 	t.taskbarCreated = uint32(m)
 	activeTray = t
