@@ -1,0 +1,12 @@
+# Build output
+*.exe
+dist/
+
+# Downloaded by Setup.cmd (large, third-party, own licenses)
+models/
+runtime/
+
+# Runtime files
+*.log
+STOP
+*.partial
