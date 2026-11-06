@@ -43,24 +43,31 @@ func (a autostartStore) open(access uint32) (uintptr, bool) {
 // A value pointing at another location (e.g. the folder was moved) counts as
 // disabled, so toggling it on repairs the path.
 func (a autostartStore) Enabled(command string) bool {
-	h, ok := a.open(keyQueryValue)
-	if !ok {
-		return false
+	v, ok := a.Get()
+	return ok && v == command
+}
+
+// Get reads the value as a string. ok is false when the key or value is
+// missing or is not a REG_SZ.
+func (a autostartStore) Get() (value string, ok bool) {
+	h, opened := a.open(keyQueryValue)
+	if !opened {
+		return "", false
 	}
 	defer regCloseKey.Call(h)
 	name := uintptr(unsafe.Pointer(u16(a.name)))
 	var typ, size uint32
 	r, _, _ := regQueryValueExW.Call(h, name, 0, uintptr(unsafe.Pointer(&typ)), 0, uintptr(unsafe.Pointer(&size)))
 	if r != 0 || typ != regSZ || size == 0 {
-		return false
+		return "", false
 	}
 	buf := make([]uint16, size/2+1)
 	size = uint32(len(buf) * 2)
 	r, _, _ = regQueryValueExW.Call(h, name, 0, uintptr(unsafe.Pointer(&typ)), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)))
 	if r != 0 {
-		return false
+		return "", false
 	}
-	return syscall.UTF16ToString(buf[:size/2]) == command
+	return syscall.UTF16ToString(buf[:size/2]), true
 }
 
 // Set creates or overwrites the value with command.

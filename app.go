@@ -25,6 +25,14 @@ type app struct {
 	sup      *supervisor
 	limiter  restartLimiter
 	readyTip string
+
+	hotkey    Hotkey
+	newHotkey func(spec string) (Hotkey, error) // newHotkey, replaceable in tests
+	showErr   func(msg string)                  // showError, replaceable in tests
+
+	updates  chan updateResult
+	checking bool
+	latest   releaseInfo // newest release seen by "Check for updates"
 }
 
 func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Writer) *app {
@@ -36,7 +44,12 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 		tray:     tray,
 		limiter:  restartLimiter{max: 3, window: 10 * time.Minute},
 		readyTip: "Clipboard Translator - ready (" + conf.Hotkey + ")",
+
+		newHotkey: newHotkey,
+		showErr:   showError,
+		updates:   make(chan updateResult, 1),
 	}
+	tray.SetMenu(a.buildMenu)
 	a.sup = &supervisor{
 		model: paths.model, template: paths.template,
 		contextTokens: conf.ContextTokens, port: conf.Port, endpoint: a.endpoint,
@@ -59,7 +72,7 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 func (a *app) failed(err error) {
 	msg := err.Error()
 	log.Print(msg)
-	showError(msg + "\nSee server.log and translator.log in the app folder.")
+	a.showErr(msg + "\nSee server.log and translator.log in the app folder.")
 }
 
 // startServer starts the preferred backend and falls back to CPU if that
@@ -135,10 +148,6 @@ func (a *app) restartServer() bool {
 	return true
 }
 
-type hotkeySource interface {
-	Pressed() (bool, error)
-}
-
 // run starts the server and then serves hotkey presses until the user quits.
 func (a *app) run() {
 	a.tray.SetStatus("Clipboard Translator - loading model...")
@@ -159,17 +168,17 @@ func (a *app) run() {
 		return
 	}
 	defer cb.Close()
-	hotkey, err := newHotkey(a.conf.Hotkey)
+	a.hotkey, err = a.newHotkey(a.conf.Hotkey)
 	if err != nil {
 		log.Printf("hotkey: %v", err)
 		showError(fmt.Sprintf("Could not register the hotkey %s: %v", a.conf.Hotkey, err))
 		return
 	}
-	defer hotkey.Close()
-	a.serve(cb, hotkey)
+	defer func() { _ = a.hotkey.Close() }() // a.hotkey changes when the user picks another one
+	a.serve(cb)
 }
 
-func (a *app) serve(cb Clipboard, hotkey hotkeySource) {
+func (a *app) serve(cb Clipboard) {
 	conf, tray := a.conf, a.tray
 	log.Printf("ready: select text and press %s (or translate existing clipboard)", conf.Hotkey)
 	tray.SetStatus(a.readyTip)
@@ -217,13 +226,25 @@ func (a *app) serve(cb Clipboard, hotkey hotkeySource) {
 				cancelTranslation()
 				return
 			}
-			pressed, err := hotkey.Pressed()
+			pressed, err := a.hotkey.Pressed()
 			if err != nil {
 				log.Printf("hotkey error: %v", err)
 				continue
 			}
-			// Pressed pumps messages, so "Quit" may have been chosen just now.
+			// Pressed pumps messages, so "Quit" or a menu item may have been chosen just now.
 			if tray.QuitRequested() {
+				log.Print("stop requested")
+				cancelTranslation()
+				return
+			}
+			for {
+				id, ok := tray.NextCommand()
+				if !ok {
+					break
+				}
+				a.handleCommand(id)
+			}
+			if tray.QuitRequested() { // e.g. Quit during an engine switch
 				log.Print("stop requested")
 				cancelTranslation()
 				return
@@ -258,6 +279,8 @@ func (a *app) serve(cb Clipboard, hotkey hotkeySource) {
 				default:
 				}
 			}(source, g)
+		case u := <-a.updates:
+			a.onUpdateResult(u)
 		case res := <-results:
 			if res.generation != generation {
 				continue

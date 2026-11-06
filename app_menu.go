@@ -1,0 +1,244 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// Command IDs of the app-specific tray menu items.
+const (
+	cmdCheckUpdate  = firstAppCommand + 1
+	cmdDoUpdate     = firstAppCommand + 2
+	cmdOpenConfig   = firstAppCommand + 3
+	cmdPlamoLicense = firstAppCommand + 4
+	cmdHotkeyBase   = firstAppCommand + 100 // + index into hotkeyChoices
+	cmdBackendBase  = firstAppCommand + 200 // + index into availableBackends
+)
+
+func backendLabel(name string) string {
+	switch name {
+	case "cpu":
+		return "CPU"
+	case "cuda":
+		return "GPU (CUDA)"
+	case "vulkan":
+		return "GPU (Vulkan)"
+	}
+	return name
+}
+
+func versionLabel() string {
+	if versionParts(version) == nil {
+		return "Clipboard Translator (development build)"
+	}
+	return "Clipboard Translator " + version
+}
+
+// buildMenu is the app-specific part of the tray menu. It runs each time the
+// menu opens, so checkmarks and the update entry reflect the current state.
+func (a *app) buildMenu() []MenuItem {
+	var hotkeys []MenuItem
+	for i, h := range hotkeyChoices(a.conf.Hotkey) {
+		hotkeys = append(hotkeys, MenuItem{ID: cmdHotkeyBase + i, Label: h, Checked: strings.EqualFold(h, a.conf.Hotkey)})
+	}
+	items := []MenuItem{{Label: "Hotkey", Sub: hotkeys}}
+
+	// Only offer a choice when more than one build is installed.
+	if backends := availableBackends(a.dir); len(backends) > 1 {
+		cur := currentBackend(a.conf.ServerFile)
+		var sub []MenuItem
+		for i, b := range backends {
+			sub = append(sub, MenuItem{ID: cmdBackendBase + i, Label: backendLabel(b), Checked: b == cur})
+		}
+		items = append(items, MenuItem{Label: "Translation engine", Sub: sub})
+	}
+
+	items = append(items, MenuItem{Separator: true})
+	switch {
+	case a.checking:
+		items = append(items, MenuItem{Label: "Checking for updates...", Disabled: true})
+	case a.latest.Tag != "" && isNewerVersion(a.latest.Tag, version):
+		items = append(items, MenuItem{ID: cmdDoUpdate, Label: "Update to " + a.latest.Tag + "..."})
+	default:
+		items = append(items, MenuItem{ID: cmdCheckUpdate, Label: "Check for updates"})
+	}
+	items = append(items,
+		MenuItem{ID: cmdOpenConfig, Label: "Open config.json"},
+		MenuItem{Separator: true},
+		MenuItem{ID: cmdPlamoLicense, Label: "Built with PLaMo (license)"},
+		MenuItem{Label: versionLabel(), Disabled: true},
+	)
+	return items
+}
+
+// handleCommand runs one app-specific menu command. It runs on the UI thread.
+func (a *app) handleCommand(id int) {
+	switch {
+	case id >= cmdHotkeyBase && id < cmdBackendBase:
+		if choices := hotkeyChoices(a.conf.Hotkey); id-cmdHotkeyBase < len(choices) {
+			a.changeHotkey(choices[id-cmdHotkeyBase])
+		}
+	case id >= cmdBackendBase:
+		if backends := availableBackends(a.dir); id-cmdBackendBase < len(backends) {
+			a.switchBackend(backends[id-cmdBackendBase])
+		}
+	case id == cmdCheckUpdate:
+		a.startUpdateCheck()
+	case id == cmdDoUpdate:
+		a.startUpdate()
+	case id == cmdOpenConfig:
+		openTarget(filepath.Join(a.dir, "config.json"))
+	case id == cmdPlamoLicense:
+		openTarget(plamoLicenseURL)
+	}
+}
+
+// saveConfig writes changed keys to config.json and tells the user if that fails.
+func (a *app) saveConfig(set map[string]any) {
+	if err := updateConfigFile(a.dir, set); err != nil {
+		log.Printf("could not save config.json: %v", err)
+		a.tray.Notify("Clipboard Translator", "The change works now but could not be saved to config.json: "+err.Error(), true)
+	}
+}
+
+// changeHotkey re-registers the hotkey. If the new one is taken, the old one
+// is restored and nothing is saved.
+func (a *app) changeHotkey(spec string) {
+	if strings.EqualFold(spec, a.conf.Hotkey) {
+		return
+	}
+	_ = a.hotkey.Close()
+	nh, err := a.newHotkey(spec)
+	if err != nil {
+		log.Printf("hotkey %s: %v", spec, err)
+		old, err2 := a.newHotkey(a.conf.Hotkey)
+		if err2 != nil {
+			a.failed(fmt.Errorf("Could not register %s (%v) and could not restore %s: %v", spec, err, a.conf.Hotkey, err2))
+			a.tray.Notify("Clipboard Translator", "The hotkey is not registered. Pick one from the menu or restart the app.", true)
+			a.hotkey = noHotkey{}
+			return
+		}
+		a.hotkey = old
+		a.tray.Notify("Clipboard Translator", fmt.Sprintf("Could not use %s (already taken?). Keeping %s.", spec, a.conf.Hotkey), true)
+		return
+	}
+	a.hotkey = nh
+	a.conf.Hotkey = spec
+	a.readyTip = "Clipboard Translator - ready (" + spec + ")"
+	a.tray.SetStatus(a.readyTip)
+	a.saveConfig(map[string]any{"hotkey": spec})
+	log.Printf("hotkey changed to %s", spec)
+	a.tray.Notify("Clipboard Translator", "Hotkey is now "+spec+".", false)
+}
+
+// noHotkey stands in when no hotkey could be registered at all.
+type noHotkey struct{}
+
+func (noHotkey) Pressed() (bool, error) { return false, nil }
+func (noHotkey) Close() error           { return nil }
+
+// switchBackend restarts the server with another installed llama.cpp build. If
+// that does not come up, the previous settings are restored.
+func (a *app) switchBackend(name string) {
+	if name == currentBackend(a.conf.ServerFile) {
+		return
+	}
+	oldConf, oldPaths := a.conf, a.paths
+	a.conf.ServerFile, a.conf.GPULayers = backendSettings(name)
+	paths, err := resolvePaths(a.dir, a.conf)
+	if err != nil {
+		a.conf = oldConf
+		a.tray.Notify("Clipboard Translator", "Could not switch the engine: "+err.Error(), true)
+		return
+	}
+	a.paths = paths
+	log.Printf("switching engine to %s", name)
+	a.sup.Stop()
+	// Start the chosen build itself, without the CPU fallback of startServer:
+	// silently running on the CPU would make the menu check mark a lie.
+	err = a.sup.start(a.paths.server, a.conf.GPULayers, "switching engine")
+	if err == nil {
+		a.tray.SetStatus(a.readyTip)
+		a.saveConfig(map[string]any{"server_file": a.conf.ServerFile, "gpu_layers": a.conf.GPULayers})
+		a.tray.Notify("Clipboard Translator", "Translation engine: "+backendLabel(name), false)
+		return
+	}
+	if errors.Is(err, errQuit) {
+		return // the main loop sees the quit request
+	}
+	log.Printf("engine %s failed: %v; going back", name, err)
+	a.conf, a.paths = oldConf, oldPaths
+	if err := a.startServer(); err != nil && !errors.Is(err, errQuit) {
+		a.failed(err)
+		a.tray.Notify("Clipboard Translator", "The translation server could not be restarted.", true)
+		return
+	}
+	a.tray.SetStatus(a.readyTip)
+	a.tray.Notify("Clipboard Translator", "Could not switch to "+backendLabel(name)+"; keeping the previous engine.", true)
+}
+
+type updateResult struct {
+	info releaseInfo
+	err  error
+}
+
+// startUpdateCheck asks GitHub for the latest release in the background. The
+// answer comes back on a.updates and is handled by the main loop.
+func (a *app) startUpdateCheck() {
+	if a.checking {
+		return
+	}
+	if versionParts(version) == nil {
+		a.tray.Notify("Clipboard Translator", "This is a development build; it has no version to compare.", false)
+		return
+	}
+	a.checking = true
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		info, err := fetchLatest(ctx, latestReleaseAPI)
+		a.updates <- updateResult{info, err}
+	}()
+}
+
+func (a *app) onUpdateResult(u updateResult) {
+	a.checking = false
+	switch {
+	case u.err != nil:
+		log.Printf("update check failed: %v", u.err)
+		a.tray.Notify("Clipboard Translator", "Could not check for updates: "+u.err.Error(), true)
+	case isNewerVersion(u.info.Tag, version):
+		a.latest = u.info
+		log.Printf("update available: %s (running %s)", u.info.Tag, version)
+		a.tray.Notify("Clipboard Translator", u.info.Tag+" is available. Open the tray menu and choose Update.", false)
+	default:
+		a.latest = releaseInfo{}
+		a.tray.Notify("Clipboard Translator", "You have the latest version ("+version+").", false)
+	}
+}
+
+// startUpdate updates the way this copy was installed: through install.ps1, by
+// pointing at Scoop, or by opening the releases page for a hand-extracted zip.
+func (a *app) startUpdate() {
+	tag := a.latest.Tag
+	switch detectInstallKind(a.dir, recordedInstallLocation()) {
+	case kindInstaller:
+		if !askYesNo("Update to " + tag + "?\n\nThis downloads the new version, closes Clipboard Translator and starts it again.") {
+			return
+		}
+		if err := runInstaller(a.dir); err != nil {
+			a.tray.Notify("Clipboard Translator", "Could not start the update: "+err.Error(), true)
+		}
+	case kindScoop:
+		showInfo("This copy was installed with Scoop. To update, run this in a terminal:\n\nscoop update clipboard-translator")
+	default:
+		if askYesNo("This copy was not installed with the installer, so it cannot update itself.\n\nOpen the releases page to download " + tag + "?") {
+			openTarget(releasesPage)
+		}
+	}
+}

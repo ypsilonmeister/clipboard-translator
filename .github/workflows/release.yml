@@ -26,7 +26,10 @@ jobs:
         run: go run ./tools/mksyso -version "${{ github.ref_name }}"
 
       - name: Build
-        run: go build -trimpath -buildvcs=false -ldflags "-H=windowsgui -s -w" -o ClipboardTranslator.exe .
+        # main.version is what "Check for updates" compares against the latest release.
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          go build -trimpath -buildvcs=false -ldflags "-H=windowsgui -s -w -X main.version=$v" -o ClipboardTranslator.exe .
 
       - name: Package
         shell: pwsh

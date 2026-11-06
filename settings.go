@@ -1,0 +1,148 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+// hotkeyPresets are offered in the tray menu. Any other hotkey in config.json
+// is added to the list so it shows as the current choice.
+var hotkeyPresets = []string{"Ctrl+Alt+E", "Ctrl+Alt+T", "Ctrl+Alt+J", "Ctrl+Shift+E", "Ctrl+Shift+Y"}
+
+// hotkeyChoices returns the presets plus current when it is not one of them.
+func hotkeyChoices(current string) []string {
+	out := append([]string(nil), hotkeyPresets...)
+	for _, p := range out {
+		if strings.EqualFold(p, current) {
+			return out
+		}
+	}
+	return append(out, current)
+}
+
+// backendNames are the llama.cpp builds setup.ps1 can install, in menu order.
+var backendNames = []string{"cpu", "cuda", "vulkan"}
+
+// availableBackends lists the installed builds (runtime/<name>/llama-server.exe).
+func availableBackends(dir string) []string {
+	var out []string
+	for _, b := range backendNames {
+		if _, err := os.Stat(filepath.Join(dir, "runtime", b, "llama-server.exe")); err == nil {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// currentBackend derives the backend from conf.ServerFile ("runtime/<name>/...").
+func currentBackend(serverFile string) string {
+	parts := strings.Split(filepath.ToSlash(serverFile), "/")
+	if len(parts) >= 3 && parts[0] == "runtime" {
+		return parts[1]
+	}
+	return ""
+}
+
+// backendSettings are the config values setup.ps1 itself writes for a backend.
+func backendSettings(name string) (serverFile string, gpuLayers int) {
+	gpuLayers = 99
+	if name == "cpu" {
+		gpuLayers = 0
+	}
+	return "runtime/" + name + "/llama-server.exe", gpuLayers
+}
+
+type configEntry struct {
+	key string
+	val json.RawMessage
+}
+
+func parseConfigEntries(b []byte) ([]configEntry, error) {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, errors.New("config.json must be a JSON object")
+	}
+	var out []configEntry
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return nil, err
+		}
+		out = append(out, configEntry{kt.(string), raw})
+	}
+	return out, nil
+}
+
+// updateConfigFile sets the given keys in config.json. Every other key, known
+// to this version or not, keeps its value and its position. The previous file is
+// saved as config.json.bak. The file is rewritten in place (not replaced by a
+// rename) so a hard link, as used by Scoop's "persist", stays intact.
+func updateConfigFile(dir string, set map[string]any) error {
+	path := filepath.Join(dir, "config.json")
+	old, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	var entries []configEntry
+	if len(old) > 0 {
+		if entries, err = parseConfigEntries(old); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path+".bak", old, 0o600); err != nil {
+			return err
+		}
+	}
+	// Apply in a stable order: existing keys first (in place), then new ones sorted.
+	var added []string
+	for k := range set {
+		found := false
+		for _, e := range entries {
+			if e.key == k {
+				found = true
+			}
+		}
+		if !found {
+			added = append(added, k)
+		}
+	}
+	sort.Strings(added)
+	for _, k := range added {
+		entries = append(entries, configEntry{key: k})
+	}
+	var out bytes.Buffer
+	out.WriteString("{\n")
+	for i, e := range entries {
+		raw := e.val
+		if v, ok := set[e.key]; ok {
+			b, err := json.Marshal(v)
+			if err != nil {
+				return err
+			}
+			raw = b
+		}
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, raw); err != nil {
+			return err
+		}
+		k, _ := json.Marshal(e.key)
+		out.WriteString("  ")
+		out.Write(k)
+		out.WriteString(": ")
+		out.Write(compact.Bytes())
+		if i < len(entries)-1 {
+			out.WriteString(",")
+		}
+		out.WriteString("\n")
+	}
+	out.WriteString("}\n")
+	return os.WriteFile(path, out.Bytes(), 0o644)
+}
