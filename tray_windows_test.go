@@ -56,6 +56,20 @@ func TestPumpMessagesHotkey(t *testing.T) {
 	}
 }
 
+// The icon embedded via resource_windows_amd64.syso must be found; otherwise the
+// tray would silently fall back to the generic application icon.
+func TestAppIconIsEmbedded(t *testing.T) {
+	hInst, _, _ := getModuleHandleW.Call(0)
+	stock, _, _ := loadIconW.Call(0, idiApplication)
+	h := loadAppIcon(hInst)
+	if h == 0 {
+		t.Fatal("no icon could be loaded")
+	}
+	if h == stock {
+		t.Fatal("got the stock icon: the embedded icon resource is missing (run go run ./tools/mksyso)")
+	}
+}
+
 // Creates a real tray icon in the interactive session and removes it again.
 func TestTrayLifecycle(t *testing.T) {
 	runtime.LockOSThread()

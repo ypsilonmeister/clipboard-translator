@@ -1,0 +1,56 @@
+name: Release
+
+# Push a tag such as v0.5.0 to build the portable zip and attach it to a GitHub
+# release. If a release for the tag already exists (for example one written by
+# hand with its own notes), only the zip is uploaded to it.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+
+      - run: go vet ./...
+      - run: go test ./...
+
+      - name: Embed icon and version info
+        run: go run ./tools/mksyso -version "${{ github.ref_name }}"
+
+      - name: Build
+        run: go build -trimpath -buildvcs=false -ldflags "-H=windowsgui -s -w" -o ClipboardTranslator.exe .
+
+      - name: Package
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $zip = "Portable-Clipboard-Translator-Windows-x64-$env:TAG.zip"
+          $files = 'ClipboardTranslator.exe','Setup.cmd','Start.cmd','Stop.cmd','setup.ps1','config.json','README.txt','LICENSE'
+          Compress-Archive -Path $files -DestinationPath $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+          "ZIP=$zip" >> $env:GITHUB_ENV
+          "SHA256=$hash" >> $env:GITHUB_ENV
+          "$hash  $zip"
+
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG $env:ZIP --clobber
+          } else {
+            $notes = "Portable Windows x64 build. See the README for setup.`n`nSHA-256 of the zip: ``$env:SHA256``"
+            gh release create $env:TAG $env:ZIP --title $env:TAG --notes $notes
+          }
