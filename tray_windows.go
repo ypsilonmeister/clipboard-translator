@@ -5,6 +5,7 @@ package main
 import (
 	"log"
 	"os"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"unicode/utf16"
@@ -48,7 +49,9 @@ const (
 	menuQuit      = 2
 	menuAutostart = 3
 
+	mfGrayed    = 0x0001
 	mfChecked   = 0x0008
+	mfPopup     = 0x0010
 	mfSeparator = 0x0800
 )
 
@@ -111,6 +114,8 @@ type wndClassEx struct {
 }
 
 type winTray struct {
+	menuBuild      func() []MenuItem // app-specific menu items, see Tray.SetMenu
+	cmds           []int             // picked app items, drained by NextCommand (UI thread only)
 	hwnd           uintptr
 	icon           uintptr
 	logPath        string
@@ -256,8 +261,62 @@ func (t *winTray) Close() {
 	activeTray = nil
 }
 
-func (t *winTray) showMenu() {
+func (t *winTray) SetMenu(build func() []MenuItem) { t.menuBuild = build }
+
+func (t *winTray) NextCommand() (int, bool) {
+	if len(t.cmds) == 0 {
+		return 0, false
+	}
+	id := t.cmds[0]
+	t.cmds = t.cmds[1:]
+	return id, true
+}
+
+// menuLabel escapes '&' (a keyboard-accelerator marker in menu text) so labels
+// such as clipboard text or "A & B" are shown literally.
+func menuLabel(s string) string { return strings.ReplaceAll(s, "&", "&&") }
+
+// buildPopup turns items into a popup menu (submenus included). Destroying the
+// returned menu destroys its submenus too.
+func buildPopup(items []MenuItem) uintptr {
 	menu, _, _ := createPopupMenu.Call()
+	if menu == 0 {
+		return 0
+	}
+	for _, it := range items {
+		switch {
+		case it.Separator:
+			appendMenuW.Call(menu, mfSeparator, 0, 0)
+		case len(it.Sub) > 0:
+			sub := buildPopup(it.Sub)
+			flags := uintptr(mfPopup)
+			if it.Disabled {
+				flags |= mfGrayed
+			}
+			appendMenuW.Call(menu, flags, sub, uintptr(unsafe.Pointer(u16(menuLabel(it.Label)))))
+		default:
+			flags := uintptr(0)
+			if it.Checked {
+				flags |= mfChecked
+			}
+			if it.Disabled {
+				flags |= mfGrayed
+			}
+			appendMenuW.Call(menu, flags, uintptr(it.ID), uintptr(unsafe.Pointer(u16(menuLabel(it.Label)))))
+		}
+	}
+	return menu
+}
+
+func (t *winTray) showMenu() {
+	var appItems []MenuItem
+	if t.menuBuild != nil {
+		appItems = t.menuBuild()
+	}
+	if len(appItems) > 0 {
+		appItems = append(appItems, MenuItem{Separator: true})
+	}
+	menu := buildPopup(appItems)
 	if menu == 0 {
 		return
 	}
@@ -279,9 +338,13 @@ func (t *winTray) showMenu() {
 	setForegroundWindow.Call(t.hwnd)
 	cmd, _, _ := trackPopupMenu.Call(menu, tpmRightButton|tpmReturnCmd, uintptr(pt.X), uintptr(pt.Y), 0, t.hwnd, 0)
 	postMessageW.Call(t.hwnd, wmNull, 0, 0)
+	if cmd >= firstAppCommand {
+		t.cmds = append(t.cmds, int(cmd))
+		return
+	}
 	switch cmd {
 	case menuOpenLog:
-		shellExecuteW.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(t.logPath))), 0, 0, swShowNormal)
+		openTarget(t.logPath)
 	case menuAutostart:
 		var err error
 		if autostartOn {
@@ -335,6 +398,17 @@ func pumpMessages() bool {
 		}
 		dispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
 	}
+}
+
+// openTarget opens a file or URL with the program Windows associates with it.
+func openTarget(target string) {
+	shellExecuteW.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(target))), 0, 0, swShowNormal)
+}
+
+// showInfo shows a plain information box.
+func showInfo(msg string) {
+	const mbIconInformation = 0x40
+	messageBoxW.Call(0, uintptr(unsafe.Pointer(u16(msg))), uintptr(unsafe.Pointer(u16("Clipboard Translator"))), mbOK|mbIconInformation)
 }
 
 // askYesNo shows a Yes/No question and reports whether the user chose Yes.

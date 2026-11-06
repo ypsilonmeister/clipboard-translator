@@ -12,5 +12,9 @@ func pumpMessages() bool { return false }
 
 func showError(msg string) { fmt.Fprintln(os.Stderr, msg) }
 
+func showInfo(msg string) { fmt.Fprintln(os.Stderr, msg) }
+
+func openTarget(target string) { fmt.Fprintln(os.Stderr, "open:", target) }
+
 // askYesNo has no dialog outside Windows; the answer is always "no".
 func askYesNo(msg string) bool { return false }
