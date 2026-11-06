@@ -23,8 +23,13 @@ No Ollama or Python is required.
 4. Select Japanese or English text and press `Ctrl+Alt+E`. When the translation
    is ready it replaces the clipboard content; press `Ctrl+V` to paste.
    With no selection, the current clipboard text is translated.
-5. Right-click the tray icon for **Open log** and **Quit**. `Stop.cmd` also
-   stops the app and its `llama-server` child process.
+5. Right-click the tray icon for **Start with Windows** (toggle), **Open log**
+   and **Quit**. `Stop.cmd` also stops the app and its `llama-server` child
+   process.
+
+After `Setup.cmd` has run once, `Start.cmd` is optional: you can start
+`ClipboardTranslator.exe` directly. "Start with Windows" registers the exe path
+under `HKCU\...\Run`; if you move the folder, toggle it off and on again.
 
 The tooltip of the tray icon shows the current state (loading, ready,
 translating, translation ready). Startup errors are shown in a message box and

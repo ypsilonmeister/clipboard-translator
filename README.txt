@@ -13,8 +13,11 @@ INSTALL
    On Windows 11 the icon may be hidden under the ^ overflow arrow.
 5. Highlight Japanese or English text and press Ctrl+Alt+E. Ctrl+V pastes the
    translated text when ready. No text selected = existing clipboard content.
-6. Right-click the tray icon for 'Open log' and 'Quit'. Stop.cmd also stops
-   the app and llama-server.
+6. Right-click the tray icon for 'Start with Windows' (toggle), 'Open log' and
+   'Quit'. Stop.cmd also stops the app and llama-server.
+   After Setup.cmd has run once, Start.cmd is optional: you can run
+   ClipboardTranslator.exe directly. If you move the folder, toggle
+   'Start with Windows' off and on again.
 
 AUTO BACKENDS
   NVIDIA GPU       -> CUDA 12.4

@@ -4,6 +4,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"sync/atomic"
 	"syscall"
 	"unicode/utf16"
@@ -39,8 +40,12 @@ const (
 	tpmRightButton = 0x0002
 	tpmReturnCmd   = 0x0100
 
-	menuOpenLog = 1
-	menuQuit    = 2
+	menuOpenLog   = 1
+	menuQuit      = 2
+	menuAutostart = 3
+
+	mfChecked   = 0x0008
+	mfSeparator = 0x0800
 )
 
 var (
@@ -103,6 +108,7 @@ type winTray struct {
 	hwnd           uintptr
 	icon           uintptr
 	logPath        string
+	exeCommand     string // quoted path used for the "start with Windows" entry
 	taskbarCreated uint32
 	tip            string
 	quit           atomic.Bool
@@ -133,6 +139,9 @@ func copyUTF16(dst []uint16, s string) {
 // no-op tray so the translator keeps working without an icon.
 func newTray(logPath string) Tray {
 	t := &winTray{logPath: logPath, tip: "Clipboard Translator"}
+	if exe, err := os.Executable(); err == nil {
+		t.exeCommand = `"` + exe + `"`
+	}
 	if err := t.init(); err != nil {
 		log.Printf("tray icon unavailable: %v", err)
 		return noopTray{}
@@ -231,7 +240,16 @@ func (t *winTray) showMenu() {
 		return
 	}
 	defer destroyMenu.Call(menu)
+	autostartOn := t.exeCommand != "" && appAutostart.Enabled(t.exeCommand)
+	if t.exeCommand != "" {
+		flags := uintptr(0)
+		if autostartOn {
+			flags = mfChecked
+		}
+		appendMenuW.Call(menu, flags, menuAutostart, uintptr(unsafe.Pointer(u16("Start with Windows"))))
+	}
 	appendMenuW.Call(menu, 0, menuOpenLog, uintptr(unsafe.Pointer(u16("Open log"))))
+	appendMenuW.Call(menu, mfSeparator, 0, 0)
 	appendMenuW.Call(menu, 0, menuQuit, uintptr(unsafe.Pointer(u16("Quit"))))
 	var pt winPoint
 	getCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
@@ -242,6 +260,17 @@ func (t *winTray) showMenu() {
 	switch cmd {
 	case menuOpenLog:
 		shellExecuteW.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(t.logPath))), 0, 0, swShowNormal)
+	case menuAutostart:
+		var err error
+		if autostartOn {
+			err = appAutostart.Clear()
+		} else {
+			err = appAutostart.Set(t.exeCommand)
+		}
+		if err != nil {
+			log.Printf("start-with-Windows setting failed: %v", err)
+			t.Notify("Clipboard Translator", "Could not change the startup setting: "+err.Error(), true)
+		}
 	case menuQuit:
 		t.quit.Store(true)
 	}
