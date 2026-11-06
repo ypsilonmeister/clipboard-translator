@@ -17,11 +17,18 @@ No Ollama or Python is required.
 2. Run `Setup.cmd`. It downloads the PLaMo model and a llama.cpp build
    (CUDA / Vulkan / CPU is chosen automatically; CPU is always installed as a
    fallback). An internet connection is only needed for this step.
-3. Run `Start.cmd` and wait for the `ready` message in the console.
+3. Run `Start.cmd`. The app lives in the **system tray** (notification area);
+   a balloon says *Ready* once the model has loaded (this can take a while on
+   the first start).
 4. Select Japanese or English text and press `Ctrl+Alt+E`. When the translation
    is ready it replaces the clipboard content; press `Ctrl+V` to paste.
    With no selection, the current clipboard text is translated.
-5. Run `Stop.cmd` to stop the app and its `llama-server` child process.
+5. Right-click the tray icon for **Open log** and **Quit**. `Stop.cmd` also
+   stops the app and its `llama-server` child process.
+
+The tooltip of the tray icon shows the current state (loading, ready,
+translating, translation ready). Startup errors are shown in a message box and
+written to `translator.log`.
 
 Manual backend choice:
 
@@ -35,6 +42,11 @@ Requires [Go](https://go.dev/) 1.21 or later.
 
 ```powershell
 go test ./...
+
+# Release build: no console window, tray icon only
+go build -ldflags "-H=windowsgui -s -w" -o ClipboardTranslator.exe .
+
+# Debug build: keeps the console and prints the log to it
 go build -o ClipboardTranslator.exe .
 ```
 
@@ -63,6 +75,7 @@ go build -o ClipboardTranslator.exe .
 - A GPU backend can fail (too little VRAM, old driver, missing DLLs); the app
   then falls back to the CPU build. See `server.log` and `translator.log`.
 - Logs record errors but not the translated text.
+- The tray icon is the default application icon for now.
 
 ## Licenses
 
