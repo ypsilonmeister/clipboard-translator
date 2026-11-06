@@ -11,12 +11,9 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -216,255 +213,31 @@ func main() {
 	// We are the only instance, so a STOP file is left over from an earlier run
 	// (e.g. Stop.cmd after a crash). Without this the app would quit immediately.
 	_ = os.Remove(filepath.Join(dir, "STOP"))
-	model, err := pathWithin(dir, conf.ModelFile)
+
+	conf, ok := ensureInstalled(dir, conf)
+	if !ok {
+		return
+	}
+	paths, err := resolvePaths(dir, conf)
 	if err != nil {
 		fatal(err)
 	}
-	template, err := pathWithin(dir, conf.TemplateFile)
-	if err != nil {
-		fatal(err)
-	}
-	server, err := pathWithin(dir, conf.ServerFile)
-	if err != nil {
-		fatal(err)
-	}
-	fallback, err := pathWithin(dir, conf.FallbackServerFile)
-	if err != nil {
-		fatal(err)
-	}
-	for _, p := range []string{model, template, server} {
-		if _, err := os.Stat(p); err != nil {
-			fatal("required file missing: ", p, " : ", err, "\nRun Setup.cmd first.")
-		}
-	}
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d", conf.Port)
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", conf.Port), 250*time.Millisecond)
 	if err == nil {
 		conn.Close()
 		fatal("server port is already occupied: ", conf.Port)
 	}
 
-	logOut, err := os.OpenFile(filepath.Join(dir, "server.log"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	serverLog, err := os.OpenFile(filepath.Join(dir, "server.log"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	if err != nil {
 		fatal(err)
 	}
-	defer logOut.Close()
+	defer serverLog.Close()
 
 	// The tray exists from here on so the user sees the app while the model loads.
 	tray := newTray(logPath)
 	defer tray.Close()
-	tray.SetStatus("Clipboard Translator - loading model...")
-	readyTip := "Clipboard Translator - ready (" + conf.Hotkey + ")"
-	var activeCmd *exec.Cmd
-	var activeDone <-chan struct{}
-	defer func() {
-		if activeCmd != nil {
-			_ = activeCmd.Process.Kill()
-			<-activeDone // Only one goroutine calls Wait on each child.
-		}
-	}()
-	start := func(binary string, gpuLayers int) error {
-		args := []string{"-m", model, "-c", fmt.Sprint(conf.ContextTokens),
-			"--host", "127.0.0.1", "--port", fmt.Sprint(conf.Port), "--alias", "plamo-3-translate",
-			"--chat-template-file", template, "--no-prefill-assistant", "-ngl", fmt.Sprint(gpuLayers)}
-		cmd := exec.Command(binary, args...)
-		cmd.Dir = filepath.Dir(binary)
-		cmd.Stdout, cmd.Stderr = logOut, logOut
-		hideConsole(cmd)
-		log.Printf("starting %s (gpu_layers=%d)", binary, gpuLayers)
-		if err := cmd.Start(); err != nil {
-			return err
-		}
-		done := make(chan struct{})
-		go func() { _ = cmd.Wait(); close(done) }()
-		startupCtx, cancel := context.WithTimeout(context.Background(), time.Duration(conf.StartupTimeoutSec)*time.Second)
-		// waitReady blocks, so run it aside and keep servicing the tray window
-		// (and honour "Quit") on this thread while the model loads.
-		readyErr := make(chan error, 1)
-		go func() { readyErr <- waitReady(startupCtx, endpoint, done) }()
-		pump := time.NewTicker(50 * time.Millisecond)
-		var err error
-	wait:
-		for {
-			select {
-			case err = <-readyErr:
-				break wait
-			case <-pump.C:
-				pumpMessages()
-				if tray.QuitRequested() {
-					cancel()
-				}
-			}
-		}
-		pump.Stop()
-		cancel()
-		if err != nil {
-			_ = cmd.Process.Kill()
-			<-done
-			return err
-		}
-		activeCmd, activeDone = cmd, done
-		return nil
-	}
-	serverFailed := func(format string, a ...any) {
-		msg := fmt.Sprintf(format, a...)
-		log.Print(msg)
-		showError(msg + "\nSee server.log and translator.log in the app folder.")
-	}
-	if err := start(server, conf.GPULayers); err != nil {
-		if tray.QuitRequested() {
-			log.Print("quit requested during startup")
-			return
-		}
-		log.Printf("preferred backend failed: %v; see server.log", err)
-		if server == fallback {
-			serverFailed("The translation server failed to start: %v", err)
-			return
-		}
-		if _, statErr := os.Stat(fallback); statErr != nil {
-			serverFailed("CPU fallback unavailable: %v", statErr)
-			return
-		}
-		log.Print("falling back to CPU")
-		tray.SetStatus("Clipboard Translator - loading model (CPU)...")
-		if err := start(fallback, 0); err != nil {
-			if tray.QuitRequested() {
-				log.Print("quit requested during startup")
-				return
-			}
-			serverFailed("CPU fallback failed: %v", err)
-			return
-		}
-	}
-
-	cb, err := newClipboard()
-	if err != nil {
-		log.Printf("clipboard initialization failed: %v", err)
-		showError(fmt.Sprintf("Clipboard initialization failed: %v", err))
-		return
-	}
-	defer cb.Close()
-	hotkey, err := newHotkey(conf.Hotkey)
-	if err != nil {
-		log.Printf("hotkey: %v", err)
-		showError(fmt.Sprintf("Could not register the hotkey %s: %v", conf.Hotkey, err))
-		return
-	}
-	defer hotkey.Close()
-	log.Printf("ready: select text and press %s (or translate existing clipboard)", conf.Hotkey)
-	tray.SetStatus(readyTip)
-	tray.Notify("Clipboard Translator", "Ready. Select text and press "+conf.Hotkey+", then paste with Ctrl+V.", false)
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sig)
-	results := make(chan result, 16)
-	// The same tick also services the tray window, so never poll slower than 100ms
-	// or the tray menu would feel frozen.
-	pollInterval := time.Duration(conf.PollMS) * time.Millisecond
-	if pollInterval > 100*time.Millisecond {
-		pollInterval = 100 * time.Millisecond
-	}
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-	stopFile := filepath.Join(dir, "STOP")
-	defer os.Remove(stopFile)
-	var generation uint64
-	var cancelCurrent context.CancelFunc
-	for {
-		select {
-		case <-sig:
-			log.Print("stopping")
-			if cancelCurrent != nil {
-				cancelCurrent()
-			}
-			return
-		case <-ticker.C:
-			_, statErr := os.Stat(stopFile)
-			if statErr == nil || tray.QuitRequested() {
-				log.Print("stop requested")
-				if cancelCurrent != nil {
-					cancelCurrent()
-				}
-				return
-			}
-			pressed, err := hotkey.Pressed()
-			if err != nil {
-				log.Printf("hotkey error: %v", err)
-				continue
-			}
-			// Pressed pumps messages, so "Quit" may have been chosen just now.
-			if tray.QuitRequested() {
-				log.Print("stop requested")
-				if cancelCurrent != nil {
-					cancelCurrent()
-				}
-				return
-			}
-			if !pressed {
-				continue
-			}
-			// A new request cancels older ones and invalidates their results.
-			generation++
-			if cancelCurrent != nil {
-				cancelCurrent()
-				cancelCurrent = nil
-			}
-			source, _, err := captureSelectedText(cb)
-			if err != nil {
-				log.Printf("cannot capture selection: %v", err)
-				tray.SetStatus(readyTip)
-				continue
-			}
-			if !shouldTranslate(source, conf.MaxChars) {
-				log.Print("skipped: empty, unsupported, URL, or too long")
-				tray.SetStatus(readyTip)
-				continue
-			}
-			direction, _ := detectDirection(source)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(conf.TranslationTimeoutSec)*time.Second)
-			cancelCurrent = cancel
-			g := generation
-			log.Printf("translating %s -> %s", direction.Source, direction.Target)
-			tray.SetStatus("Clipboard Translator - translating...")
-			go func(src string, g uint64) {
-				translated, err := translate(ctx, endpoint, src, direction, conf.MaxTokens)
-				select {
-				case results <- result{original: src, translated: translated, generation: g, err: err}:
-				default:
-				}
-			}(source, g)
-		case res := <-results:
-			if res.generation != generation {
-				continue
-			}
-			tray.SetStatus(readyTip)
-			if res.err != nil {
-				if !errors.Is(res.err, context.Canceled) {
-					log.Printf("translation failed: %v", res.err)
-					tray.Notify("Translation failed", "See translator.log for details.", true)
-				}
-				continue
-			}
-			if res.translated == res.original {
-				log.Print("translation unchanged; clipboard left intact")
-				continue
-			}
-			// A sequence number is not a reliable test for a text change:
-			// apps can update clipboard formats without changing the text.
-			// Compare text AND replace under a single OpenClipboard lock.
-			applied, err := applyTranslation(cb, res.original, res.translated)
-			if err != nil {
-				log.Printf("clipboard check/write failed: %v", err)
-				continue
-			}
-			if !applied {
-				log.Print("clipboard text changed during translation; result discarded (new clipboard preserved)")
-				continue
-			}
-			log.Print("translation ready in clipboard (Ctrl+V to paste)")
-			tray.SetStatus("Clipboard Translator - translation ready (Ctrl+V)")
-		}
-	}
+	newApp(dir, conf, paths, tray, serverLog).run()
 }
 
 // applyTranslation never replaces unrelated clipboard contents.

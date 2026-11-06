@@ -11,3 +11,6 @@ func newTray(logPath string) Tray { return noopTray{} }
 func pumpMessages() bool { return false }
 
 func showError(msg string) { fmt.Fprintln(os.Stderr, msg) }
+
+// askYesNo has no dialog outside Windows; the answer is always "no".
+func askYesNo(msg string) bool { return false }

@@ -337,6 +337,13 @@ func pumpMessages() bool {
 	}
 }
 
+// askYesNo shows a Yes/No question and reports whether the user chose Yes.
+func askYesNo(msg string) bool {
+	const mbYesNo, mbIconQuestion, idYes = 0x4, 0x20, 6
+	r, _, _ := messageBoxW.Call(0, uintptr(unsafe.Pointer(u16(msg))), uintptr(unsafe.Pointer(u16("Clipboard Translator"))), mbYesNo|mbIconQuestion)
+	return r == idYes
+}
+
 // showError reports a fatal problem to the user. The GUI build has no console,
 // so a message box is the only way to make a startup failure visible.
 func showError(msg string) {
