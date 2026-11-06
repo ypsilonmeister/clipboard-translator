@@ -75,7 +75,8 @@ go build -o ClipboardTranslator.exe .
 - A GPU backend can fail (too little VRAM, old driver, missing DLLs); the app
   then falls back to the CPU build. See `server.log` and `translator.log`.
 - Logs record errors but not the translated text.
-- The tray icon is the default application icon for now.
+- The tray icon is the default application icon for now. On Windows 11 it may
+  be hidden under the `^` overflow arrow until you drag it onto the taskbar.
 
 ## Licenses
 
