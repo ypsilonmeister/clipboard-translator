@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: PLaMo model and its license
+    url: https://plamo.preferredai.jp/info/plamo-community-license-ja
+    about: Questions about the translation model's terms (commercial use, registration) go to its publisher, not here.
