@@ -41,7 +41,8 @@ func availableBackends(dir string) []string {
 
 // currentBackend derives the backend from conf.ServerFile ("runtime/<name>/...").
 func currentBackend(serverFile string) string {
-	parts := strings.Split(filepath.ToSlash(serverFile), "/")
+	// config.json may use either slash; filepath.ToSlash would leave backslashes alone off Windows.
+	parts := strings.Split(strings.ReplaceAll(serverFile, `\`, "/"), "/")
 	if len(parts) >= 3 && parts[0] == "runtime" {
 		return parts[1]
 	}
