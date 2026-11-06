@@ -28,6 +28,13 @@ jobs:
           fi
       - run: go vet ./...
       - run: go test ./...
+      - name: PowerShell scripts parse (Windows PowerShell 5.1 and PowerShell 7)
+        run: |
+          $check = 'foreach ($f in "install.ps1","setup.ps1") { $e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$e); if ($e) { $e | Out-String | Write-Error; exit 1 } else { "$f ok" } }'
+          powershell.exe -NoProfile -Command $check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          pwsh -NoProfile -Command $check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Build (release flags)
         run: go build -trimpath -buildvcs=false -ldflags "-H=windowsgui -s -w" -o ClipboardTranslator.exe .
       - name: Check the exe carries its version info

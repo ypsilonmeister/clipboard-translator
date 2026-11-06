@@ -12,25 +12,56 @@ No Ollama or Python is required.
 > **Status: prototype.** It has not been tested on a wide range of PCs or GPU
 > drivers. Use at your own risk.
 
-## Quick start (Windows 10/11 x64)
+## Install (Windows 10/11 x64)
 
-1. Build or download `ClipboardTranslator.exe` and put it in a writable folder
-   together with the other files from this repository (see [Build](#build)).
-2. Run `Setup.cmd`. It downloads the PLaMo model and a llama.cpp build
-   (CUDA / Vulkan / CPU is chosen automatically; CPU is always installed as a
-   fallback). An internet connection is only needed for this step.
-3. Run `Start.cmd`. The app lives in the **system tray** (notification area);
-   a balloon says *Ready* once the model has loaded (this can take a while on
-   the first start).
-4. Select Japanese or English text and press `Ctrl+Alt+E`. When the translation
+Open PowerShell (no administrator rights needed) and run:
+
+```powershell
+irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.ps1 | iex
+```
+
+The script downloads the latest release and verifies its SHA-256, installs it to
+`%LOCALAPPDATA%\ClipboardTranslator`, downloads the PLaMo model (over 1 GB) and a
+llama.cpp build (CUDA / Vulkan / CPU is chosen automatically; CPU is always
+installed as a fallback), adds a Start menu shortcut and an *Apps & features*
+entry, and starts the app. Read [`install.ps1`](install.ps1) first if you like;
+it is short.
+
+- **Update:** run the same command again. Your `config.json`, the model and
+  llama.cpp are kept.
+- **Uninstall:** Settings > Apps > *Clipboard Translator*, or
+  `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.ps1))) -Uninstall`
+  (this deletes the install folder, including the model).
+- **Options** (environment variables, because `| iex` cannot take parameters):
+  `CT_VERSION=v0.5.0` pins a release, `CT_INSTALL_DIR=D:\Apps\CT` chooses the
+  folder, `CT_SKIP_SETUP=1` skips the model download, `CT_NO_LAUNCH=1` does not
+  start the app. Example: `$env:CT_VERSION='v0.5.0'; irm ... | iex`. If you saved
+  the script, the same options exist as parameters (`-Version`, `-InstallDir`,
+  `-SkipSetup`, `-NoLaunch`, `-Force`).
+
+### Using it
+
+1. The app lives in the **system tray** (notification area; it may be under the
+   `^` arrow). A balloon says *Ready* once the model has loaded (this can take a
+   while on the first start).
+2. Select Japanese or English text and press `Ctrl+Alt+E`. When the translation
    is ready it replaces the clipboard content; press `Ctrl+V` to paste.
    With no selection, the current clipboard text is translated.
-5. Right-click the tray icon for **Start with Windows** (toggle), **Open log**
-   and **Quit**. `Stop.cmd` also stops the app and its `llama-server` child
-   process.
+3. Right-click the tray icon for **Start with Windows** (toggle), **Open log**
+   and **Quit**.
 
-After `Setup.cmd` has run once, `Start.cmd` is optional: you can start
-`ClipboardTranslator.exe` directly. "Start with Windows" registers the exe path
+The tooltip of the tray icon shows the current state (loading, ready,
+translating, translation ready). Startup errors are shown in a message box and
+written to `translator.log`.
+
+### Portable zip (manual)
+
+Prefer not to run a script? Download
+`Portable-Clipboard-Translator-Windows-x64-<version>.zip` from
+[Releases](https://github.com/ypsilonmeister/clipboard-translator/releases),
+extract it to a writable folder, run `Setup.cmd` once (model and llama.cpp), then
+`Start.cmd` (or `ClipboardTranslator.exe` directly). `Stop.cmd` stops the app and
+its `llama-server` child process. "Start with Windows" registers the exe path
 under `HKCU\...\Run`; if you move the folder, toggle it off and on again.
 
 The tooltip of the tray icon shows the current state (loading, ready,
