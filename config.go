@@ -21,6 +21,9 @@ type Config struct {
 	TemplateFile          string `json:"template_file"`
 	ServerFile            string `json:"server_file"`
 	FallbackServerFile    string `json:"fallback_server_file"`
+	// AutoPaste types Ctrl+V into the window the text was selected in once the
+	// translation is ready. Off by default.
+	AutoPaste bool `json:"auto_paste"`
 }
 
 func defaultConfig() Config {
