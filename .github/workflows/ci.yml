@@ -13,8 +13,8 @@ jobs:
     # The app is a Windows tray program, so build and test it on Windows.
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - name: gofmt
@@ -30,22 +30,20 @@ jobs:
       - run: go test ./...
       - name: Build (release flags)
         run: go build -trimpath -buildvcs=false -ldflags "-H=windowsgui -s -w" -o ClipboardTranslator.exe .
-      - name: Check the exe carries its icon and version info
+      - name: Check the exe carries its version info
+        # The embedded icon itself is covered by TestAppIconIsEmbedded.
         shell: pwsh
         run: |
           $vi = (Get-Item .\ClipboardTranslator.exe).VersionInfo
           if ($vi.ProductName -ne 'Clipboard Translator') { throw "version info missing: $($vi.ProductName)" }
-          Add-Type -AssemblyName System.Drawing
-          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path .\ClipboardTranslator.exe).Path)
-          if (-not $icon) { throw 'icon missing' }
           "ok: $($vi.ProductName) $($vi.ProductVersion)"
 
   portable:
     # The non-Windows files only hold stubs, but they must keep compiling.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - run: go vet ./...
