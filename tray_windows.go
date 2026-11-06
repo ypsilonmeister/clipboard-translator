@@ -156,10 +156,11 @@ func newTray(logPath string) Tray {
 }
 
 // loadAppIcon returns the icon embedded in the executable at the system's
-// small-icon size. The exe has no DPI-awareness manifest, so that size is 16px
-// at every display scale and Windows stretches it on scaled displays. A build
-// without the resource (for example without resource_windows_amd64.syso) gets
-// the stock application icon.
+// small-icon size. The manifest makes the process DPI aware, so that size grows
+// with the display scale (16, 20, 24, ... px) and the matching image of the
+// icon is picked instead of a stretched 16px one. A build without the resource
+// (for example without resource_windows_amd64.syso) gets the stock application
+// icon.
 func loadAppIcon(hInst uintptr) uintptr {
 	cx, _, _ := getSystemMetrics.Call(smCxSmIcon)
 	cy, _, _ := getSystemMetrics.Call(smCySmIcon)

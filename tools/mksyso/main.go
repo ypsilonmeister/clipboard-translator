@@ -1,7 +1,8 @@
 // Command mksyso writes a Windows resource object (resource_windows_amd64.syso)
-// holding the application icon and version information. The Go linker picks
-// the .syso up automatically when building for windows/amd64, so
-// ClipboardTranslator.exe gets its icon and the Details tab in Explorer.
+// holding the application icon, version information and manifest. The Go
+// linker picks the .syso up automatically when building for windows/amd64, so
+// ClipboardTranslator.exe gets its icon, the Details tab in Explorer and
+// per-monitor DPI awareness.
 //
 // It uses only the standard library. Run from the repository root:
 //
@@ -25,6 +26,7 @@ const (
 	rtIcon      = 3
 	rtGroupIcon = 14
 	rtVersion   = 16
+	rtManifest  = 24
 	langEnUS    = 0x0409
 )
 
@@ -36,6 +38,7 @@ type resource struct {
 func main() {
 	version := flag.String("version", "0.0.0", "product version, e.g. 0.4.1 (a leading v and a -suffix are ignored for the numeric part)")
 	iconPath := flag.String("icon", "assets/icon.ico", "multi-size .ico file")
+	manifestPath := flag.String("manifest", "assets/app.manifest", "application manifest (DPI awareness, execution level)")
 	out := flag.String("o", "resource_windows_amd64.syso", "output object file")
 	flag.Parse()
 
@@ -51,7 +54,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	res = append(res, vi)
+	manifest, err := os.ReadFile(*manifestPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	res = append(res, vi, resource{rtManifest, 1, manifest})
 	if err := os.WriteFile(*out, buildObject(res), 0o644); err != nil {
 		log.Fatal(err)
 	}
