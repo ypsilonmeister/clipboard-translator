@@ -136,6 +136,46 @@ func sendCopy() error {
 	return nil
 }
 
+const vkV = 0x56
+
+var getForegroundWindow = user32.NewProc("GetForegroundWindow")
+
+// foregroundWindow returns the window that currently has the keyboard focus
+// (0 when there is none).
+func foregroundWindow() uintptr {
+	h, _, _ := getForegroundWindow.Call()
+	return h
+}
+
+// waitModifiersReleased waits until Ctrl, Alt, Shift and Win are all up, so a
+// synthetic Ctrl+V is not turned into Ctrl+Alt+V by keys still held from the
+// hotkey. It reports whether they were released within max.
+func waitModifiersReleased(max time.Duration) bool {
+	deadline := time.Now().Add(max)
+	for modifierPressed() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	return true
+}
+
+// sendPaste types Ctrl+V into the focused window.
+func sendPaste() error {
+	inputs := []keyboardInputRecord{
+		{Type: keyboardInput, VK: vkControl},
+		{Type: keyboardInput, VK: vkV},
+		{Type: keyboardInput, VK: vkV, Flags: keyEventKeyUp},
+		{Type: keyboardInput, VK: vkControl, Flags: keyEventKeyUp},
+	}
+	sent, _, err := sendInput.Call(uintptr(len(inputs)), uintptr(unsafe.Pointer(&inputs[0])), unsafe.Sizeof(inputs[0]))
+	if sent != uintptr(len(inputs)) {
+		return fmt.Errorf("SendInput pasted %d keys: %w", sent, err)
+	}
+	return nil
+}
+
 // captureSelectedText tries to copy selected content in the focused app.
 // If Ctrl+C does not change the clipboard, it uses the previous clipboard text.
 func captureSelectedText(cb Clipboard) (string, uint32, error) {

@@ -16,8 +16,12 @@ const (
 	cmdDoUpdate     = firstAppCommand + 2
 	cmdOpenConfig   = firstAppCommand + 3
 	cmdPlamoLicense = firstAppCommand + 4
+	cmdCancel       = firstAppCommand + 5
+	cmdAutoPaste    = firstAppCommand + 6
+	cmdHistoryClear = firstAppCommand + 7
 	cmdHotkeyBase   = firstAppCommand + 100 // + index into hotkeyChoices
 	cmdBackendBase  = firstAppCommand + 200 // + index into availableBackends
+	cmdHistoryBase  = firstAppCommand + 300 // + index into history (newest first)
 )
 
 func backendLabel(name string) string {
@@ -42,11 +46,27 @@ func versionLabel() string {
 // buildMenu is the app-specific part of the tray menu. It runs each time the
 // menu opens, so checkmarks and the update entry reflect the current state.
 func (a *app) buildMenu() []MenuItem {
+	var items []MenuItem
+	if a.translating {
+		items = append(items, MenuItem{ID: cmdCancel, Label: "Cancel translation"}, MenuItem{Separator: true})
+	}
+	var recent []MenuItem
+	for i, e := range a.hist.Items() {
+		recent = append(recent, MenuItem{ID: cmdHistoryBase + i, Label: historyLabel(e)})
+	}
+	if len(recent) == 0 {
+		recent = []MenuItem{{Label: "(nothing yet)", Disabled: true}}
+	} else {
+		recent = append(recent, MenuItem{Separator: true}, MenuItem{ID: cmdHistoryClear, Label: "Clear history"})
+	}
+	items = append(items, MenuItem{Label: "Recent translations (click to copy)", Sub: recent})
+	items = append(items, MenuItem{ID: cmdAutoPaste, Label: "Paste automatically after translating", Checked: a.conf.AutoPaste})
+
 	var hotkeys []MenuItem
 	for i, h := range hotkeyChoices(a.conf.Hotkey) {
 		hotkeys = append(hotkeys, MenuItem{ID: cmdHotkeyBase + i, Label: h, Checked: strings.EqualFold(h, a.conf.Hotkey)})
 	}
-	items := []MenuItem{{Label: "Hotkey", Sub: hotkeys}}
+	items = append(items, MenuItem{Label: "Hotkey", Sub: hotkeys})
 
 	// Only offer a choice when more than one build is installed.
 	if backends := availableBackends(a.dir); len(backends) > 1 {
@@ -79,6 +99,8 @@ func (a *app) buildMenu() []MenuItem {
 // handleCommand runs one app-specific menu command. It runs on the UI thread.
 func (a *app) handleCommand(id int) {
 	switch {
+	case id >= cmdHistoryBase:
+		a.copyFromHistory(id - cmdHistoryBase)
 	case id >= cmdHotkeyBase && id < cmdBackendBase:
 		if choices := hotkeyChoices(a.conf.Hotkey); id-cmdHotkeyBase < len(choices) {
 			a.changeHotkey(choices[id-cmdHotkeyBase])
@@ -87,6 +109,20 @@ func (a *app) handleCommand(id int) {
 		if backends := availableBackends(a.dir); id-cmdBackendBase < len(backends) {
 			a.switchBackend(backends[id-cmdBackendBase])
 		}
+	case id == cmdCancel:
+		if a.translating {
+			log.Print("translation cancelled from the menu")
+			a.abortTranslation()
+			a.tray.SetStatus(a.readyTip)
+		}
+	case id == cmdAutoPaste:
+		a.conf.AutoPaste = !a.conf.AutoPaste
+		a.saveConfig(map[string]any{"auto_paste": a.conf.AutoPaste})
+		if a.conf.AutoPaste {
+			a.tray.Notify("Clipboard Translator", "The translation will be pasted into the window you selected the text in.", false)
+		}
+	case id == cmdHistoryClear:
+		a.hist.Clear()
 	case id == cmdCheckUpdate:
 		a.startUpdateCheck()
 	case id == cmdDoUpdate:
@@ -96,6 +132,21 @@ func (a *app) handleCommand(id int) {
 	case id == cmdPlamoLicense:
 		openTarget(plamoLicenseURL)
 	}
+}
+
+// copyFromHistory puts the translation of history entry i (newest first) on the
+// clipboard again.
+func (a *app) copyFromHistory(i int) {
+	items := a.hist.Items()
+	if i < 0 || i >= len(items) || a.cb == nil {
+		return
+	}
+	if err := a.cb.Write(items[i].Translated); err != nil {
+		log.Printf("could not copy from history: %v", err)
+		a.tray.Notify("Clipboard Translator", "Could not copy to the clipboard: "+err.Error(), true)
+		return
+	}
+	a.tray.Notify("Clipboard Translator", "Copied. Paste with Ctrl+V.", false)
 }
 
 // saveConfig writes changed keys to config.json and tells the user if that fails.

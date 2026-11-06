@@ -23,6 +23,9 @@ type result struct {
 	original, translated string
 	generation           uint64
 	err                  error
+	direction            translationDirection
+	window               uintptr // foreground window when the hotkey was pressed
+	fromSelection        bool    // the text was a fresh selection, not the old clipboard
 }
 
 type translationDirection struct{ Source, Target string }
