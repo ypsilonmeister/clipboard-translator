@@ -15,7 +15,7 @@ function Download-File([string]$url, [string]$dest) {
     $partial = "$dest.partial"
     if (Test-Path $partial) { Remove-Item $partial -Force }
     try {
-        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $partial -Headers @{ 'User-Agent' = 'PortableClipboardTranslator/0.3' } -MaximumRedirection 10
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $partial -Headers @{ 'User-Agent' = 'PortableClipboardTranslator/0.3.2' } -MaximumRedirection 10
         if ((Get-Item $partial).Length -eq 0) { throw "Download empty: $url" }
         Move-Item -Force -Path $partial -Destination $dest
     } catch {
@@ -86,7 +86,7 @@ Write-Host "Requested backend: $Backend"
 # Use recent official releases, select one with a matching Windows CPU asset and
 # the requested GPU asset. Do not construct or guess download filenames.
 Write-Host 'Discovering official llama.cpp Windows builds...'
-$releases = @(Invoke-RestMethod -Uri 'https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30' -Headers @{ 'User-Agent' = 'PortableClipboardTranslator/0.3'; 'Accept' = 'application/vnd.github+json' })
+$releases = @(Invoke-RestMethod -Uri 'https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30' -Headers @{ 'User-Agent' = 'PortableClipboardTranslator/0.3.2'; 'Accept' = 'application/vnd.github+json' })
 $choice = $null
 $cpuAsset = $null
 $gpuAsset = $null

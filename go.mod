@@ -1,3 +1,3 @@
-module example.com/clipboardtranslator
+module github.com/ypsilonmeister/clipboard-translator
 
 go 1.21

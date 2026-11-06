@@ -26,7 +26,7 @@ type Config struct {
 func defaultConfig() Config {
 	return Config{
 		Hotkey: "Ctrl+Alt+E", Port: 18119, PollMS: 50, MaxChars: 4000, MaxTokens: 2048, ContextTokens: 4096,
-		GPULayers: 0, TranslationTimeoutSec: 180, StartupTimeoutSec: 180,
+		GPULayers: 0, TranslationTimeoutSec: 180, StartupTimeoutSec: 120,
 		ModelFile:          "models/plamo-3-translate-2b-Q4_K_M.gguf",
 		TemplateFile:       "models/chat_template.jinja",
 		ServerFile:         "runtime/cpu/llama-server.exe",
@@ -52,7 +52,7 @@ func loadConfig(dir string) (Config, error) {
 		return c, errors.New("port must be 1024..65535")
 	}
 	if c.PollMS < 20 || c.PollMS > 10000 {
-		return c, errors.New("poll_ms must be 100..10000")
+		return c, errors.New("poll_ms must be 20..10000")
 	}
 	if c.MaxChars < 1 || c.MaxChars > 100000 {
 		return c, errors.New("max_chars out of range")
