@@ -103,21 +103,11 @@ func newHotkey(spec string) (Hotkey, error) {
 	}
 	return &windowsHotkey{}, nil
 }
-func (*windowsHotkey) Pressed() (bool, error) {
-	var msg winMsg
-	found := false
-	for {
-		ok, _, _ := peekMessageW.Call(uintptr(unsafe.Pointer(&msg)), 0, wmHotkey, wmHotkey, pmRemove)
-		if ok == 0 {
-			break
-		}
-		if msg.Message == wmHotkey && msg.WParam == hotkeyID {
-			found = true
-		}
-	}
-	return found, nil
-}
-func (*windowsHotkey) Close() error { unregisterHotKey.Call(0, hotkeyID); return nil }
+
+// Pressed drains the thread's message queue (which also services the tray
+// window) and reports whether the hotkey fired.
+func (*windowsHotkey) Pressed() (bool, error) { return pumpMessages(), nil }
+func (*windowsHotkey) Close() error           { unregisterHotKey.Call(0, hotkeyID); return nil }
 
 func clipboardSequence() uint32 {
 	n, _, _ := getClipboardSequenceNumber.Call()

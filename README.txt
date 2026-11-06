@@ -8,10 +8,16 @@ INSTALL
 2. If you previously downloaded PLaMo, you may copy the GGUF and
    chat_template.jinja from your OLD models folder into the NEW models folder.
 3. Run Setup.cmd (internet required only for initial downloads).
-4. Run Start.cmd. Wait for a 'ready' message in the program console.
+4. Run Start.cmd. The app runs in the system tray (no console window). Wait
+   for the 'Ready' balloon; hover over the tray icon to see the current state.
+   On Windows 11 the icon may be hidden under the ^ overflow arrow.
 5. Highlight Japanese or English text and press Ctrl+Alt+E. Ctrl+V pastes the
    translated text when ready. No text selected = existing clipboard content.
-6. Run Stop.cmd to stop the app and llama-server.
+6. Right-click the tray icon for 'Start with Windows' (toggle), 'Open log' and
+   'Quit'. Stop.cmd also stops the app and llama-server.
+   After Setup.cmd has run once, Start.cmd is optional: you can run
+   ClipboardTranslator.exe directly. If you move the folder, toggle
+   'Start with Windows' off and on again.
 
 AUTO BACKENDS
   NVIDIA GPU       -> CUDA 12.4
@@ -40,7 +46,8 @@ LIMITATIONS
   If another application updates the clipboard metadata without changing text,
   the translation is still accepted. If the actual text changes, it is preserved.
 - This is not an automatic paste; you press Ctrl+V after translation.
-- The console and logs in this folder show errors without recording text.
+- Startup errors appear in a message box. The logs in this folder record
+  errors without recording text.
 - The backend may fail because of insufficient VRAM, old GPU drivers, or DLL
   incompatibilities. See server.log and translator.log for details.
 - Verify PLaMo 3 Translate license terms before use.
