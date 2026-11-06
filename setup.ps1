@@ -127,14 +127,19 @@ if ($Backend -ne 'cpu') {
 
 # Modify only relevant properties; retain user's other settings/hotkey.
 $configFile = Join-Path $root 'config.json'
-$config = Get-Content -Raw -Encoding UTF8 $configFile | ConvertFrom-Json
-$config.server_file = "runtime/$installedBackend/llama-server.exe"
-$config.fallback_server_file = 'runtime/cpu/llama-server.exe'
-$config.gpu_layers = if ($installedBackend -eq 'cpu') { 0 } else { 99 }
+# A bare exe (for example from winget) has no config.json yet; the app fills in defaults for the rest.
+$config = if (Test-Path -LiteralPath $configFile) { Get-Content -Raw -Encoding UTF8 $configFile | ConvertFrom-Json } else { [pscustomobject]@{} }
+function Set-ConfigValue($name, $value) {
+    if ($config.PSObject.Properties[$name]) { $config.$name = $value }
+    else { $config | Add-Member -NotePropertyName $name -NotePropertyValue $value }
+}
+Set-ConfigValue 'server_file' "runtime/$installedBackend/llama-server.exe"
+Set-ConfigValue 'fallback_server_file' 'runtime/cpu/llama-server.exe'
+Set-ConfigValue 'gpu_layers' $(if ($installedBackend -eq 'cpu') { 0 } else { 99 })
 $json = $config | ConvertTo-Json -Depth 8
 [System.IO.File]::WriteAllText($configFile, $json, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host ''
 Write-Host "Setup finished. Primary backend: $installedBackend; CPU fallback installed."
-Write-Host "Now run Start.cmd. The full folder can be copied to another Windows x64 PC."
+Write-Host "Now start ClipboardTranslator.exe (or Start.cmd). The full folder can be copied to another Windows x64 PC."
 Write-Host 'A different GPU or driver on the destination may trigger CPU fallback.'
 Write-Host 'PLaMo terms: https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF'
