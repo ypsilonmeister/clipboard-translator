@@ -2,6 +2,8 @@
 
 # clipboard-translator
 
+English | [日本語](README.ja.md)
+
 Japanese <-> English clipboard translator for Windows. Select text, press
 **Ctrl+Alt+E**, then paste the translation with **Ctrl+V**.
 
@@ -9,10 +11,16 @@ Translation runs fully locally with [llama.cpp](https://github.com/ggml-org/llam
 and [PLaMo 3 Translate 2B (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF).
 No Ollama or Python is required.
 
+**Built with PLaMo.** The translation model is PLaMo by Preferred Networks and is
+used under the [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-ja);
+see [Licenses](#licenses) before using the app for business.
+
 > **Status: prototype.** It has not been tested on a wide range of PCs or GPU
 > drivers. Use at your own risk.
 
 ## Install (Windows 10/11 x64)
+
+### Install script (recommended)
 
 Open PowerShell (no administrator rights needed) and run:
 
@@ -27,8 +35,8 @@ installed as a fallback), adds a Start menu shortcut and an *Apps & features*
 entry, and starts the app. Read [`install.ps1`](install.ps1) first if you like;
 it is short.
 
-- **Update:** run the same command again. Your `config.json`, the model and
-  llama.cpp are kept.
+- **Update:** run the same command again, or use *Check for updates* in the tray
+  menu. Your `config.json`, the model and llama.cpp are kept.
 - **Uninstall:** Settings > Apps > *Clipboard Translator*, or
   `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.ps1))) -Uninstall`
   (this deletes the install folder, including the model).
@@ -39,40 +47,101 @@ it is short.
   the script, the same options exist as parameters (`-Version`, `-InstallDir`,
   `-SkipSetup`, `-NoLaunch`, `-Force`).
 
-### Using it
+### Scoop
 
-1. The app lives in the **system tray** (notification area; it may be under the
-   `^` arrow). A balloon says *Ready* once the model has loaded (this can take a
-   while on the first start).
-2. Select Japanese or English text and press `Ctrl+Alt+E`. When the translation
-   is ready it replaces the clipboard content; press `Ctrl+V` to paste.
-   With no selection, the current clipboard text is translated.
-3. Right-click the tray icon for **Start with Windows** (toggle), **Open log**
-   and **Quit**.
+```powershell
+scoop bucket add clipboard-translator https://github.com/ypsilonmeister/clipboard-translator
+scoop install clipboard-translator
+```
 
-The tooltip of the tray icon shows the current state (loading, ready,
-translating, translation ready). Startup errors are shown in a message box and
-written to `translator.log`.
+`models`, `runtime` and `config.json` are kept across `scoop update`. This route
+is new and has had less testing than the install script.
 
 ### Portable zip (manual)
 
-Prefer not to run a script? Download
-`Portable-Clipboard-Translator-Windows-x64-<version>.zip` from
-[Releases](https://github.com/ypsilonmeister/clipboard-translator/releases),
-extract it to a writable folder, run `Setup.cmd` once (model and llama.cpp), then
-`Start.cmd` (or `ClipboardTranslator.exe` directly). `Stop.cmd` stops the app and
-its `llama-server` child process. "Start with Windows" registers the exe path
-under `HKCU\...\Run`; if you move the folder, toggle it off and on again.
-
-The tooltip of the tray icon shows the current state (loading, ready,
-translating, translation ready). Startup errors are shown in a message box and
-written to `translator.log`.
+Download `Portable-Clipboard-Translator-Windows-x64-<version>.zip` from
+[Releases](https://github.com/ypsilonmeister/clipboard-translator/releases) and
+extract it to a writable folder. Run `ClipboardTranslator.exe` (or `Start.cmd`);
+if the model or llama.cpp is missing it offers to download them. `Setup.cmd` does
+the same download up front, and `Stop.cmd` stops the app and its `llama-server`
+child process. "Start with Windows" registers the exe path under `HKCU\...\Run`;
+if you move the folder, toggle it off and on again.
 
 Manual backend choice:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend vulkan   # or cuda / cpu
 ```
+
+## Using it
+
+The app lives in the **system tray** (notification area; on Windows 11 it may be
+under the `^` arrow). A balloon says *Ready* once the model has loaded; the
+tooltip shows the state and, while loading or translating, the elapsed seconds.
+
+Select Japanese or English text and press `Ctrl+Alt+E`. When the translation is
+ready it replaces the clipboard content; press `Ctrl+V` to paste. With no
+selection, the current clipboard text is translated.
+
+Right-click the tray icon:
+
+| Item | What it does |
+| --- | --- |
+| **Cancel translation** | Shown while a translation runs. |
+| **Recent translations** | The last 10, kept in memory only (never written to disk). Click one to copy its translation again; *Clear history* empties the list. |
+| **Paste automatically after translating** | Off by default. When on, Ctrl+V is typed for you, but only if the text was a fresh selection and the same window is still in front; otherwise the translation just waits in the clipboard. |
+| **Hotkey** | Pick another combination. If another program already owns it, the old one stays. |
+| **Translation engine** | Switch between the installed llama.cpp builds (CPU, CUDA, Vulkan). Shown only when more than one is installed. |
+| **Check for updates** | Asks GitHub for the latest release when you click. The app never checks by itself. |
+| **Open config.json** | For everything else, see [Configuration](#configuration). |
+| **Built with PLaMo (license)** | Opens the PLaMo Community License. |
+| **Start with Windows** | Toggle. |
+| **Open log** / **Quit** | |
+
+If the translation server (`llama-server`) stops unexpectedly the app restarts it
+(1 s, 2 s, 4 s ... apart) and says so; after 3 restarts within 10 minutes it gives
+up and quits with a message. Startup errors are shown in a message box and
+written to `translator.log`.
+
+## Privacy and network use
+
+- Translation happens on your PC. The server listens on `127.0.0.1` only.
+- The app contacts the network only when you ask: the model and llama.cpp
+  download (`Setup.cmd`, `setup.ps1`, the first-run offer, the install script)
+  and *Check for updates* / *Update*. There is no telemetry and no background
+  check.
+- Logs record errors but not the text you translate. Translation history lives in
+  memory only and is gone when the app quits.
+
+## Configuration
+
+`config.json` (all paths are relative to the app folder). The tray menu edits
+`hotkey`, `server_file`, `gpu_layers` and `auto_paste` for you; everything else is
+edited by hand and needs a restart. The previous file is kept as `config.json.bak`.
+
+| Key | Meaning |
+| --- | --- |
+| `hotkey` | Modifier(s) + one letter A-Z, e.g. `Ctrl+Alt+E` |
+| `auto_paste` | `true` types Ctrl+V after translating (default `false`) |
+| `port` | Local llama-server port (the app also uses `port + 1` as an instance lock) |
+| `max_chars` | Longer text is skipped |
+| `gpu_layers` | Layers offloaded to GPU (`0` = CPU only) |
+| `server_file` / `fallback_server_file` | llama-server binaries (primary / CPU fallback) |
+
+> `setup.ps1` rewrites `server_file`, `fallback_server_file` and `gpu_layers`
+> to match the detected backend, so the file shows up as modified in git after
+> setup.
+
+## Limitations
+
+- Some apps block the synthetic Ctrl+C used to read the selection.
+- Reading the selection changes the clipboard. The translation only replaces it
+  if the clipboard text is still the text that was captured.
+- Only the Japanese <-> English pair is supported. URLs are not translated.
+- A GPU backend can fail (too little VRAM, old driver, missing DLLs); the app
+  then falls back to the CPU build. See `server.log` and `translator.log`.
+- The exe is not code-signed, so a zip downloaded in a browser may trigger a
+  SmartScreen warning (files fetched by the install script do not).
 
 ## Build
 
@@ -95,55 +164,47 @@ toolchain picks up automatically. It is generated with the standard library only
 
 ```powershell
 go run ./tools/mkicon                    # assets/icon-source.jpg -> assets/icon.ico, assets/icon.png
-go run ./tools/mksyso -version 0.5.0     # icon + assets/app.manifest + version -> resource_windows_amd64.syso
+go run ./tools/mksyso -version 0.5.1     # icon + assets/app.manifest + version -> resource_windows_amd64.syso
 ```
 
 The committed `.syso` carries the version of the last release; the release
-workflow regenerates it from the tag.
+workflow regenerates it from the tag and also stamps `main.version`, which *Check
+for updates* compares with the latest release (a local build says "development
+build" and never claims to be outdated). `setup.ps1` is embedded in the exe.
 
 ## Continuous integration and releases
 
 - `.github/workflows/ci.yml` runs `gofmt`, `go vet`, `go test` and a release-flag
   build on Windows for every push to `main` and every pull request, and checks
-  that the non-Windows stubs still compile.
-- Pushing a tag such as `v0.5.0` runs `.github/workflows/release.yml`: it builds
+  that the non-Windows stubs still compile and that the PowerShell scripts parse.
+- Pushing a tag such as `v0.6.0` runs `.github/workflows/release.yml`: it builds
   the exe with the tag as its version, packages
   `Portable-Clipboard-Translator-Windows-x64-<tag>.zip` and attaches it to the
   GitHub release (an existing release for the tag only gets the zip).
+- `bucket/clipboard-translator.json` is the Scoop manifest; bump it with each
+  release (`scoop checkver -u` can do it).
 
-## Configuration
-
-`config.json` (all paths are relative to the app folder):
-
-| Key | Meaning |
-| --- | --- |
-| `hotkey` | Modifier(s) + one letter A-Z, e.g. `Ctrl+Alt+E` |
-| `port` | Local llama-server port (the app also uses `port + 1` as an instance lock) |
-| `max_chars` | Longer text is skipped |
-| `gpu_layers` | Layers offloaded to GPU (`0` = CPU only) |
-| `server_file` / `fallback_server_file` | llama-server binaries (primary / CPU fallback) |
-
-> `Setup.cmd` rewrites `server_file`, `fallback_server_file` and `gpu_layers`
-> in `config.json` to match the detected backend, so the file shows up as
-> modified in git after setup.
-
-## Limitations
-
-- Some apps block the synthetic Ctrl+C used to read the selection.
-- Reading the selection changes the clipboard. The translation only replaces it
-  if the clipboard text is still the text that was captured.
-- Only the Japanese <-> English pair is supported. URLs are not translated.
-- A GPU backend can fail (too little VRAM, old driver, missing DLLs); the app
-  then falls back to the CPU build. See `server.log` and `translator.log`.
-- Logs record errors but not the translated text.
-- The tray icon is the default application icon for now. On Windows 11 it may
-  be hidden under the `^` overflow arrow until you drag it onto the taskbar.
+Bug reports and feature requests: use the issue forms. They ask for the app
+version, how it was installed and the log excerpt.
 
 ## Licenses
 
 This repository is licensed under the [MIT License](LICENSE).
 
-The model and llama.cpp are **not** included; `Setup.cmd` downloads them from
-their official sources and they have their own licenses. Please check the
-PLaMo 3 Translate license terms before use:
-<https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF>
+The model and llama.cpp are **not** included; `setup.ps1` downloads them from
+their official sources and they have their own licenses.
+
+**PLaMo.** The model is used under the
+[PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-ja)
+of Preferred Networks, Inc. (**Built with PLaMo**). In short, as read for this
+README (the publisher can change the text): using the model for business or
+profit, which includes use inside an organization, is allowed free of charge if
+you register beforehand on the publisher's page and your (or your affiliates')
+revenue for the last fiscal year does not exceed 1 billion yen. Whoever provides
+the model or its output to third parties must show "Built with PLaMo" and supply
+a copy of the license, and text you publish that the model produced must say so.
+Read the license itself; this summary is not legal advice. The license says
+nothing about donations, so whether accepting any counts as commercial use is a
+question for the publisher.
+
+[llama.cpp](https://github.com/ggml-org/llama.cpp) is MIT licensed.
