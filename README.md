@@ -57,13 +57,14 @@ go build -ldflags "-H=windowsgui -s -w" -o ClipboardTranslator.exe .
 go build -o ClipboardTranslator.exe .
 ```
 
-The icon and the version info shown in Explorer are linked in from
-`resource_windows_amd64.syso`, which the Go toolchain picks up automatically.
-It is generated with the standard library only:
+The icon, the version info shown in Explorer and the application manifest
+(per-monitor DPI awareness, so the tray icon and menu stay sharp on scaled
+displays) are linked in from `resource_windows_amd64.syso`, which the Go
+toolchain picks up automatically. It is generated with the standard library only:
 
 ```powershell
 go run ./tools/mkicon                    # assets/icon-source.jpg -> assets/icon.ico, assets/icon.png
-go run ./tools/mksyso -version 0.4.1     # assets/icon.ico + version -> resource_windows_amd64.syso
+go run ./tools/mksyso -version 0.5.0     # icon + assets/app.manifest + version -> resource_windows_amd64.syso
 ```
 
 The committed `.syso` carries the version of the last release; the release

@@ -70,6 +70,23 @@ func TestAppIconIsEmbedded(t *testing.T) {
 	}
 }
 
+// The embedded manifest must make the process per-monitor-v2 DPI aware;
+// otherwise Windows bitmap-stretches the tray icon and menu on scaled displays.
+func TestProcessIsPerMonitorDPIAware(t *testing.T) {
+	getCtx := user32.NewProc("GetThreadDpiAwarenessContext")
+	equal := user32.NewProc("AreDpiAwarenessContextsEqual")
+	if getCtx.Find() != nil || equal.Find() != nil {
+		t.Skip("DPI awareness context APIs need Windows 10 1607 or later")
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	ctx, _, _ := getCtx.Call()
+	const perMonitorV2 = ^uintptr(3) // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = (HANDLE)-4
+	if ok, _, _ := equal.Call(ctx, perMonitorV2); ok == 0 {
+		t.Fatalf("DPI awareness context %#x is not per-monitor v2: manifest missing (run go run ./tools/mksyso)", ctx)
+	}
+}
+
 // Creates a real tray icon in the interactive session and removes it again.
 func TestTrayLifecycle(t *testing.T) {
 	runtime.LockOSThread()
