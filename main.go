@@ -270,6 +270,7 @@ func main() {
 		cmd := exec.Command(binary, args...)
 		cmd.Dir = filepath.Dir(binary)
 		cmd.Stdout, cmd.Stderr = logOut, logOut
+		hideConsole(cmd)
 		log.Printf("starting %s (gpu_layers=%d)", binary, gpuLayers)
 		if err := cmd.Start(); err != nil {
 			return err
