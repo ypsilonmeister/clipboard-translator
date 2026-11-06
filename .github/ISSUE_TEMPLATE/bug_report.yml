@@ -1,0 +1,65 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. A few details make a bug much easier to fix.
+        **Privacy:** `translator.log` does not contain the text you translate, but file paths in it can include your user name. Remove anything you do not want to share.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Shown at the bottom of the tray menu (right-click the tray icon). A development build says so.
+      placeholder: "0.5.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - install.ps1 (irm ... | iex)
+        - Scoop
+        - Portable zip, extracted by hand
+        - Built from source
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 23H2"
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Translation engine
+      description: Tray menu > Translation engine (only shown when more than one is installed), or the folder name under `runtime`.
+      options:
+        - CPU
+        - GPU (CUDA)
+        - GPU (Vulkan)
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver (if you use a GPU engine)
+      placeholder: "NVIDIA RTX 4070, driver 560.94"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: The last lines of `translator.log` (tray menu > Open log) and, for startup problems, `server.log` from the same folder.
+      render: text

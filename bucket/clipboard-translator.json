@@ -1,0 +1,51 @@
+{
+    "version": "0.5.1",
+    "description": "Japanese <-> English clipboard translator that runs fully locally (llama.cpp + PLaMo 3 Translate). Select text, press a hotkey, paste.",
+    "homepage": "https://github.com/ypsilonmeister/clipboard-translator",
+    "license": "MIT",
+    "notes": [
+        "The translation model (over 1 GB) and llama.cpp are downloaded once while installing.",
+        "Start 'Clipboard Translator' from the Start menu; it lives in the system tray. Hotkey: Ctrl+Alt+E.",
+        "Built with PLaMo. The model has its own license: https://plamo.preferredai.jp/info/plamo-community-license-ja"
+    ],
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/ypsilonmeister/clipboard-translator/releases/download/v0.5.1/Portable-Clipboard-Translator-Windows-x64-v0.5.1.zip",
+            "hash": "88333b2e9d0876a18cb862feae75c82e473d371c70c59fd336ec544538c0ae0e"
+        }
+    },
+    "shortcuts": [
+        [
+            "ClipboardTranslator.exe",
+            "Clipboard Translator"
+        ]
+    ],
+    "persist": [
+        "models",
+        "runtime",
+        "config.json"
+    ],
+    "pre_uninstall": [
+        "# Ask a running copy to quit (it also stops its llama-server) so Scoop can delete the files.",
+        "if (Test-Path \"$dir\\ClipboardTranslator.exe\") {",
+        "    New-Item -ItemType File -Force -Path \"$dir\\STOP\" | Out-Null",
+        "    Start-Sleep -Seconds 3",
+        "    Get-Process -Name ClipboardTranslator, llama-server -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force",
+        "}"
+    ],
+    "post_install": [
+        "# Download the model and llama.cpp into the persisted folders (skipped when they are already there).",
+        "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"$dir\\setup.ps1\" -Backend auto",
+        "if ($LASTEXITCODE -ne 0) { error 'setup.ps1 failed. Run it again from the app folder, or start the app and accept its offer to download the model.' }"
+    ],
+    "checkver": {
+        "github": "https://github.com/ypsilonmeister/clipboard-translator"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/ypsilonmeister/clipboard-translator/releases/download/v$version/Portable-Clipboard-Translator-Windows-x64-v$version.zip"
+            }
+        }
+    }
+}
