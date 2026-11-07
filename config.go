@@ -32,8 +32,8 @@ func defaultConfig() Config {
 		GPULayers: 0, TranslationTimeoutSec: 180, StartupTimeoutSec: 120,
 		ModelFile:          "models/plamo-3-translate-2b-Q4_K_M.gguf",
 		TemplateFile:       "models/chat_template.jinja",
-		ServerFile:         "runtime/cpu/llama-server.exe",
-		FallbackServerFile: "runtime/cpu/llama-server.exe",
+		ServerFile:         "runtime/cpu/" + serverBinaryName(),
+		FallbackServerFile: "runtime/cpu/" + serverBinaryName(),
 	}
 }
 func loadConfig(dir string) (Config, error) {

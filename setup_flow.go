@@ -15,15 +15,25 @@ import (
 //go:embed setup.ps1
 var embeddedSetup []byte
 
+//go:embed setup.sh
+var embeddedLinuxSetup []byte
+
+func setupContents() []byte {
+	if setupScriptName() == "setup.sh" {
+		return embeddedLinuxSetup
+	}
+	return embeddedSetup
+}
+
 // ensureSetupScript makes sure setup.ps1 exists in dir, writing the embedded
 // copy when it is missing. An existing file (possibly edited by the user) is
 // left alone.
 func ensureSetupScript(dir string) error {
-	script := filepath.Join(dir, "setup.ps1")
+	script := filepath.Join(dir, setupScriptName())
 	if _, err := os.Stat(script); err == nil {
 		return nil
 	}
-	return os.WriteFile(script, embeddedSetup, 0o644)
+	return os.WriteFile(script, setupContents(), 0o644)
 }
 
 // appPaths holds the absolute paths the config points at.
@@ -74,7 +84,7 @@ func ensureInstalled(dir string, conf Config) (Config, bool) {
 		}
 		list := strings.Join(missing, "\n")
 		if attempt > 0 {
-			fatal("required file missing:\n", list, "\nRun Setup.cmd (or setup.ps1) first.")
+			fatal("required file missing:\n", list, "\nRun ", setupScriptName(), " first.")
 		}
 		log.Printf("missing files: %v", missing)
 		if !askYesNo("Clipboard Translator needs the PLaMo translation model and llama.cpp, which are not installed yet:\n\n" +
@@ -84,11 +94,11 @@ func ensureInstalled(dir string, conf Config) (Config, bool) {
 		}
 		// Only now, so declining leaves the folder untouched.
 		if err := ensureSetupScript(dir); err != nil {
-			fatal("required file missing:\n", list, "\nsetup.ps1 could not be written to the app folder: ", err)
+			fatal("required file missing:\n", list, "\n", setupScriptName(), " could not be written to the app folder: ", err)
 		}
-		log.Print("running setup.ps1")
+		log.Print("running ", setupScriptName())
 		if err := runSetup(dir); err != nil {
-			fatal("Setup failed: ", err, "\nRun Setup.cmd to see the details.")
+			fatal("Setup failed: ", err, "\nRun ", setupScriptName(), " to see the details.")
 		}
 		if conf, err = loadConfig(dir); err != nil {
 			fatal("config: ", err)

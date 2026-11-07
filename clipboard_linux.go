@@ -1,63 +1,48 @@
-//go:build linux
+//go:build linux && cgo
 
 package main
 
+/*
+#include "native_linux.h"
+*/
+import "C"
+
 import (
-	"bytes"
 	"errors"
-	"os"
-	"os/exec"
 	"strings"
 )
 
-type linuxClipboard struct{ cmd string }
+type linuxClipboard struct{}
 
 func newClipboard() (Clipboard, error) {
-	if os.Getenv("WAYLAND_DISPLAY") != "" {
-		if p, err := exec.LookPath("wl-paste"); err == nil {
-			return &linuxClipboard{cmd: p}, nil
-		}
+	if C.ct_init() == 0 {
+		return nil, errors.New("X11 clipboard is unavailable")
 	}
-	if p, err := exec.LookPath("xclip"); err == nil {
-		return &linuxClipboard{cmd: p}, nil
-	}
-	return nil, errors.New("install wl-clipboard (Wayland) or xclip (X11)")
+	return &linuxClipboard{}, nil
 }
-func (l *linuxClipboard) Read() (string, error) {
-	args := []string{"-selection", "clipboard", "-o"}
-	if strings.Contains(l.cmd, "wl-paste") {
-		args = []string{"--no-newline"}
+func (*linuxClipboard) Read() (string, error) { return readX11Text(false), nil }
+func (*linuxClipboard) Write(text string) error {
+	if strings.IndexByte(text, 0) >= 0 {
+		return errors.New("clipboard text contains a NUL byte")
 	}
-	out, err := exec.Command(l.cmd, args...).Output()
-	return string(out), err
+	ok := false
+	withCString(text, func(p *C.char) { ok = C.ct_write(p) != 0 })
+	if !ok {
+		return errors.New("X11 clipboard write failed")
+	}
+	return nil
 }
-func (l *linuxClipboard) Write(text string) error {
-	args := []string{"-selection", "clipboard", "-i"}
-	if strings.Contains(l.cmd, "wl-paste") {
-		args = nil
-	}
-	cmdName := l.cmd
-	if strings.Contains(l.cmd, "wl-paste") {
-		p, err := exec.LookPath("wl-copy")
-		if err != nil {
-			return err
-		}
-		cmdName = p
-	}
-	cmd := exec.Command(cmdName, args...)
-	cmd.Stdin = bytes.NewBufferString(text)
-	return cmd.Run()
-}
-func (l *linuxClipboard) Close() error { return nil }
+func (*linuxClipboard) Close() error { return nil }
 
-// Non-Windows implementation is best effort. The app currently supports Windows only.
+// X11 has no atomic compare-and-set operation for selections. Check immediately
+// before claiming CLIPBOARD; another X11 client can still race this operation.
 func (c *linuxClipboard) ReplaceIfUnchanged(expected, translated string) (bool, error) {
 	current, err := c.Read()
-	if err != nil {
+	if err != nil || current != expected {
 		return false, err
 	}
-	if current != expected {
-		return false, nil
+	if err := c.Write(translated); err != nil {
+		return false, err
 	}
-	return true, c.Write(translated)
+	return true, nil
 }

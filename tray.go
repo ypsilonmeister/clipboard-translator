@@ -15,8 +15,8 @@ type MenuItem struct {
 }
 
 // Tray is the notification-area (system tray) presence of the app.
-// The Windows implementation lives in tray_windows.go; other platforms and
-// failed initialisation use noopTray so the rest of the program never needs
+// Implementations live in tray_windows.go and desktop_linux.go. Unsupported
+// platforms and failed Windows initialisation use noopTray so callers never need
 // to check for nil.
 type Tray interface {
 	// QuitRequested reports whether the user chose "Quit" in the tray menu.

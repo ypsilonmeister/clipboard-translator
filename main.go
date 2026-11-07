@@ -179,14 +179,15 @@ func fatal(v ...any) {
 
 func main() {
 	flag.Parse()
-	if runtime.GOOS != "windows" {
-		fmt.Fprintln(os.Stderr, "This prototype supports Windows only.")
+	// Native desktop APIs must be initialized and serviced on this thread.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := platformRuntimeError(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	// Windows RegisterHotKey and the tray window are thread-local; the same OS
 	// thread must create them and pump their messages.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
 	dir, err := appDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

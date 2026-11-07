@@ -4,12 +4,12 @@
 
 [English](README.md) | 日本語
 
-Windows 用の、日本語 <-> 英語のクリップボード翻訳ツールです。テキストを選択して
+Windows と Linux（X11）用の、日本語 <-> 英語のクリップボード翻訳ツールです。テキストを選択して
 **Ctrl+Alt+E** を押し、翻訳結果を **Ctrl+V** で貼り付けます。
 
 翻訳はすべて手元の PC で、[llama.cpp](https://github.com/ggml-org/llama.cpp) と
 [PLaMo 3 Translate 2B (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)
-を使って行います。Ollama も Python も要りません。
+を使って行います。Ollama は不要です。Windows では Python も不要で、Linux ではセットアップ時だけ使用します。
 
 **Built with PLaMo.** 翻訳モデルは Preferred Networks 社の PLaMo で、
 [PLaMo コミュニティライセンス](https://plamo.preferredai.jp/info/plamo-community-license-ja)
@@ -69,6 +69,64 @@ exe のパスを `HKCU\...\Run` に登録します。フォルダーを移動し
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend vulkan   # または cuda / cpu
 ```
+
+## Linux（X11、実験的対応）
+
+[#13](https://github.com/ypsilonmeister/clipboard-translator/issues/13) の最初の段階として Linux に対応しています。
+macOS 対応は未実装です。**Wayland セッション（XWayland を含む）は非対応**です。
+ログイン時に Xorg／X11 セッションを選んでください。
+
+Ubuntu 24.04 では、実行に必要なパッケージを入れます。
+
+```bash
+sudo apt-get install libgtk-3-0t64 libxtst6 python3 xdg-utils libnotify-bin
+```
+
+Releases の Linux 用 `tar.gz` をホーム以下の書き込み可能な専用フォルダーに展開し、実行します。
+
+```bash
+cd clipboard-translator-linux-amd64-<version>
+bash setup.sh                  # モデルと公式 CPU ランタイムを取得
+./clipboard-translator
+# Vulkan ドライバーが使える環境で、明示的に追加する場合:
+bash setup.sh --backend vulkan
+```
+
+セットアップには `tarfile.data_filter` が使える Python（3.12 以降、またはセキュリティ更新済みの
+3.10／3.11）が必要です。ランタイムのアーカイブは GitHub 公開の SHA-256 と照合します。
+標準は CPU で、Vulkan が起動できなければ導入済みの CPU に切り替わります。
+モデルは Windows と同様にサイズで不完全な取得を検出し、固定ハッシュとの照合は行いません。
+ランタイムの共有ライブラリとリンクはアーカイブの配置を保って導入します。
+配布元ランタイムのシステム要件も適用されます。古いディストリビューションでは、対応する
+llama.cpp を自身でビルドし、`runtime/cpu/llama-server` に配置する必要があります。
+
+Linux では Ctrl+C を送らず、X11 の **PRIMARY** 選択から直接読み取り、翻訳前に CLIPBOARD に入れます。
+アプリによっては PRIMARY に最後の選択が残ります。PRIMARY に文字がないときは既存の CLIPBOARD を使います。
+X11 にクリップボードの不可分な比較・置換機能はないため、書き込み直前に文字を比較しますが、
+Windows のように他アプリとの競合を完全には防げません。クリップボードマネージャーがない場合、
+終了時にクリップボードの内容が失われることがあります。
+
+トレイとメニューは GTK 3 で表示します。互換性のあるトレイ領域がない環境では、小さな操作ウィンドウを
+表示し、メニューや Quit を使えるようにします。通知には任意で `notify-send` を使用します。
+自動貼り付けは初期オフで、XTest による Ctrl+V を使用し、修飾キーを離した後にもフォーカスを確認します。
+同じウィンドウ内での選択変更は確実に検出できないため、必要に応じて手動で貼り付けてください。
+**Start at login** は `~/.config/autostart/clipboard-translator.desktop` のみを管理します
+（`XDG_CONFIG_HOME` があればその下）。移動後は一度オフにしてからオンにし直してください。
+メニューの Quit、SIGTERM、実行ファイル隣の `STOP` ファイルで終了できます。
+Linux の更新は、終了して実行ファイルとセットアップスクリプトを置き換え、`config.json`、`models`、
+`runtime` を残す方法です。PowerShell インストーラーと Scoop は Windows 専用です。
+
+Ubuntu 24.04 上でソースからビルドする場合（Go 1.21 以降と C コンパイラーが必要）:
+
+```bash
+sudo apt-get install build-essential pkg-config libgtk-3-dev libx11-dev libxtst-dev
+bash tools/package-linux.sh dev
+# dist/clipboard-translator-linux-amd64-dev.tar.gz を書き込み可能なフォルダーへ展開します。
+```
+
+`CGO_ENABLED=0` のビルドはロジックのテスト用で、Linux のデスクトップ機能は使えません。
+CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け、メニューを検証します。
+翻訳品質、実際のデスクトップでのトレイ表示、GPU ドライバーは実機での確認が必要です。
 
 ## 使い方
 
@@ -137,7 +195,7 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend vulkan   # また�
 - exe はコード署名していないため、ブラウザーでダウンロードした zip では、SmartScreen の警告が出ることが
   あります(インストールスクリプトで取得したファイルには出ません)。
 
-## ビルド
+## ビルド（Windows）
 
 [Go](https://go.dev/) 1.21 以降が必要です。
 
@@ -167,11 +225,13 @@ go run ./tools/mksyso -version 0.5.1     # アイコン + assets/app.manifest + 
 ## CI とリリース
 
 - `.github/workflows/ci.yml` は、`main` への push と、すべての Pull Request で、Windows 上の `gofmt`、
-  `go vet`、`go test`、リリース用のフラグでのビルドを行います。あわせて、Windows 以外のスタブのコンパイルと、
-  PowerShell スクリプトの構文も確認します。
+  `go vet`、`go test`、リリース用のフラグでのビルドを行い、PowerShell の構文も確認します。
+  Linux では Xvfb 上の X11 デスクトップ機能、セットアップのフィクスチャテスト、tarball 作成も検証します。
+  macOS は現時点ではロジックとスタブのテストのみです。
 - `v0.6.0` のようなタグを push すると、`.github/workflows/release.yml` が動きます。タグをバージョンとして
   exe をビルドし、`Portable-Clipboard-Translator-Windows-x64-<タグ>.zip` にまとめて、GitHub のリリースに
-  添付します(そのタグのリリースがすでにあれば、zip だけを追加します)。
+  添付します。Ubuntu 24.04 で作成した Linux amd64 用 tarball と SHA-256 ファイルも添付します。
+  そのタグのリリースがすでにあれば、成果物を追加します。
 - `bucket/clipboard-translator.json` は Scoop のマニフェストです。リリースのたびに更新します
   (`scoop checkver -u` でできます)。
 
@@ -182,7 +242,7 @@ go run ./tools/mksyso -version 0.5.1     # アイコン + assets/app.manifest + 
 
 このリポジトリは [MIT License](LICENSE) です。
 
-モデルと llama.cpp は同梱していません。`setup.ps1` が公式の配布元からダウンロードします。
+モデルと llama.cpp は同梱していません。`setup.ps1`／`setup.sh` が公式の配布元からダウンロードします。
 それぞれ別のライセンスです。
 
 **PLaMo。** モデルは Preferred Networks 社の

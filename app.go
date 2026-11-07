@@ -383,8 +383,16 @@ func (a *app) handleResult(res result) {
 // pasteIntoForeground waits for the hotkey's modifiers to be released and then
 // types Ctrl+V.
 func pasteIntoForeground() error {
-	if !waitModifiersReleased(time.Second) {
+	return pasteWithFocus(foregroundWindow, waitModifiersReleased, sendPaste)
+}
+
+func pasteWithFocus(foreground func() uintptr, wait func(time.Duration) bool, send func() error) error {
+	target := foreground()
+	if !wait(time.Second) {
 		return errors.New("modifier keys are still held down")
 	}
-	return sendPaste()
+	if target == 0 || foreground() != target {
+		return errors.New("the focused window changed while waiting to paste")
+	}
+	return send()
 }

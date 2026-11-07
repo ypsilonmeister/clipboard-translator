@@ -28,19 +28,19 @@ func TestEnsureSetupScript(t *testing.T) {
 	if err := ensureSetupScript(dir); err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "setup.ps1"))
-	if err != nil || string(got) != string(embeddedSetup) {
+	got, err := os.ReadFile(filepath.Join(dir, setupScriptName()))
+	if err != nil || string(got) != string(setupContents()) {
 		t.Fatalf("the embedded script must be written when none exists: err=%v", err)
 	}
 
 	// A script the user edited must never be overwritten.
 	custom := []byte("# my own version\n")
-	os.WriteFile(filepath.Join(dir, "setup.ps1"), custom, 0o644)
+	os.WriteFile(filepath.Join(dir, setupScriptName()), custom, 0o644)
 	if err := ensureSetupScript(dir); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(dir, "setup.ps1")); string(got) != string(custom) {
-		t.Fatal("an existing setup.ps1 was overwritten")
+	if got, _ := os.ReadFile(filepath.Join(dir, setupScriptName())); string(got) != string(custom) {
+		t.Fatal("an existing setup script was overwritten")
 	}
 
 	if err := ensureSetupScript(filepath.Join(dir, "no", "such", "folder")); err == nil {

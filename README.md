@@ -4,12 +4,12 @@
 
 English | [日本語](README.ja.md)
 
-Japanese <-> English clipboard translator for Windows. Select text, press
+Japanese <-> English clipboard translator for Windows and Linux (X11). Select text, press
 **Ctrl+Alt+E**, then paste the translation with **Ctrl+V**.
 
 Translation runs fully locally with [llama.cpp](https://github.com/ggml-org/llama.cpp)
 and [PLaMo 3 Translate 2B (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF).
-No Ollama or Python is required.
+No Ollama is required. Windows needs no Python; Linux uses Python only for setup.
 
 **Built with PLaMo.** The translation model is PLaMo by Preferred Networks and is
 used under the [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-ja);
@@ -72,6 +72,69 @@ Manual backend choice:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend vulkan   # or cuda / cpu
 ```
+
+## Linux (X11, experimental)
+
+Linux support is the first phase of [#13](https://github.com/ypsilonmeister/clipboard-translator/issues/13).
+macOS support is still pending. **Wayland sessions, including XWayland, are not supported**;
+select an Xorg/X11 session when logging in.
+
+On Ubuntu 24.04, install the runtime dependencies:
+
+```bash
+sudo apt-get install libgtk-3-0t64 libxtst6 python3 xdg-utils libnotify-bin
+```
+
+Extract the Linux `tar.gz` from Releases into a writable, dedicated directory in your home
+folder, then run:
+
+```bash
+cd clipboard-translator-linux-amd64-<version>
+bash setup.sh                  # downloads the model and official CPU runtime
+./clipboard-translator
+# Optional, explicit Vulkan installation (requires a working Vulkan driver):
+bash setup.sh --backend vulkan
+```
+
+Setup requires Python with `tarfile.data_filter` (Python 3.12+, or a security-patched
+3.10/3.11). Runtime archives are checked against the SHA-256 published by GitHub.
+CPU is the default; Vulkan falls back to the installed CPU runtime if it cannot start.
+The model download is checked for completeness by size, as on Windows, rather than a pinned hash.
+CPU and Vulkan runtime files retain their upstream layout and shared-library links.
+The runtime archive's system requirements also apply; older distributions may need a
+locally built compatible llama.cpp runtime at `runtime/cpu/llama-server`.
+
+Select text and press the hotkey. Linux reads the X11 **PRIMARY** selection directly,
+without simulating Ctrl+C, and stages it on CLIPBOARD before translation. PRIMARY may
+retain the last selection in some applications. If PRIMARY has no text, the existing
+CLIPBOARD text is used. X11 has no atomic clipboard compare-and-set: the app compares
+text before writing, but unlike Windows it cannot eliminate races with other clients.
+Clipboard content may disappear on exit unless a clipboard manager retains it.
+
+GTK 3 supplies the tray icon/menu. If the desktop has no compatible tray host, a small
+control window keeps the menu and Quit available. Optional notifications use `notify-send`.
+Auto-paste is off by default and uses XTest Ctrl+V; it checks the focused X11 window
+again after modifiers are released. Changes to a selection within the same window cannot
+be detected reliably, so use manual paste when that matters.
+**Start at login** manages only `~/.config/autostart/clipboard-translator.desktop`
+(or the directory specified by `XDG_CONFIG_HOME`). Move the app before enabling it,
+or toggle the setting after moving it. Quit from the menu or send SIGTERM; a `STOP`
+file beside the executable also stops the app. Updating a Linux build currently means
+quitting and replacing the executable/setup script; retain `config.json`, `models`, and
+`runtime`. The Windows PowerShell installer and Scoop are Windows-only.
+
+To build from source on Ubuntu 24.04 (Go 1.21+ and a C compiler required):
+
+```bash
+sudo apt-get install build-essential pkg-config libgtk-3-dev libx11-dev libxtst-dev
+bash tools/package-linux.sh dev
+# Extract dist/clipboard-translator-linux-amd64-dev.tar.gz to a writable directory.
+```
+
+`CGO_ENABLED=0` builds keep the logic testable but cannot run the Linux desktop app.
+CI tests native input, PRIMARY/CLIPBOARD, paste, and menu commands in an isolated Xvfb
+display; translation quality, actual desktop tray integration, and GPU drivers still
+need testing on real Linux hardware.
 
 ## Using it
 
@@ -143,7 +206,7 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 - The exe is not code-signed, so a zip downloaded in a browser may trigger a
   SmartScreen warning (files fetched by the install script do not).
 
-## Build
+## Build (Windows)
 
 Requires [Go](https://go.dev/) 1.21 or later.
 
@@ -176,11 +239,14 @@ build" and never claims to be outdated). `setup.ps1` is embedded in the exe.
 
 - `.github/workflows/ci.yml` runs `gofmt`, `go vet`, `go test` and a release-flag
   build on Windows for every push to `main` and every pull request, and checks
-  that the non-Windows stubs still compile and that the PowerShell scripts parse.
+  that the PowerShell scripts parse. Linux builds/tests include native X11 desktop
+  checks under Xvfb, setup fixture tests, and tarball packaging. macOS currently
+  runs only the portable logic/stub tests.
 - Pushing a tag such as `v0.6.0` runs `.github/workflows/release.yml`: it builds
   the exe with the tag as its version, packages
   `Portable-Clipboard-Translator-Windows-x64-<tag>.zip` and attaches it to the
-  GitHub release (an existing release for the tag only gets the zip).
+  GitHub release. It also attaches a Linux amd64 tarball and SHA-256 file, built
+  on Ubuntu 24.04. An existing release receives the build artifacts.
 - `bucket/clipboard-translator.json` is the Scoop manifest; bump it with each
   release (`scoop checkver -u` can do it).
 
@@ -191,7 +257,7 @@ version, how it was installed and the log excerpt.
 
 This repository is licensed under the [MIT License](LICENSE).
 
-The model and llama.cpp are **not** included; `setup.ps1` downloads them from
+The model and llama.cpp are **not** included; `setup.ps1` / `setup.sh` download them from
 their official sources and they have their own licenses.
 
 **PLaMo.** The model is used under the
