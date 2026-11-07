@@ -24,7 +24,8 @@ const (
 	vkLWin        = 0x5B
 	vkRWin        = 0x5C
 	vkC           = 0x43
-	hotkeyID      = 0x72AB
+	// Hotkey ids are hotkeyID .. hotkeyID+maxWindowsHotkeys-1, one per profile.
+	hotkeyID = 0x72AB
 )
 
 var (
@@ -62,7 +63,23 @@ type Hotkey interface {
 	Pressed() (bool, error)
 	Close() error
 }
-type windowsHotkey struct{}
+
+// windowsHotkey is one RegisterHotKey registration. All of them share the
+// thread's message queue, so the pump records which ids fired and each hotkey
+// takes its own (see pumpHotkeys). Everything runs on the UI thread.
+type windowsHotkey struct {
+	id     uintptr
+	closed bool
+}
+
+var (
+	hotkeyIDUsed [maxWindowsHotkeys]bool
+	// firedHotkeys holds ids whose WM_HOTKEY was read by pumpHotkeys and not yet
+	// taken by that hotkey's Pressed.
+	firedHotkeys = map[uintptr]bool{}
+)
+
+func isHotkeyID(id uintptr) bool { return id >= hotkeyID && id < hotkeyID+maxWindowsHotkeys }
 
 func parseHotkey(s string) (uint32, uintptr, error) {
 	h, err := parseHotkeySpec(s, false) // same syntax check as loadConfig
@@ -89,17 +106,44 @@ func newHotkey(spec string) (Hotkey, error) {
 	if err != nil {
 		return nil, err
 	}
-	ok, _, callErr := registerHotKey.Call(0, hotkeyID, uintptr(mods), vk)
+	slot := -1
+	for i, used := range hotkeyIDUsed {
+		if !used {
+			slot = i
+			break
+		}
+	}
+	if slot < 0 {
+		return nil, fmt.Errorf("at most %d hotkeys can be registered", maxWindowsHotkeys)
+	}
+	id := uintptr(hotkeyID + slot)
+	ok, _, callErr := registerHotKey.Call(0, id, uintptr(mods), vk)
 	if ok == 0 {
 		return nil, fmt.Errorf("RegisterHotKey failed (used by another app?): %w", callErr)
 	}
-	return &windowsHotkey{}, nil
+	hotkeyIDUsed[slot] = true
+	return &windowsHotkey{id: id}, nil
 }
 
 // Pressed drains the thread's message queue (which also services the tray
-// window) and reports whether the hotkey fired.
-func (*windowsHotkey) Pressed() (bool, error) { return pumpMessages(), nil }
-func (*windowsHotkey) Close() error           { unregisterHotKey.Call(0, hotkeyID); return nil }
+// window) and reports whether this hotkey fired.
+func (h *windowsHotkey) Pressed() (bool, error) {
+	pumpHotkeys()
+	fired := firedHotkeys[h.id]
+	delete(firedHotkeys, h.id)
+	return fired, nil
+}
+
+func (h *windowsHotkey) Close() error {
+	if h.closed {
+		return nil
+	}
+	h.closed = true
+	unregisterHotKey.Call(0, h.id)
+	hotkeyIDUsed[h.id-hotkeyID] = false
+	delete(firedHotkeys, h.id)
+	return nil
+}
 
 func clipboardSequence() uint32 {
 	n, _, _ := getClipboardSequenceNumber.Call()

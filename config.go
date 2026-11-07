@@ -30,6 +30,92 @@ type Config struct {
 	AutoPaste bool `json:"auto_paste"`
 	// Languages is the pair translated in both directions, e.g. ["ja", "en"].
 	Languages []string `json:"languages"`
+	// Profiles are the hotkeys, each with its own language setting. When it is
+	// absent, one profile is made from Hotkey and Languages. Profiles[0] is always
+	// mirrored in Hotkey and (for a pair profile) Languages, which the tray menu edits.
+	Profiles []Profile `json:"profiles"`
+
+	explicitProfiles bool // config.json has a "profiles" key; the tray saves that instead of hotkey/languages
+}
+
+// Profile is one hotkey and what it translates: either a Languages pair (both
+// directions) or a Target (always into that language, the model detects the source).
+type Profile struct {
+	Hotkey    string   `json:"hotkey"`
+	Languages []string `json:"languages,omitempty"`
+	Target    string   `json:"target,omitempty"`
+}
+
+// normalizeProfiles makes Profiles non-empty and mirrors profile 0 into
+// Hotkey/Languages. It does not validate.
+func (c *Config) normalizeProfiles() {
+	if len(c.Profiles) == 0 {
+		c.Profiles = []Profile{{Hotkey: c.Hotkey, Languages: append([]string(nil), c.Languages...)}}
+		return
+	}
+	c.Hotkey = c.Profiles[0].Hotkey
+	if c.Profiles[0].Languages != nil {
+		c.Languages = append([]string(nil), c.Profiles[0].Languages...)
+	}
+}
+
+// resolveProfiles validates the hotkey/languages pair, or the profiles when the
+// file has them, and fills Profiles.
+func (c *Config) resolveProfiles(explicit bool) error {
+	if !explicit {
+		if c.Hotkey == "" {
+			return errors.New("hotkey cannot be empty")
+		}
+		if err := validateHotkey(c.Hotkey); err != nil {
+			return err
+		}
+		langs, err := validateLanguages(c.Languages)
+		if err != nil {
+			return err
+		}
+		c.Languages = langs
+		c.Profiles = nil
+		c.normalizeProfiles()
+		return nil
+	}
+	if len(c.Profiles) == 0 {
+		return errors.New("profiles must not be empty; remove the key to use hotkey and languages")
+	}
+	seen := map[hotkeySpec]int{}
+	for i := range c.Profiles {
+		p := &c.Profiles[i]
+		where := fmt.Sprintf("profiles[%d]", i)
+		spec, err := parseHotkeyNames(p.Hotkey, runtime.GOOS != "windows", runtime.GOOS == "darwin")
+		if err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
+		if j, dup := seen[spec]; dup {
+			return fmt.Errorf("%s: hotkey %q is the same key combination as profiles[%d] (%q)", where, p.Hotkey, j, c.Profiles[j].Hotkey)
+		}
+		seen[spec] = i
+		switch {
+		case p.Languages != nil && p.Target != "":
+			return fmt.Errorf("%s: use either \"languages\" or \"target\", not both", where)
+		case p.Target != "":
+			t := strings.ToLower(strings.TrimSpace(p.Target))
+			if _, ok := languages[t]; !ok {
+				return fmt.Errorf("%s: target %q is not a supported language code; supported: %s", where, p.Target, strings.Join(languageCodes(), ", "))
+			}
+			p.Target = t
+		default:
+			if p.Languages == nil {
+				return fmt.Errorf("%s: set \"languages\" (a pair) or \"target\"", where)
+			}
+			langs, err := validateLanguages(p.Languages)
+			if err != nil {
+				return fmt.Errorf("%s: %w", where, err)
+			}
+			p.Languages = langs
+		}
+	}
+	c.explicitProfiles = true
+	c.normalizeProfiles()
+	return nil
 }
 
 func defaultConfig() Config {
@@ -125,10 +211,7 @@ func loadConfig(dir string) (Config, error) {
 	if err := json.Unmarshal(bytes.TrimPrefix(b, utf8BOM), &c); err != nil {
 		return c, err
 	}
-	if c.Hotkey == "" {
-		return c, errors.New("hotkey cannot be empty")
-	}
-	if err := validateHotkey(c.Hotkey); err != nil {
+	if err := c.resolveProfiles(c.Profiles != nil); err != nil {
 		return c, err
 	}
 	// main() also listens on port+1 to allow only one instance, so 65535 would overflow.
@@ -156,10 +239,5 @@ func loadConfig(dir string) (Config, error) {
 	if c.GPULayers < 0 || c.GPULayers > 10000 {
 		return c, errors.New("gpu_layers out of range")
 	}
-	langs, err := validateLanguages(c.Languages)
-	if err != nil {
-		return c, err
-	}
-	c.Languages = langs
 	return c, nil
 }

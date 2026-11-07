@@ -305,6 +305,7 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 | `hotkey` | Modifier(s) + one letter A-Z, e.g. `Ctrl+Alt+E` (on macOS `Cmd` / `Command` and `Option` also work) |
 | `auto_paste` | `true` types Ctrl+V after translating (default `false`) |
 | `languages` | Two language codes translated in both directions, e.g. `["ja", "en"]` (default), `["en", "ko"]`, `["ja", "zh-hans"]`. Codes are the model's: `ja en ko zh-hans zh-hant ru th ar de fr es ...` (53 in all, see the [model card](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)). The direction is read from the script of the text, so the two languages must use different scripts (en ↔ de is refused for now). Japanese ↔ English is the main use; other languages are best effort. |
+| `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko"}]`. A profile has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each). Takes the place of `hotkey` and `languages`; the tray menu edits the first profile. Up to 8 hotkeys on Windows; on Linux and macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
 | `port` | Local llama-server port, 1024-65534 (the app also uses `port + 1` as an instance lock) |
 | `max_chars` | Longer text is skipped |
 | `gpu_layers` | Layers offloaded to GPU (`0` = CPU only) |
@@ -322,7 +323,7 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 - Some apps block the synthetic Ctrl+C used to read the selection.
 - Reading the selection changes the clipboard. The translation only replaces it
   if the clipboard text is still the text that was captured.
-- One language pair at a time, and the two languages must use different scripts (en ↔ de, or Simplified ↔ Traditional Chinese, cannot be told apart from the text). With Japanese and Chinese in one pair, text with only Han characters is read as Chinese; kana makes it Japanese. URLs are not translated.
+- One language pair per hotkey; the two languages must use different scripts (en ↔ de, or Simplified ↔ Traditional Chinese, cannot be told apart from the text; give each its own `target` profile instead). With Japanese and Chinese in one pair, text with only Han characters is read as Chinese; kana makes it Japanese. URLs are not translated.
 - A GPU backend can fail (too little VRAM, old driver, missing DLLs); the app
   then falls back to the CPU build. See `server.log` and `translator.log`.
 - The exe is not code-signed, so a zip downloaded in a browser may trigger a

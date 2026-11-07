@@ -380,9 +380,17 @@ func trayWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 }
 
 // pumpMessages dispatches every pending message of the calling thread (tray
-// window, menus) and reports whether the registered hotkey fired. It must be
-// called on the thread that created the tray and registered the hotkey.
-func pumpMessages() bool {
+// window, menus) and reports whether one of the registered hotkeys fired. It
+// must be called on the thread that created the tray and registered the hotkeys.
+// Callers that only want the tray serviced (model loading, a server restart)
+// use this: a hotkey pressed meanwhile is dropped, as before.
+func pumpMessages() bool { return pump(false) }
+
+// pumpHotkeys is pumpMessages for the main loop: it also records which hotkeys
+// fired, for each windowsHotkey.Pressed to take.
+func pumpHotkeys() { pump(true) }
+
+func pump(record bool) bool {
 	var msg winMsg
 	fired := false
 	for {
@@ -391,8 +399,11 @@ func pumpMessages() bool {
 			return fired
 		}
 		if msg.Message == wmHotkey {
-			if msg.WParam == hotkeyID {
+			if isHotkeyID(msg.WParam) {
 				fired = true
+				if record {
+					firedHotkeys[msg.WParam] = true
+				}
 			}
 			continue
 		}

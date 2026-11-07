@@ -28,7 +28,7 @@ func TestDetectDirection(t *testing.T) {
 			t.Errorf("%q: got %+v, %v", tc.input, got, ok)
 		}
 	}
-	if shouldTranslate("日本語をたくさん", 2, defaultLanguages) {
+	if _, ok := (Profile{Languages: defaultLanguages}).direction("日本語をたくさん", 2); ok {
 		t.Fatal("max chars ignored")
 	}
 }

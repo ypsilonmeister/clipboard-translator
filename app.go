@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -26,9 +27,13 @@ type app struct {
 	limiter  restartLimiter
 	readyTip string
 
-	hotkey    Hotkey
+	hotkey    Hotkey                            // profile 0, the one the tray menu edits
 	newHotkey func(spec string) (Hotkey, error) // newHotkey, replaceable in tests
 	showErr   func(msg string)                  // showError, replaceable in tests
+	// extras are the hotkeys of profiles 1.., in order; hk is nil when that
+	// profile's hotkey could not be registered (the reason is in why).
+	extras      []extraHotkey
+	hotkeyLimit int // how many hotkeys this OS build can register, hotkeyLimit() in production
 
 	updates  chan updateResult
 	checking bool
@@ -47,15 +52,23 @@ type app struct {
 	capture        func(cb Clipboard, win uintptr) (string, bool, error) // captureSelectedText, replaceable in tests
 }
 
+type extraHotkey struct {
+	profile int // index into conf.Profiles
+	hk      Hotkey
+	why     string // why hk is nil
+}
+
 func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Writer) *app {
+	conf.normalizeProfiles()
 	a := &app{
-		dir:      dir,
-		conf:     conf,
-		endpoint: fmt.Sprintf("http://127.0.0.1:%d", conf.Port),
-		paths:    paths,
-		tray:     tray,
-		limiter:  restartLimiter{max: 3, window: 10 * time.Minute},
-		readyTip: "Clipboard Translator - ready (" + conf.Hotkey + ")",
+		hotkeyLimit: hotkeyLimit(),
+		dir:         dir,
+		conf:        conf,
+		endpoint:    fmt.Sprintf("http://127.0.0.1:%d", conf.Port),
+		paths:       paths,
+		tray:        tray,
+		limiter:     restartLimiter{max: 3, window: 10 * time.Minute},
+		readyTip:    "Clipboard Translator - ready (" + conf.Hotkey + ")",
 
 		newHotkey:  newHotkey,
 		showErr:    showError,
@@ -193,8 +206,75 @@ func (a *app) run() {
 	}
 	defer cb.Close()
 	a.registerStartupHotkey()
-	defer func() { _ = a.hotkey.Close() }() // a.hotkey changes when the user picks another one
+	defer func() { // a.hotkey changes when the user picks another one
+		_ = a.hotkey.Close()
+		for _, e := range a.extras {
+			if e.hk != nil {
+				_ = e.hk.Close()
+			}
+		}
+	}()
 	a.serve(cb)
+}
+
+// registerExtraHotkeys registers the hotkeys of profiles 1.. after profile 0. A
+// hotkey another program owns, or one this OS build cannot hold, only disables
+// its own profile: the others and the tray keep working.
+func (a *app) registerExtraHotkeys() {
+	a.extras = nil
+	for i := 1; i < len(a.conf.Profiles); i++ {
+		e := extraHotkey{profile: i}
+		spec := a.conf.Profiles[i].Hotkey
+		switch {
+		case i >= a.hotkeyLimit:
+			e.why = fmt.Sprintf("this build registers %d hotkey(s) at most", a.hotkeyLimit)
+		default:
+			hk, err := a.newHotkey(spec)
+			if err != nil {
+				e.why = err.Error()
+			} else {
+				e.hk = hk
+			}
+		}
+		if e.hk == nil {
+			log.Printf("hotkey %s (profile %d): %s", spec, i+1, e.why)
+		}
+		a.extras = append(a.extras, e)
+	}
+}
+
+// hotkeySummary lists the working hotkeys with what each one does, for the
+// start-up message. With a single profile that is just the hotkey.
+func (a *app) hotkeySummary() string {
+	var parts []string
+	add := func(i int) {
+		p := a.conf.Profiles[i]
+		if len(a.conf.Profiles) == 1 {
+			parts = append(parts, p.Hotkey)
+			return
+		}
+		parts = append(parts, p.Hotkey+" ("+p.label()+")")
+	}
+	if !a.hasNoHotkey() {
+		add(0)
+	}
+	for _, e := range a.extras {
+		if e.hk != nil {
+			add(e.profile)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// extraFailures describes the extra profiles whose hotkey is not active.
+func (a *app) extraFailures() string {
+	var lines []string
+	for _, e := range a.extras {
+		if e.hk == nil {
+			lines = append(lines, fmt.Sprintf("%s (%s): %s", a.conf.Profiles[e.profile].Hotkey, a.conf.Profiles[e.profile].label(), e.why))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // registerStartupHotkey registers the configured hotkey. If another program
@@ -205,10 +285,20 @@ func (a *app) registerStartupHotkey() {
 	if err != nil {
 		log.Printf("hotkey %s: %v", a.conf.Hotkey, err)
 		a.hotkey = noHotkey{}
-		a.readyTip = noHotkeyTip
-		return
+	} else {
+		a.hotkey = hk
 	}
-	a.hotkey = hk
+	a.registerExtraHotkeys()
+	a.updateReadyTip()
+}
+
+// updateReadyTip sets the idle tooltip from the hotkeys that work.
+func (a *app) updateReadyTip() {
+	if s := a.hotkeySummary(); s != "" {
+		a.readyTip = "Clipboard Translator - ready (" + s + ")"
+	} else {
+		a.readyTip = noHotkeyTip
+	}
 }
 
 func (a *app) serve(cb Clipboard) {
@@ -219,8 +309,11 @@ func (a *app) serve(cb Clipboard) {
 		log.Printf("ready, but the hotkey %s could not be registered; waiting for the user to pick another", a.conf.Hotkey)
 		tray.Notify("Clipboard Translator", fmt.Sprintf("Could not register the hotkey %s (another program may be using it). Choose another one from the tray menu: Hotkey.", a.conf.Hotkey), true)
 	} else {
-		log.Printf("ready: select text and press %s (or translate existing clipboard)", a.conf.Hotkey)
-		tray.Notify("Clipboard Translator", "Ready. Select text and press "+a.conf.Hotkey+", then paste with "+pasteShortcut()+".", false)
+		log.Printf("ready: select text and press %s (or translate existing clipboard)", a.hotkeySummary())
+		tray.Notify("Clipboard Translator", "Ready. Select text and press "+a.hotkeySummary()+", then paste with "+pasteShortcut()+".", false)
+	}
+	if f := a.extraFailures(); f != "" {
+		tray.Notify("Clipboard Translator", "These hotkeys are not active:\n"+f, true)
 	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
@@ -253,7 +346,7 @@ func (a *app) serve(cb Clipboard) {
 				a.cancelTranslation()
 				return
 			}
-			pressed, err := a.hotkey.Pressed()
+			pressed, pressedProfile, err := a.pollHotkeys()
 			if err != nil {
 				log.Printf("hotkey error: %v", err)
 				continue
@@ -287,7 +380,7 @@ func (a *app) serve(cb Clipboard) {
 			}
 			a.tickTranslationStatus()
 			if pressed {
-				a.startTranslation()
+				a.startTranslation(pressedProfile)
 			}
 		case u := <-a.updates:
 			a.onUpdateResult(u)
@@ -295,6 +388,29 @@ func (a *app) serve(cb Clipboard) {
 			a.handleResult(res)
 		}
 	}
+}
+
+// pollHotkeys asks every registered hotkey whether it fired and returns the
+// profile to run. Every hotkey must be asked each tick: on Windows the first
+// call drains the message queue and the others read what it recorded. If two
+// fired in one tick the later profile wins, as a newer request replaces an older
+// one. An error from profile 0 is returned; one from another profile is logged.
+func (a *app) pollHotkeys() (pressed bool, profile int, err error) {
+	pressed, err = a.hotkey.Pressed()
+	if err != nil {
+		return false, 0, err
+	}
+	for _, e := range a.extras {
+		if e.hk == nil {
+			continue
+		}
+		if p, err := e.hk.Pressed(); err != nil {
+			log.Printf("hotkey error (profile %d): %v", e.profile+1, err)
+		} else if p {
+			pressed, profile = true, e.profile
+		}
+	}
+	return pressed, profile, nil
 }
 
 // cancelTranslation stops the request in flight, if any.
@@ -324,10 +440,11 @@ func (a *app) tickTranslationStatus() {
 	}
 }
 
-// startTranslation reacts to the hotkey: it grabs the selection (or the
-// clipboard) and translates it in the background. A new request cancels the
-// older one and invalidates its result.
-func (a *app) startTranslation() {
+// startTranslation reacts to the hotkey of profile index: it grabs the
+// selection (or the clipboard) and translates it in the background. A new
+// request cancels the older one and invalidates its result.
+func (a *app) startTranslation(index int) {
+	profile := a.conf.Profiles[index]
 	win := a.foreground()
 	a.abortTranslation()
 	source, fromSelection, err := a.capture(a.cb, win)
@@ -340,17 +457,21 @@ func (a *app) startTranslation() {
 		}
 		return
 	}
-	if !shouldTranslate(source, a.conf.MaxChars, a.conf.Languages) {
+	direction, ok := profile.direction(source, a.conf.MaxChars)
+	if !ok {
 		log.Print("skipped: empty, unsupported, URL, or too long")
 		a.tray.SetStatus(a.readyTip)
 		return
 	}
-	direction, _ := directionFor(a.conf.Languages, source)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.conf.TranslationTimeoutSec)*time.Second)
 	a.cancelCurrent = cancel
 	a.translating, a.translateStart, a.lastTranslSec = true, time.Now(), 0
 	g := a.generation
-	log.Printf("translating %s -> %s", direction.Source, direction.Target)
+	from := direction.Source
+	if from == "" {
+		from = "auto"
+	}
+	log.Printf("translating %s -> %s", from, direction.Target)
 	a.tray.SetStatus("Clipboard Translator - translating... (0s)")
 	go func() {
 		translated, err := translate(ctx, a.endpoint, source, direction, a.conf.MaxTokens)
