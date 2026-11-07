@@ -21,7 +21,7 @@ see [Licenses](#licenses) before using the app for business.
 ## Which download?
 
 Every [release](https://github.com/ypsilonmeister/clipboard-translator/releases) has one file per platform
-(each with a `.sha256` file next to it):
+(the macOS and Linux files have a `.sha256` file next to them; the Windows zip's SHA-256 is in the release notes):
 
 | Your computer | File | Instructions |
 | --- | --- | --- |
