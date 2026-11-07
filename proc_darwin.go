@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,6 +42,9 @@ func runSetup(dir string) error {
 	for {
 		select {
 		case err := <-done:
+			if err != nil {
+				return fmt.Errorf("%w; see %s for download/setup details", err, f.Name())
+			}
 			return err
 		case <-ticker.C:
 			pumpMessages()

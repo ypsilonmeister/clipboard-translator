@@ -33,7 +33,10 @@ func setupProgressDescription() string {
 	if runtime.GOOS == "darwin" {
 		return "over 1 GB; setup may take several minutes. Progress is written to setup.log in the app data folder"
 	}
-	return "over 1 GB; run setup.sh in a terminal to see progress (Windows opens a setup window)"
+	if runtime.GOOS == "windows" {
+		return "over 1 GB; a setup window opens and closes by itself when it is done"
+	}
+	return "over 1 GB; setup progress is displayed in the terminal"
 }
 
 //go:embed setup-macos.sh
