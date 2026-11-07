@@ -177,7 +177,7 @@ CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け�
 | --- | --- |
 | `hotkey` | 修飾キー + A〜Z の 1 文字。例: `Ctrl+Alt+E` |
 | `auto_paste` | `true` で翻訳後に Ctrl+V を自動入力(初期値は `false`) |
-| `port` | ローカルの llama-server のポート(アプリは `port + 1` も多重起動の防止に使います) |
+| `port` | ローカルの llama-server のポート(1024〜65534。アプリは `port + 1` も多重起動の防止に使います) |
 | `max_chars` | これより長いテキストは翻訳しません |
 | `gpu_layers` | GPU に載せる層の数(`0` は CPU のみ) |
 | `server_file` / `fallback_server_file` | llama-server の実行ファイル(通常用 / CPU の予備) |

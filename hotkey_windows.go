@@ -3,9 +3,7 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"strings"
 	"time"
 	"unsafe"
 )
@@ -67,30 +65,24 @@ type Hotkey interface {
 type windowsHotkey struct{}
 
 func parseHotkey(s string) (uint32, uintptr, error) {
-	parts := strings.Split(strings.ToUpper(strings.ReplaceAll(s, " ", "")), "+")
+	h, err := parseHotkeySpec(s, false) // same syntax check as loadConfig
+	if err != nil {
+		return 0, 0, err
+	}
 	var mods uint32
-	var key uintptr
-	for _, p := range parts {
-		switch p {
-		case "CTRL", "CONTROL":
-			mods |= modControl
-		case "ALT":
-			mods |= modAlt
-		case "SHIFT":
-			mods |= modShift
-		case "WIN", "WINDOWS":
-			mods |= modWin
-		default:
-			if len(p) != 1 || p[0] < 'A' || p[0] > 'Z' || key != 0 {
-				return 0, 0, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (one A-Z key)", s)
-			}
-			key = uintptr(p[0])
-		}
+	if h.ctrl {
+		mods |= modControl
 	}
-	if mods == 0 || key == 0 {
-		return 0, 0, errors.New("hotkey must include a modifier and letter A-Z")
+	if h.alt {
+		mods |= modAlt
 	}
-	return mods | modNoRepeat, key, nil
+	if h.shift {
+		mods |= modShift
+	}
+	if h.win {
+		mods |= modWin
+	}
+	return mods | modNoRepeat, uintptr(h.key), nil
 }
 func newHotkey(spec string) (Hotkey, error) {
 	mods, vk, err := parseHotkey(spec)

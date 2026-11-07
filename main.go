@@ -70,14 +70,25 @@ func appDir() (string, error) {
 	}
 	return filepath.Dir(p), nil
 }
+
+// pathWithin resolves a config.json path to a file below base. The result is
+// never base itself, and drive-relative ("C:foo") or rooted ("\foo", "/foo")
+// paths are refused because Windows would resolve them against the current
+// drive or directory instead of base.
 func pathWithin(base, p string) (string, error) {
-	if filepath.IsAbs(p) {
+	if strings.TrimSpace(p) == "" {
+		return "", errors.New("path is empty; use a path relative to the app folder")
+	}
+	if filepath.IsAbs(p) || filepath.VolumeName(p) != "" || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
 		return "", errors.New("paths must be relative to app folder")
 	}
 	full := filepath.Clean(filepath.Join(base, filepath.FromSlash(p)))
 	rel, err := filepath.Rel(base, full)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", errors.New("path outside app folder")
+	}
+	if rel == "." {
+		return "", errors.New("path must name a file inside the app folder, not the folder itself")
 	}
 	return full, nil
 }
