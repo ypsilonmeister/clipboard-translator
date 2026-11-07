@@ -18,6 +18,20 @@ Windows、Linux（X11）、macOS 用の、日本語 <-> 英語のクリップボ
 > **状態: プロトタイプ。** 幅広い PC や GPU ドライバーでの確認はできていません。
 > 自己責任でお使いください。
 
+## どれをダウンロードするか
+
+[リリース](https://github.com/ypsilonmeister/clipboard-translator/releases)には、環境ごとに 1 つずつファイルがあります
+(それぞれ隣に `.sha256` ファイルも付きます)。
+
+| お使いのコンピューター | ファイル | 手順 |
+| --- | --- | --- |
+| Windows 10/11 x64 | インストールスクリプト、Scoop、または `Portable-Clipboard-Translator-Windows-x64-<version>.zip` | [Windows](#インストールwindows-1011-x64) |
+| Apple シリコンの Mac(M1 以降) | `clipboard-translator-macos-arm64-<version>.zip` | [macOS](#macos実験的対応macos-13-以降) |
+| Intel プロセッサの Mac | `clipboard-translator-macos-amd64-<version>.zip` | [macOS](#macos実験的対応macos-13-以降) |
+| Linux x86_64(X11 セッション) | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linuxx11実験的対応) |
+
+macOS と Linux は実験的対応です。Linux arm64 用のビルドは配布していません。
+
 ## インストール(Windows 10/11 x64)
 
 ### インストールスクリプト(おすすめ)
@@ -73,6 +87,34 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend vulkan   # また�
 
 ## macOS（実験的対応、macOS 13 以降）
 
+### インストール手順
+
+1. **お使いの Mac に合うファイルを選びます。** アップルメニュー > *この Mac について* のチップが
+   *Apple M…* なら `arm64`、*Intel* なら `amd64` です。ターミナルで `uname -m` を実行しても分かります
+   (`arm64` または `x86_64`)。
+2. Releases から `clipboard-translator-macos-<アーキテクチャ>-<バージョン>.zip` と `.sha256` ファイルを
+   **ダウンロード**し、2 つのファイルがあるフォルダーで内容を確認します。
+
+   ```bash
+   shasum -a 256 -c clipboard-translator-macos-<アーキテクチャ>-<バージョン>.zip.sha256
+   ```
+
+3. zip を**展開**し、**Clipboard Translator.app** を `/Applications`(または置いておきたい場所)へ移します。
+4. **初回の起動。** このアプリは公証されていないため、macOS が開くのを拒否することがあります
+   (表示や手順は macOS のバージョンで異なります)。最初に開こうとして拒否されたあと、
+   *システム設定 > プライバシーとセキュリティ* で **このまま開く** を選ぶか、開く前に
+   ダウンロード時の隔離属性を外してください。
+
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Clipboard Translator.app"
+   ```
+
+5. Python 3.12 以降がなければ入れます(`brew install python`)。初回セットアップに必要です。
+6. **アプリを起動**し、ダウンロードの確認(モデルは 1 GB 超)に同意します。そのあと、選択範囲をコピーできるように
+   *システム設定 > プライバシーとセキュリティ > アクセシビリティ* で許可します。
+
+以下に、それぞれの詳細を説明します。
+
 CI は Apple Silicon（`arm64`）と Intel（`amd64`）用に、それぞれ
 `clipboard-translator-macos-<アーキテクチャ>-<バージョン>.zip` と SHA-256 ファイルを作成します。
 開発版は PR の Actions 成果物、タグ付きビルドは Releases から取得できます。
@@ -125,6 +167,23 @@ CI は Apple Silicon／Intel の両方で、AppKit、クリップボード、Car
 `CGO_ENABLED=0` のクロスコンパイルではロジックとスタブのみを確認できます。
 
 ## Linux（X11、実験的対応）
+
+### インストール手順
+
+1. **X11(Xorg)セッション**でログインします。`echo $XDG_SESSION_TYPE` が `x11` を表示する必要があります。
+2. 依存パッケージ(下記の Ubuntu 24.04 の例)を入れたあと、Releases から
+   `clipboard-translator-linux-amd64-<version>.tar.gz` と `.sha256` ファイルをダウンロードします(x86_64 のみ)。
+   内容を確認し、ホーム以下の専用フォルダーに展開して実行します。
+
+   ```bash
+   sha256sum -c clipboard-translator-linux-amd64-<version>.tar.gz.sha256
+   tar -xzf clipboard-translator-linux-amd64-<version>.tar.gz -C ~
+   cd ~/clipboard-translator-linux-amd64-<version>
+   bash setup.sh            # モデルと公式 CPU ランタイムを取得
+   ./clipboard-translator
+   ```
+
+以下に、それぞれの詳細を説明します。
 
 [#13](https://github.com/ypsilonmeister/clipboard-translator/issues/13) の最初の段階として Linux に対応しています。
 **Wayland セッション（XWayland を含む）は非対応**です。
