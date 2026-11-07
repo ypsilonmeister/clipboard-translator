@@ -164,6 +164,14 @@ func (a *app) restartServer() bool {
 	return true
 }
 
+// recoverServer brings the translation server back after it died or after a
+// failed engine switch left none. It reports false when the app should quit.
+func (a *app) recoverServer() bool {
+	a.abortTranslation() // a translation in flight can no longer succeed
+	a.sup.Stop()
+	return a.restartServer()
+}
+
 // run starts the server and then serves hotkey presses until the user quits.
 func (a *app) run() {
 	a.tray.SetStatus("Clipboard Translator - loading model...")
@@ -180,26 +188,40 @@ func (a *app) run() {
 	cb, err := newClipboard()
 	if err != nil {
 		log.Printf("clipboard initialization failed: %v", err)
-		showError(fmt.Sprintf("Clipboard initialization failed: %v", err))
+		a.showErr(fmt.Sprintf("Clipboard initialization failed: %v", err))
 		return
 	}
 	defer cb.Close()
-	a.hotkey, err = a.newHotkey(a.conf.Hotkey)
-	if err != nil {
-		log.Printf("hotkey: %v", err)
-		showError(fmt.Sprintf("Could not register the hotkey %s: %v", a.conf.Hotkey, err))
-		return
-	}
+	a.registerStartupHotkey()
 	defer func() { _ = a.hotkey.Close() }() // a.hotkey changes when the user picks another one
 	a.serve(cb)
+}
+
+// registerStartupHotkey registers the configured hotkey. If another program
+// owns it, the app still starts (without a hotkey) so the user can pick a free
+// one from the tray menu instead of having to edit config.json.
+func (a *app) registerStartupHotkey() {
+	hk, err := a.newHotkey(a.conf.Hotkey)
+	if err != nil {
+		log.Printf("hotkey %s: %v", a.conf.Hotkey, err)
+		a.hotkey = noHotkey{}
+		a.readyTip = noHotkeyTip
+		return
+	}
+	a.hotkey = hk
 }
 
 func (a *app) serve(cb Clipboard) {
 	a.cb = cb
 	tray := a.tray
-	log.Printf("ready: select text and press %s (or translate existing clipboard)", a.conf.Hotkey)
 	tray.SetStatus(a.readyTip)
-	tray.Notify("Clipboard Translator", "Ready. Select text and press "+a.conf.Hotkey+", then paste with "+pasteShortcut()+".", false)
+	if a.hasNoHotkey() {
+		log.Printf("ready, but the hotkey %s could not be registered; waiting for the user to pick another", a.conf.Hotkey)
+		tray.Notify("Clipboard Translator", fmt.Sprintf("Could not register the hotkey %s (another program may be using it). Choose another one from the tray menu: Hotkey.", a.conf.Hotkey), true)
+	} else {
+		log.Printf("ready: select text and press %s (or translate existing clipboard)", a.conf.Hotkey)
+		tray.Notify("Clipboard Translator", "Ready. Select text and press "+a.conf.Hotkey+", then paste with "+pasteShortcut()+".", false)
+	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -221,9 +243,7 @@ func (a *app) serve(cb Clipboard) {
 			return
 		case <-a.sup.Exited():
 			log.Print("llama-server exited unexpectedly")
-			a.abortTranslation() // a translation in flight can no longer succeed
-			a.sup.Stop()
-			if !a.restartServer() {
+			if !a.recoverServer() {
 				return
 			}
 		case <-ticker.C:
@@ -255,6 +275,15 @@ func (a *app) serve(cb Clipboard) {
 				log.Print("stop requested")
 				a.cancelTranslation()
 				return
+			}
+			// An engine switch that failed twice leaves no server at all, and
+			// Exited() is nil then; recover (or quit) rather than serve nothing.
+			if !a.sup.Running() {
+				log.Print("no translation server is running")
+				if !a.recoverServer() {
+					return
+				}
+				continue
 			}
 			a.tickTranslationStatus()
 			if pressed {

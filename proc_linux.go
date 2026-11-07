@@ -16,6 +16,9 @@ func hideConsole(cmd *exec.Cmd) {
 	cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+libs)
 }
 
+// bindToParentLifetime is only needed on Windows (job objects).
+func bindToParentLifetime(cmd *exec.Cmd) {}
+
 func runSetup(dir string) error {
 	cmd := exec.Command("bash", "setup.sh", "--backend", "cpu")
 	cmd.Dir = dir
