@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -27,16 +28,32 @@ type result struct {
 	fromSelection        bool    // the text was a fresh selection, not the old clipboard
 }
 
+// translationDirection is what to ask the model for. Source is empty for a
+// target-only profile: the model then detects the source language itself.
 type translationDirection struct{ Source, Target string }
 
-// shouldTranslate is false for empty, too long, URL-only or undetectable text
-// (see directionFor in languages.go).
-func shouldTranslate(s string, maxChars int, pair []string) bool {
+// direction is a profile's direction for s, or false for empty, too long,
+// URL-only or undetectable text (see directionFor in languages.go for pairs).
+func (p Profile) direction(s string, maxChars int) (translationDirection, bool) {
 	if strings.TrimSpace(s) == "" || utf8.RuneCountInString(s) > maxChars {
-		return false
+		return translationDirection{}, false
 	}
-	_, ok := directionFor(pair, s)
-	return ok
+	if p.Target == "" {
+		return directionFor(p.Languages, s)
+	}
+	// Any language can be the source, so only require that there is some text.
+	if isURL(strings.TrimSpace(s)) || strings.IndexFunc(s, unicode.IsLetter) < 0 {
+		return translationDirection{}, false
+	}
+	return translationDirection{Target: p.Target}, true
+}
+
+// label says what the profile does, for the tooltip and notifications.
+func (p Profile) label() string {
+	if p.Target != "" {
+		return "to " + languageName(p.Target)
+	}
+	return pairLabel(p.Languages)
 }
 
 func appDir() (string, error) {
@@ -100,13 +117,19 @@ func waitReady(ctx context.Context, endpoint string, stopped <-chan struct{}) er
 var errTruncated = errors.New("translation cut off at the token limit (finish_reason=length)")
 
 func translate(ctx context.Context, endpoint, source string, direction translationDirection, maxTokens int) (string, error) {
+	kwargs := map[string]string{"target_lang": direction.Target}
+	// The template accepts a missing source_lang (the model detects it) but
+	// rejects an empty one, so leave the key out for a target-only profile.
+	if direction.Source != "" {
+		kwargs["source_lang"] = direction.Source
+	}
 	payload := map[string]any{
 		"model":                "plamo-3-translate",
 		"messages":             []map[string]string{{"role": "user", "content": source}},
 		"temperature":          0,
 		"max_tokens":           maxTokens,
 		"stop":                 []string{"<|plamo:tag|>", "<|plamo:bos|>"},
-		"chat_template_kwargs": map[string]string{"source_lang": direction.Source, "target_lang": direction.Target},
+		"chat_template_kwargs": kwargs,
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {

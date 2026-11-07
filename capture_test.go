@@ -103,7 +103,7 @@ func TestStartTranslationReportsAbortedCapture(t *testing.T) {
 		a, tray, cb, _, _ := uxApp(t)
 		cb.text = "stale clipboard"
 		a.capture = func(Clipboard, uintptr) (string, bool, error) { return "", false, tc.err }
-		a.startTranslation()
+		a.startTranslation(0)
 		if a.translating || len(a.hist.Items()) != 0 {
 			t.Fatal("an aborted capture must not start a translation")
 		}
@@ -124,7 +124,7 @@ func TestStartTranslationPassesHotkeyWindowToCapture(t *testing.T) {
 		got = win
 		return "", false, errors.New("stop here")
 	}
-	a.startTranslation()
+	a.startTranslation(0)
 	if got != 42 {
 		t.Fatalf("capture window = %d, want the window in front at the hotkey press", got)
 	}

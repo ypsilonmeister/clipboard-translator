@@ -41,8 +41,8 @@ func TestPumpMessagesHotkey(t *testing.T) {
 	if pumpMessages() {
 		t.Fatal("empty queue must not report a hotkey")
 	}
-	post(wmHotkey, hotkeyID+1) // some other hotkey id
-	post(wmApp+5, 0)           // unrelated thread message
+	post(wmHotkey, hotkeyID+maxWindowsHotkeys) // not one of our ids
+	post(wmApp+5, 0)                           // unrelated thread message
 	if pumpMessages() {
 		t.Fatal("foreign hotkey id / unrelated message must not report a hotkey")
 	}
@@ -54,6 +54,61 @@ func TestPumpMessagesHotkey(t *testing.T) {
 	if pumpMessages() {
 		t.Fatal("hotkey must be consumed exactly once")
 	}
+}
+
+// Several registered hotkeys share one queue: each Pressed must see only its
+// own press, even though the first call drains the queue for all of them.
+func TestWindowsHotkeysEachSeeTheirOwnPress(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	postThreadMessageW := user32.NewProc("PostThreadMessageW")
+	getCurrentThreadID := kernel32.NewProc("GetCurrentThreadId")
+	tid, _, _ := getCurrentThreadID.Call()
+	post := func(id uintptr) {
+		if ok, _, err := postThreadMessageW.Call(tid, wmHotkey, id, 0); ok == 0 {
+			t.Fatalf("PostThreadMessage: %v", err)
+		}
+	}
+	pumpMessages()
+	// Unlikely combinations, to avoid clashing with other programs.
+	a, errA := newHotkey("Ctrl+Alt+Shift+F")
+	b, errB := newHotkey("Ctrl+Alt+Shift+G")
+	if errA != nil || errB != nil {
+		t.Skipf("could not register test hotkeys: %v / %v", errA, errB)
+	}
+	ha, hb := a.(*windowsHotkey), b.(*windowsHotkey)
+	if ha.id == hb.id {
+		t.Fatalf("both hotkeys got id %#x", ha.id)
+	}
+	post(hb.id)
+	if p, _ := ha.Pressed(); p {
+		t.Fatal("hotkey A must not see B's press")
+	}
+	if p, _ := hb.Pressed(); !p {
+		t.Fatal("hotkey B lost its press while A drained the queue")
+	}
+	if p, _ := hb.Pressed(); p {
+		t.Fatal("a press must be taken once")
+	}
+	// A press seen by a plain pumpMessages (model loading) is dropped.
+	post(ha.id)
+	pumpMessages()
+	if p, _ := ha.Pressed(); p {
+		t.Fatal("a press while only the tray was serviced must be dropped")
+	}
+	// Closing frees the id and is safe to repeat.
+	id := ha.id
+	ha.Close()
+	ha.Close()
+	c, err := newHotkey("Ctrl+Alt+Shift+H")
+	if err != nil {
+		t.Skipf("could not register test hotkey: %v", err)
+	}
+	if c.(*windowsHotkey).id != id {
+		t.Errorf("a freed id must be reused, got %#x want %#x", c.(*windowsHotkey).id, id)
+	}
+	c.Close()
+	hb.Close()
 }
 
 // The icon embedded via resource_windows_amd64.syso must be found; otherwise the

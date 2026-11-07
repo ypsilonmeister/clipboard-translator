@@ -72,11 +72,16 @@ func (a *app) buildMenu() []MenuItem {
 	}
 	items = append(items, MenuItem{Label: "Hotkey", Sub: hotkeys})
 
-	var pairs []MenuItem
-	for i, p := range languagePairChoices(a.conf.Languages) {
-		pairs = append(pairs, MenuItem{ID: cmdLanguageBase + i, Label: pairLabel(p), Checked: samePair(p, a.conf.Languages)})
+	if t := a.conf.Profiles[0].Target; t != "" {
+		// The first profile has no pair to pick; it is edited in config.json.
+		items = append(items, MenuItem{Label: "Languages: first hotkey translates " + a.conf.Profiles[0].label() + " (config.json)", Disabled: true})
+	} else {
+		var pairs []MenuItem
+		for i, p := range languagePairChoices(a.conf.Languages) {
+			pairs = append(pairs, MenuItem{ID: cmdLanguageBase + i, Label: pairLabel(p), Checked: samePair(p, a.conf.Languages)})
+		}
+		items = append(items, MenuItem{Label: "Languages", Sub: pairs})
 	}
-	items = append(items, MenuItem{Label: "Languages", Sub: pairs})
 
 	// Only offer a choice when more than one build is installed.
 	if backends := availableBackends(a.dir); len(backends) > 1 {
@@ -175,11 +180,16 @@ func (a *app) saveConfig(set map[string]any) {
 // languages are sent with every request. A translation already running keeps its
 // own direction.
 func (a *app) changeLanguages(pair []string) {
-	if samePair(pair, a.conf.Languages) {
+	if samePair(pair, a.conf.Languages) || a.conf.Profiles[0].Target != "" {
 		return
 	}
 	a.conf.Languages = append([]string(nil), pair...)
-	a.saveConfig(map[string]any{"languages": a.conf.Languages})
+	a.conf.Profiles[0].Languages = append([]string(nil), pair...)
+	if a.conf.explicitProfiles {
+		a.saveConfig(map[string]any{"profiles": a.conf.Profiles})
+	} else {
+		a.saveConfig(map[string]any{"languages": a.conf.Languages})
+	}
 	log.Printf("languages changed to %s/%s", pair[0], pair[1])
 	a.tray.Notify("Clipboard Translator", "Languages: "+pairLabel(pair)+".", false)
 }
@@ -206,7 +216,7 @@ func (a *app) changeHotkey(spec string) {
 			a.failed(fmt.Errorf("Could not register %s (%v) and could not restore %s: %v", spec, err, a.conf.Hotkey, err2))
 			a.tray.Notify("Clipboard Translator", "The hotkey is not registered. Pick one from the menu or restart the app.", true)
 			a.hotkey = noHotkey{}
-			a.readyTip = noHotkeyTip
+			a.updateReadyTip()
 			a.tray.SetStatus(a.readyTip)
 			return
 		}
@@ -216,9 +226,14 @@ func (a *app) changeHotkey(spec string) {
 	}
 	a.hotkey = nh
 	a.conf.Hotkey = spec
-	a.readyTip = "Clipboard Translator - ready (" + spec + ")"
+	a.conf.Profiles[0].Hotkey = spec
+	a.updateReadyTip()
 	a.tray.SetStatus(a.readyTip)
-	a.saveConfig(map[string]any{"hotkey": spec})
+	if a.conf.explicitProfiles {
+		a.saveConfig(map[string]any{"profiles": a.conf.Profiles})
+	} else {
+		a.saveConfig(map[string]any{"hotkey": spec})
+	}
 	log.Printf("hotkey changed to %s", spec)
 	a.tray.Notify("Clipboard Translator", "Hotkey is now "+spec+".", false)
 }
