@@ -94,87 +94,89 @@ function Invoke-ClipboardTranslatorInstaller {
             if ((Read-Host 'Continue? (y/N)') -notmatch '^[yY]') { Say 'Cancelled.'; return }
         }
         Stop-App
+
+        # The Start menu entry, the Run value and the Apps & features entry are
+        # per user, not per folder: only remove the ones that belong to this folder.
         $run = Get-ItemProperty -Path $runKey -Name 'ClipboardTranslator' -ErrorAction SilentlyContinue
-        if ($run -and $run.ClipboardTranslator -like "*$exeName*" -and $run.ClipboardTranslator -like "*$InstallDir*") {
+        if ($run -and $run.ClipboardTranslator.IndexOf($exe, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             Remove-ItemProperty -Path $runKey -Name 'ClipboardTranslator' -ErrorAction SilentlyContinue
         }
-        Remove-Item -LiteralPath $shortcut -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $shortcut) {
+            try {
+                $target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
+                if ($target -ieq $exe) { Remove-Item -LiteralPath $shortcut -Force -ErrorAction SilentlyContinue }
+            } catch { }
+        }
+        $reg = Get-ItemProperty -Path $uninstallKey -ErrorAction SilentlyContinue
+        if ($reg -and ($reg.PSObject.Properties.Name -contains 'InstallLocation') -and ([string]$reg.InstallLocation).TrimEnd('\') -ieq $InstallDir) {
+            Remove-Item -Path $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
+        }
         Set-Location -Path $env:TEMP   # this script may be running from the folder being removed
 
-        # Remove explicitly managed app files
-        $managedFiles = @(
-            $exeName,
-            'Setup.cmd',
-            'Start.cmd',
-            'Stop.cmd',
-            'setup.ps1',
-            'config.json',
-            'config.json.bak',
-            'README.txt',
-            'LICENSE',
-            'translator.log',
-            'server.log',
-            'STOP',
-            '.installed'
-        )
+        # Only files this app owns are removed, never the folder as a whole.
+        $failed = New-Object System.Collections.Generic.List[string]
+        function Remove-Owned([string]$path, [bool]$recurse = $false) {
+            if (-not (Test-Path -LiteralPath $path)) { return }
+            try {
+                if ($recurse) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
+                else { Remove-Item -LiteralPath $path -Force -ErrorAction Stop }
+            } catch { $failed.Add($path) }
+        }
+        function Remove-IfEmpty([string]$path) {
+            if (-not (Test-Path -LiteralPath $path)) { return }
+            if (@(Get-ChildItem -LiteralPath $path -Force -ErrorAction SilentlyContinue).Count -eq 0) { Remove-Owned $path }
+        }
+
+        # Files the app creates while it runs.
+        $owned = @($exeName, 'translator.log', 'server.log', 'STOP', '.installed', 'install.ps1')
         $manifest = Join-Path $InstallDir '.installed'
-        if (Test-Path -LiteralPath $manifest) {
-            $manifestEntries = @(Get-Content -LiteralPath $manifest -ErrorAction SilentlyContinue)
-            if ($manifestEntries.Count -gt 0) {
-                $managedFiles += $manifestEntries
+        if (Test-Path -LiteralPath $manifest -PathType Leaf) {
+            # The installer recorded exactly what it unpacked. Entries are plain file
+            # names; anything else (paths, "..") is ignored so this file cannot point
+            # the removal outside the install folder.
+            foreach ($line in @(Get-Content -LiteralPath $manifest -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+                $name = ([string]$line).Trim()
+                if ($name -and $name -ne '.' -and $name -ne '..' -and $name.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -lt 0) { $owned += $name }
             }
-        }
-        $managedFiles += 'install.ps1'
-
-        foreach ($f in ($managedFiles | Select-Object -Unique)) {
-            $p = Join-Path $InstallDir $f
-            if (Test-Path -LiteralPath $p) {
-                Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
-            }
-        }
-
-        # Clean models directory: remove downloaded models and chat templates
-        $modelsDir = Join-Path $InstallDir 'models'
-        if (Test-Path -LiteralPath $modelsDir) {
-            Get-ChildItem -LiteralPath $modelsDir -Filter '*.gguf' -File -ErrorAction SilentlyContinue |
-                Remove-Item -Force -ErrorAction SilentlyContinue
-            Get-ChildItem -LiteralPath $modelsDir -Filter 'chat_template.jinja' -File -ErrorAction SilentlyContinue |
-                Remove-Item -Force -ErrorAction SilentlyContinue
-            $modelsRem = @(Get-ChildItem -LiteralPath $modelsDir -Force -ErrorAction SilentlyContinue)
-            if ($modelsRem.Count -eq 0) {
-                Remove-Item -LiteralPath $modelsDir -Force -ErrorAction SilentlyContinue
-            }
-        }
-
-        # Clean runtime directory: remove backend runtimes
-        $runtimeDir = Join-Path $InstallDir 'runtime'
-        if (Test-Path -LiteralPath $runtimeDir) {
-            foreach ($backend in @('cpu', 'cuda', 'vulkan')) {
-                $bDir = Join-Path $runtimeDir $backend
-                if (Test-Path -LiteralPath $bDir) {
-                    Remove-Item -LiteralPath $bDir -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            }
-            $runtimeRem = @(Get-ChildItem -LiteralPath $runtimeDir -Force -ErrorAction SilentlyContinue)
-            if ($runtimeRem.Count -eq 0) {
-                Remove-Item -LiteralPath $runtimeDir -Force -ErrorAction SilentlyContinue
-            }
-        }
-
-        # If the directory is now empty, remove it completely. Otherwise preserve remaining user files.
-        $remaining = @(Get-ChildItem -LiteralPath $InstallDir -Force -ErrorAction SilentlyContinue)
-        if ($remaining.Count -eq 0) {
-            Remove-Item -LiteralPath $InstallDir -Force -ErrorAction SilentlyContinue
-            if (Test-Path -LiteralPath $InstallDir) {
-                Write-Warning "Some files in $InstallDir could not be removed (in use?). Delete the folder manually."
-            } else {
-                Say 'Clipboard Translator has been removed.'
-            }
+            if ($owned -contains 'config.json') { $owned += 'config.json.bak' }
         } else {
-            Say "Clipboard Translator has been removed. Other files in $InstallDir were preserved."
+            # Installed before the manifest existed: the fixed file set of the release zip.
+            $owned += @('Setup.cmd', 'Start.cmd', 'Stop.cmd', 'setup.ps1', 'config.json', 'config.json.bak', 'README.txt', 'LICENSE')
+        }
+        foreach ($name in ($owned | Select-Object -Unique)) {
+            $p = Join-Path $InstallDir $name
+            if (Test-Path -LiteralPath $p -PathType Leaf) { Remove-Owned $p }
+        }
+
+        # setup.ps1 downloads exactly these into models\ and one folder per backend into runtime\.
+        $modelsDir = Join-Path $InstallDir 'models'
+        foreach ($name in @('plamo-3-translate-2b-Q4_K_M.gguf', 'chat_template.jinja')) {
+            Remove-Owned (Join-Path $modelsDir $name)
+            Remove-Owned (Join-Path $modelsDir ($name + '.partial'))
+        }
+        Remove-IfEmpty $modelsDir
+        $runtimeDir = Join-Path $InstallDir 'runtime'
+        foreach ($backend in @('cpu', 'cuda', 'vulkan')) { Remove-Owned (Join-Path $runtimeDir $backend) $true }
+        Remove-IfEmpty $runtimeDir
+
+        # Remove the folder itself only when nothing else is left in it.
+        Remove-IfEmpty $InstallDir
+        if ($failed.Count -gt 0) {
+            Write-Warning "Some files could not be removed (in use?). Delete them manually:`n  $($failed -join "`n  ")"
+        } elseif (Test-Path -LiteralPath $InstallDir) {
+            Say "Clipboard Translator has been removed. Other files in $InstallDir were left alone."
+        } else {
+            Say 'Clipboard Translator has been removed.'
         }
         return
+    }
+
+    # Never install into a folder that already holds other things: uninstall would
+    # have to tell our files from theirs, and the zip overwrites same-named files.
+    if ((Test-Path -LiteralPath $InstallDir -PathType Container) -and
+        -not (Test-Path -LiteralPath $exe) -and -not (Test-Path -LiteralPath (Join-Path $InstallDir '.installed')) -and
+        @(Get-ChildItem -LiteralPath $InstallDir -Force -ErrorAction SilentlyContinue).Count -gt 0) {
+        throw "$InstallDir is not empty and is not a Clipboard Translator folder. Use an empty or new folder, for example $(Join-Path $InstallDir 'ClipboardTranslator')."
     }
 
     Step 'Looking up the release'
@@ -218,13 +220,15 @@ function Invoke-ClipboardTranslatorInstaller {
             Step "Installing to $InstallDir"
             New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
             $installedFiles = @()
+            $oldManifest = Join-Path $InstallDir '.installed'
+            if (Test-Path -LiteralPath $oldManifest) { $installedFiles += @(Get-Content -LiteralPath $oldManifest -Encoding UTF8 -ErrorAction SilentlyContinue) }
             foreach ($f in Get-ChildItem -LiteralPath $unpacked -File) {
                 $dest = Join-Path $InstallDir $f.Name
                 $installedFiles += $f.Name
                 if ($f.Name -eq 'config.json' -and (Test-Path -LiteralPath $dest)) { continue }   # keep the user's settings
                 Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
             }
-            Set-Content -LiteralPath (Join-Path $InstallDir '.installed') -Value $installedFiles -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $InstallDir '.installed') -Value @($installedFiles | Where-Object { $_ } | Select-Object -Unique) -Encoding UTF8
         } finally {
             Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }

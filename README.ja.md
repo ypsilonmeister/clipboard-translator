@@ -38,7 +38,8 @@ irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/i
   `config.json`、モデル、llama.cpp はそのまま残ります。
 - **アンインストール:** 「設定 > アプリ」の *Clipboard Translator* から、または
   `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.ps1))) -Uninstall`
-  (モデルを含むインストールフォルダーごと削除されます)。
+  (アプリ自身のファイル(モデルと llama.cpp を含む)を削除し、ほかに何も残っていなければフォルダーも
+  削除します)。インストールは空のフォルダーか新しいフォルダーにだけ行うので、他のファイルと混ざることはありません。
 - **オプション**(`| iex` には引数を渡せないので環境変数で指定します):
   `CT_VERSION=v0.5.0` でリリースを固定、`CT_INSTALL_DIR=D:\Apps\CT` でフォルダーを指定、
   `CT_SKIP_SETUP=1` でモデルのダウンロードを省略、`CT_NO_LAUNCH=1` で起動しない。

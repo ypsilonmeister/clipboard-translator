@@ -39,7 +39,9 @@ it is short.
   menu. Your `config.json`, the model and llama.cpp are kept.
 - **Uninstall:** Settings > Apps > *Clipboard Translator*, or
   `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.ps1))) -Uninstall`
-  (this deletes the install folder, including the model).
+  (this deletes the app's own files, including the model and llama.cpp, and the
+  folder itself if nothing else is left in it). The installer only installs into
+  an empty or new folder, so other files are never mixed in.
 - **Options** (environment variables, because `| iex` cannot take parameters):
   `CT_VERSION=v0.5.0` pins a release, `CT_INSTALL_DIR=D:\Apps\CT` chooses the
   folder, `CT_SKIP_SETUP=1` skips the model download, `CT_NO_LAUNCH=1` does not
