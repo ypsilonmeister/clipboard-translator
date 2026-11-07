@@ -17,10 +17,13 @@ import (
 // fillModelsAndEngines adds what the model and engine sections show.
 func (a *app) fillModelsAndEngines(st *settingsState) {
 	active, known := modelForFile(a.conf.ModelFile)
+	// One snapshot of the download for the whole state: reading it per model
+	// could show "downloading" in one place and "done" in another.
+	d := a.dl.State()
 	for _, e := range modelCatalog {
 		st.Models = append(st.Models, modelState{
 			Key: e.Key, Name: e.Name, Note: e.Note, Size: e.SizeLabel,
-			Installed: e.installed(a.dir), Active: known && active.Key == e.Key, Downloading: a.dl.Downloading(e.Key),
+			Installed: e.installed(a.dir), Active: known && active.Key == e.Key, Downloading: d.Key == e.Key && d.running(),
 		})
 	}
 	if !known {
@@ -30,7 +33,7 @@ func (a *app) fillModelsAndEngines(st *settingsState) {
 	for _, b := range availableBackends(a.dir) {
 		st.Engines = append(st.Engines, engineState{Name: b, Label: backendLabel(b), Active: b == cur})
 	}
-	if d := a.dl.State(); d.Key != "" {
+	if d.Key != "" {
 		st.Download = &d
 	}
 }
