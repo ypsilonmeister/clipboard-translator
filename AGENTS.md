@@ -6,14 +6,17 @@ working on the code.
 
 ## What this is
 
-A Windows tray app. The user selects text, presses a hotkey (default
-Ctrl+Alt+E), and the app puts the Japanese<->English translation on the
-clipboard. Translation is fully local: the app starts a loopback-only
-`llama-server` (llama.cpp) child process with the PLaMo 3 Translate 2B GGUF
-model and talks to it over HTTP. Go, standard library only (no third-party
-modules), `go 1.21` in `go.mod`, MIT licensed. Windows x64 and experimental
-Linux X11 and macOS support. Linux uses cgo with system GTK 3, X11 and XTest;
-macOS uses cgo with Cocoa/Carbon/ApplicationServices (no extra Go modules).
+A tray app for Windows x64, with experimental Linux X11 and macOS support. The
+user selects text, presses a hotkey (default Ctrl+Alt+E), and the app puts the
+translation on the clipboard: Japanese<->English by default, or any language
+pair or target language of the 53 the model covers, set per hotkey (`profiles`
+in `config.json`, also editable on the Settings page). Translation is fully
+local: the app starts a loopback-only `llama-server` (llama.cpp) child process
+with a PLaMo 3 Translate GGUF model (2B by default; 0.8B and 8B through
+`setup.ps1 -Model` or the Settings page) and talks to it over HTTP. Go,
+standard library only (no third-party modules), `go 1.21` in `go.mod`, MIT
+licensed. Linux uses cgo with system GTK 3, X11 and XTest; macOS uses cgo with
+Cocoa/Carbon/ApplicationServices (no extra Go modules).
 
 ## Commands
 
@@ -63,16 +66,23 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 
 | File | Role |
 | --- | --- |
-| `main.go` | `main()`, language detection (`detectDirection`: Japanese script wins, URLs skipped), the HTTP `translate` call, `fatal`, `pathWithin` |
-| `app.go` | `app` struct and the main loop `serve`: hotkey, tray commands, update results, translation results. `startTranslation` / `handleResult` / `abortTranslation` |
+| `main.go` | `main()`, `Profile.direction` (what one hotkey translates), the HTTP `translate` call, `fatal`, `pathWithin` |
+| `languages.go` | The 53 model languages, `validateLanguages`, and `directionFor`: the script of the text picks the direction of a language pair (URLs are skipped) |
+| `app.go` | `app` struct and the main loop `serve`: hotkeys (one per profile), tray commands, update results, translation results, Settings-page requests, download results. `startTranslation` / `handleResult` / `abortTranslation` |
 | `app_menu.go` | Builds the tray menu and handles its commands |
+| `capture.go` | `captureWith`: the ordering rules of selection capture (modifiers released, focus unchanged, clipboard sequence) over per-OS pieces, so they are tested without a desktop |
+| `settings_server.go`, `app_settings.go`, `settings_web/` | The Settings page: `settings_server.go` serves it on 127.0.0.1 while it is open (token, Host/Origin checks, CSP) and never touches app state; `app_settings.go` answers its requests on the UI thread and applies hotkeys, auto-paste and `max_chars`; `settings_web/` is the embedded HTML/CSS/JS |
+| `models.go`, `modeldl.go`, `app_models.go` | `models.go` is the model catalog (pinned revision and SHA-256, kept equal to `setup.ps1`, `setup.sh` and `setup-macos.sh`; tests compare them); `modeldl.go` is the download manager (resume, SHA-256 check, cancel; owned by `app`, not by the settings server); `app_models.go` switches model and engine for the page and answers it while the server loads |
 | `server.go` | `supervisor` for `llama-server` (start, stop, exit detection), `restartLimiter` (max 3 per 10 min) and backoff |
 | `setup_flow.go` | Resolves config paths, checks the model/runtime exist, offers to run `setup.ps1` (embedded in the exe with `//go:embed`) |
 | `config.go` / `settings.go` | `Config` + validation; order-preserving in-place `config.json` edits with a `.bak` |
 | `update.go`, `update_windows.go` | "Check for updates" (GitHub API, only on click), version compare, install-kind detection (installer / Scoop / portable) |
 | `history.go` | Last 10 translations (memory only) and `decidePaste` for auto-paste |
 | `tray.go` (+ `_windows`/`_other`) | `Tray` interface; Windows impl is a hidden window + `Shell_NotifyIconW` |
-| `hotkey_windows.go`, `clipboard_windows.go` | `RegisterHotKey`, simulated Ctrl+C (`captureSelectedText`), clipboard access, Ctrl+V |
+| `hotkey_windows.go`, `clipboard_windows.go` | `RegisterHotKey` (one id per hotkey), simulated Ctrl+C (`captureSelectedText`), clipboard access, Ctrl+V |
+| `desktop_linux.go` + `native_linux.c`, `desktop_darwin.go` + `native_darwin.m`, `hotkey_nonwindows.go`, `clipboard_*.go`, `autostart_*.go` | Tray, hotkey, clipboard and autostart on Linux (GTK/X11/XTest) and macOS (AppKit/Carbon); the non-cgo stubs. Details under Commands |
+| `platform.go`, `proc_*.go`, `data_*.go` | Per-OS facts: server binary name, hotkey limit, hiding the console, child-process lifetime, where data lives |
+| `psscript.go` | The PowerShell command lines that run `setup.ps1` / `install.ps1` and keep the failure prompt open |
 | `setup.ps1`, `install.ps1` | Downloads model + llama.cpp; the one-line installer. Must parse on Windows PowerShell 5.1 *and* PowerShell 7 |
 | `bucket/clipboard-translator.json` | Scoop manifest (this repo is also the bucket) |
 | `tools/mksyso`, `tools/mkicon` | Generate `resource_windows_amd64.syso` (icon, version info, DPI manifest) and `assets/icon.*` |
@@ -82,8 +92,9 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 - **One thread owns the UI.** `main` calls `runtime.LockOSThread()`; the tray
   window and `RegisterHotKey` belong to that thread, and `serve` pumps its
   messages (poll tick is capped at 100 ms for that reason). Goroutines talk to
-  the app only through channels (`results`, `updates`). Do not touch the tray or
-  hotkey from another goroutine, and do not block `serve`.
+  the app only through channels (`results`, `updates`, `settingsReqs` for the
+  Settings page, `dl.events` for model downloads). Do not touch the tray, the
+  hotkeys or `app.conf` from another goroutine, and do not block `serve`.
 - **Generation counter.** Every new translation bumps `app.generation`; a
   result with an older generation is dropped. Keep that when changing the flow.
 - **Clipboard safety.** The result replaces the clipboard only if the text is
@@ -103,9 +114,12 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 - **Version string.** `main.version` is `"dev"` locally and is stamped by
   `release.yml` with `-X main.version=<tag without v>`. "Check for updates"
   compares it numerically with the latest release; "dev" never offers an update.
-- **No network on its own.** The app contacts GitHub only when the user clicks
-  "Check for updates". Keep it that way and keep the README's privacy section
-  true if you add anything.
+- **No network on its own.** The app contacts the network only when the user
+  asks: "Check for updates" / "Update" (GitHub), the setup downloads of the model
+  and llama.cpp (Hugging Face, GitHub), and the Download button on the Settings
+  page (Hugging Face, the pinned revision and SHA-256 only). The Settings page
+  itself is a loopback-only server that exists while it is open. Keep it that
+  way and keep the README's privacy section true if you add anything.
 - **Don't commit large or third-party files**: `models/`, `runtime/`, `*.exe`,
   logs (all in `.gitignore`).
 
@@ -114,8 +128,9 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 - The test binary doubles as a fake `llama-server` (`TestMain` in
   `helper_test.go`, env `CT_TEST_FAKE_SERVER=1`), so crash recovery and engine
   switching are tested without the real model. Seams like `newHotkey`,
-  `showErr`, `foreground` and `paste` on `app` are replaceable in tests;
-  `fakeTray` records tray calls.
+  `showErr`, `foreground`, `paste`, `capture` and `openURL` on `app` are
+  replaceable in tests; `fakeTray` records tray calls. Model downloads in tests
+  only reach loopback (`downloadTransport` is set in `TestMain`).
 - Behaviour that needs a real desktop (live hotkey, real selection, Ctrl+V into
   another app, the look of the tray menu) is not covered by `go test`. Say so
   when you could not check it; never inject keystrokes into the user's desktop.
@@ -124,12 +139,16 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 
 ## Release flow
 
-1. Merge to `main` through a PR (CI = `.github/workflows/ci.yml`: gofmt, vet,
-   test, build, PowerShell parse check, version-info check; plus Linux build/test).
+1. Merge to `main` through a PR (CI = `.github/workflows/ci.yml`: a Windows job
+   (gofmt, vet, test, build, PowerShell parse check, version-info check), a Linux
+   job (X11 tests under Xvfb, setup/package script checks, tarball) and a macOS
+   job (native smoke checks, setup fixtures, app bundle) on arm64 and Intel).
 2. Tag `vX.Y.Z` (or `gh release create vX.Y.Z --target main`). `release.yml`
    builds `Portable-Clipboard-Translator-Windows-x64-vX.Y.Z.zip` (flat: exe,
-   Setup.cmd, Start.cmd, Stop.cmd, setup.ps1, config.json, README.txt, LICENSE)
-   and attaches it. If a release already exists, only the zip is uploaded.
+   Setup.cmd, Start.cmd, Stop.cmd, setup.ps1, config.json, README.txt, LICENSE),
+   the Linux tarball and the macOS arm64 / amd64 zips with their `.sha256`
+   files, and attaches them. If a release already exists, the files are uploaded
+   to it.
 3. Afterwards bump `bucket/clipboard-translator.json` (`version`, `url`, `hash`
    = SHA-256 of that zip) in a follow-up PR.
 4. Not done yet: winget manifests (submitting to `microsoft/winget-pkgs` is a PR
@@ -144,8 +163,8 @@ PRs at `main` (deleting a base branch auto-closes the PRs stacked on it).
 The app is MIT. The model is not: PLaMo is under the PLaMo Community License
 (business use, including internal use, needs prior registration with PFN). Keep
 the "Built with PLaMo" item in the tray menu and the notice in the README. Don't
-bundle the model or llama.cpp in the repo or in release zips; `setup.ps1`
-downloads them from their official sources. This is not legal advice; don't
+bundle the model or llama.cpp in the repo or in release zips; the setup
+scripts and the Settings page download them from their official sources. This is not legal advice; don't
 state license conclusions beyond what the README already says.
 
 ## Style
