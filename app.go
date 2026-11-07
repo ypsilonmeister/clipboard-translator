@@ -42,8 +42,9 @@ type app struct {
 	translateStart time.Time
 	lastTranslSec  int
 	hist           history
-	foreground     func() uintptr // foregroundWindow, replaceable in tests
-	paste          func() error   // pasteIntoForeground, replaceable in tests
+	foreground     func() uintptr                                        // foregroundWindow, replaceable in tests
+	paste          func(target uintptr) error                            // pasteIntoForeground, replaceable in tests
+	capture        func(cb Clipboard, win uintptr) (string, bool, error) // captureSelectedText, replaceable in tests
 }
 
 func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Writer) *app {
@@ -62,6 +63,7 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 		results:    make(chan result, 16),
 		foreground: foregroundWindow,
 		paste:      pasteIntoForeground,
+		capture:    captureSelectedText,
 	}
 	tray.SetMenu(a.buildMenu)
 	a.sup = &supervisor{
@@ -298,12 +300,15 @@ func (a *app) tickTranslationStatus() {
 // older one and invalidates its result.
 func (a *app) startTranslation() {
 	win := a.foreground()
-	seqBefore := clipboardSequence()
 	a.abortTranslation()
-	source, seq, err := captureSelectedText(a.cb)
+	source, fromSelection, err := a.capture(a.cb, win)
 	if err != nil {
 		log.Printf("cannot capture selection: %v", err)
 		a.tray.SetStatus(a.readyTip)
+		if errors.Is(err, errCaptureModifiersHeld) || errors.Is(err, errCaptureFocusChanged) {
+			// Say so: translating the old clipboard text instead would be a silent wrong answer.
+			a.tray.Notify("Clipboard Translator", "Nothing was translated: "+err.Error()+". Release the keys and press the hotkey again.", true)
+		}
 		return
 	}
 	if !shouldTranslate(source, a.conf.MaxChars) {
@@ -316,7 +321,6 @@ func (a *app) startTranslation() {
 	a.cancelCurrent = cancel
 	a.translating, a.translateStart, a.lastTranslSec = true, time.Now(), 0
 	g := a.generation
-	fromSelection := seq != seqBefore // Ctrl+C changed the clipboard: there was a selection
 	log.Printf("translating %s -> %s", direction.Source, direction.Target)
 	a.tray.SetStatus("Clipboard Translator - translating... (0s)")
 	go func() {
@@ -367,7 +371,9 @@ func (a *app) handleResult(res result) {
 	a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
 	switch decidePaste(a.conf.AutoPaste, res.fromSelection, res.window, a.foreground()) {
 	case pasteNow:
-		if err := a.paste(); err != nil {
+		// decidePaste just confirmed the window is still res.window; that is the
+		// target pasteWithFocus must still find in front right before Ctrl+V.
+		if err := a.paste(res.window); err != nil {
 			log.Printf("auto-paste failed: %v", err)
 			a.tray.Notify("Clipboard Translator", "Translation ready, but it could not be pasted ("+err.Error()+"). Press "+pasteShortcut()+".", true)
 			return
@@ -385,13 +391,16 @@ func (a *app) handleResult(res result) {
 }
 
 // pasteIntoForeground waits for the hotkey's modifiers to be released and then
-// types Ctrl+V.
-func pasteIntoForeground() error {
-	return pasteWithFocus(foregroundWindow, waitModifiersReleased, sendPaste)
+// types Ctrl+V into target, but only if target is still the window in front.
+func pasteIntoForeground(target uintptr) error {
+	return pasteWithFocus(target, foregroundWindow, waitModifiersReleased, sendPaste)
 }
 
-func pasteWithFocus(foreground func() uintptr, wait func(time.Duration) bool, send func() error) error {
-	target := foreground()
+// pasteWithFocus sends Ctrl+V only if target (the window the selection came
+// from) is in front after the modifier wait, which can take up to a second and
+// during which the user may have switched windows. On failure the translation
+// stays on the clipboard.
+func pasteWithFocus(target uintptr, foreground func() uintptr, wait func(time.Duration) bool, send func() error) error {
 	if !wait(time.Second) {
 		return errors.New("modifier keys are still held down")
 	}

@@ -27,10 +27,9 @@ func TestX11Desktop(t *testing.T) {
 	defer cb.Close()
 	const source = "こんにちは, world 😀"
 	x11TestSelect(source)
-	before := clipboardSequence()
-	got, seq, err := captureSelectedText(cb)
-	if err != nil || got != source || seq == before {
-		t.Fatalf("capture = %q %d %v", got, seq, err)
+	got, fromSelection, err := captureSelectedText(cb, foregroundWindow())
+	if err != nil || got != source || !fromSelection {
+		t.Fatalf("capture = %q %v %v", got, fromSelection, err)
 	}
 	if applied, err := cb.ReplaceIfUnchanged("different copy", "wrong"); err != nil || applied {
 		t.Fatalf("stale comparison: %v %v", applied, err)
@@ -44,7 +43,7 @@ func TestX11Desktop(t *testing.T) {
 	if foregroundWindow() == 0 {
 		t.Fatal("test window has no focus")
 	}
-	if err := pasteIntoForeground(); err != nil {
+	if err := pasteIntoForeground(foregroundWindow()); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(time.Second)
