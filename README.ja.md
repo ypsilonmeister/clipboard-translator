@@ -78,6 +78,7 @@ CI は Apple Silicon（`arm64`）と Intel（`amd64`）用に、それぞれ
 対応する zip を展開し、権限を与える前に **Clipboard Translator.app** を最終配置先（例: Applications）へ移してください。
 これは **ad-hoc 署名の開発用ビルド**です。Developer ID 署名・公証は含まず、Gatekeeper の受け入れや
 一般配布の署名手順は未検証です。
+開発用ビルドの置き換え後は、アクセシビリティ権限の再設定が必要になる場合があります。
 
 初回セットアップには `tarfile.data_filter` が使える Python（3.12 以降、またはセキュリティ更新済みの
 3.10／3.11）が必要です。例えば Homebrew で Python を導入してください。

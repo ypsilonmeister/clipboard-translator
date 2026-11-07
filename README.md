@@ -82,6 +82,7 @@ Releases. Extract the matching zip and move **Clipboard Translator.app** to its 
 location (for example Applications) before granting permissions or enabling autostart.
 These are **ad-hoc signed development builds**, without Developer ID signing or
 notarization. Gatekeeper acceptance and public-distribution signing are not verified.
+Accessibility access may need to be granted again after replacing a development build.
 
 First-run setup requires Python with `tarfile.data_filter` (Python 3.12+, or a security-patched
 3.10/3.11; for example install Python with Homebrew). Start the app and accept the explicit

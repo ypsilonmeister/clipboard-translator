@@ -14,6 +14,9 @@ static NSStatusItem *status_item;
 static NSMutableArray *commands;
 static NSWindow *setup_window;
 static int setup_cancelled;
+static AXUIElementRef previous_focus_window;
+static pid_t previous_focus_pid;
+static uint64_t focus_token;
 
 @interface CTMenuTarget : NSObject
 - (void)requestMenu:(id)sender;
@@ -87,18 +90,25 @@ int ct_mac_accessible(void) { return AXIsProcessTrusted(); }
 
 uint64_t ct_mac_focus(void) {
     @autoreleasepool {
+        if (!AXIsProcessTrusted()) return 0;
         pid_t pid = [[[NSWorkspace sharedWorkspace] frontmostApplication] processIdentifier];
         if (!pid) return 0;
-        CFArrayRef windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
-        uint64_t target = 0;
-        for (NSDictionary *window in (NSArray *)windows) {
-            if ([window[(NSString *)kCGWindowOwnerPID] intValue] == pid && [window[(NSString *)kCGWindowLayer] intValue] == 0) {
-                target = ((uint64_t)(uint32_t)pid << 32) | [window[(NSString *)kCGWindowNumber] unsignedIntValue];
-                break;
-            }
+        AXUIElementRef application = AXUIElementCreateApplication(pid);
+        AXUIElementSetMessagingTimeout(application, 0.5f);
+        CFTypeRef window = NULL;
+        AXError error = AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute, &window);
+        CFRelease(application);
+        if (error != kAXErrorSuccess || !window) return 0;
+        // Compare AX identities rather than querying screen-capture/window-list
+        // APIs. No Screen Recording permission is needed for this check.
+        if (!previous_focus_window || previous_focus_pid != pid || !CFEqual(previous_focus_window, window)) {
+            if (previous_focus_window) CFRelease(previous_focus_window);
+            previous_focus_window = (AXUIElementRef)CFRetain(window);
+            previous_focus_pid = pid;
+            focus_token++;
         }
-        if (windows) CFRelease(windows);
-        return target;
+        CFRelease(window);
+        return focus_token;
     }
 }
 int ct_mac_modifiers(void) {
@@ -166,6 +176,7 @@ void ct_mac_tray_close(void) {
         if (status_item) { [[NSStatusBar systemStatusBar] removeStatusItem:status_item]; [status_item release]; status_item = nil; }
         [commands removeAllObjects];
         wants_menu = 0;
+        if (previous_focus_window) { CFRelease(previous_focus_window); previous_focus_window = NULL; }
     }
 }
 void ct_mac_status(const char *text) { @autoreleasepool { [[status_item button] setToolTip:[NSString stringWithUTF8String:text]]; } }
