@@ -18,18 +18,24 @@ INSTALL
    (no console window). Wait for the 'Ready' balloon; hover over the tray icon
    to see the current state. On Windows 11 the icon may be hidden under the ^
    overflow arrow.
-4. Highlight Japanese or English text and press Ctrl+Alt+E. Ctrl+V pastes the
-   translated text when ready. No text selected = existing clipboard content.
+4. Highlight text (Japanese <-> English unless you changed the languages) and
+   press Ctrl+Alt+E. Ctrl+V pastes the translated text when ready.
+   No text selected = existing clipboard content.
 5. Stop.cmd stops the app and llama-server. If you move the folder, toggle
    'Start with Windows' off and on again.
 
 TRAY MENU (right-click the icon)
   Cancel translation          shown while a translation runs
   Recent translations         last 10, kept in memory only; click to copy again
+  Settings...                 opens a settings page in your browser: hotkeys (each
+                              with its own languages), auto-paste, the longest text,
+                              the model (download / switch) and the engine
   Paste automatically ...     off by default; types Ctrl+V into the window you
                               selected the text in (only a fresh selection, and
                               only if that window is still in front)
   Hotkey                      pick another key combination
+  Languages                   language pair of the first hotkey (default
+                              Japanese <-> English)
   Translation engine          CPU / CUDA / Vulkan (when more than one is installed)
   Check for updates           asks GitHub only when you click
   Open config.json            other settings; changes there need a restart
@@ -63,6 +69,10 @@ PRIVACY
 - Translation runs on this PC; the server listens on 127.0.0.1 only.
 - The network is used only when you ask: the downloads above, and 'Check for
   updates' / 'Update'. No telemetry, no background checks.
+- 'Settings...' opens a page served by the app itself on 127.0.0.1, only while
+  it is open (a random token protects it; it loads nothing from the internet).
+  Its Download button fetches a model from huggingface.co, only when you click
+  it, only the pinned revision, and the file is used only if its SHA-256 matches.
 - The logs in this folder record errors, not the text you translate.
 
 LIMITATIONS
@@ -72,7 +82,9 @@ LIMITATIONS
   only if the current clipboard text still matches the captured text.
   If another application updates the clipboard metadata without changing text,
   the translation is still accepted. If the actual text changes, it is preserved.
-- Only Japanese <-> English. URLs are not translated.
+- One language pair (or one target language) per hotkey; the two languages of a
+  pair need different scripts (for example English and German cannot share one
+  hotkey). URLs are not translated.
 - The exe is not code-signed; Windows SmartScreen may warn about a zip
   downloaded in a browser.
 - The backend may fail because of insufficient VRAM, old GPU drivers, or DLL

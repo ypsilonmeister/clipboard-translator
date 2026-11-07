@@ -157,7 +157,7 @@ First-run setup requires Python with `tarfile.data_filter` (Python 3.12+, or a s
 download prompt. A responsive setup window offers Cancel; download details go to `setup.log`.
 The official llama.cpp macOS archive is verified against GitHub's SHA-256 and supports
 both CPU and Metal. Metal is selected by default; CPU is available as a fallback/menu option.
-As on Windows/Linux, the model download has a size check rather than a pinned model hash.
+As on Windows and Linux, a fresh download of the model and the chat template is checked against pinned SHA-256 values; the size check only guards a file that is already on disk.
 
 The app runs in the **menu bar**, without a Dock icon. The default hotkey is
 **Control+Option+E** (`Ctrl+Alt+E` in config); paste with **Command+V**.
@@ -239,7 +239,7 @@ bash setup.sh --backend vulkan
 Setup requires Python with `tarfile.data_filter` (Python 3.12+, or a security-patched
 3.10/3.11). Runtime archives are checked against the SHA-256 published by GitHub.
 CPU is the default; Vulkan falls back to the installed CPU runtime if it cannot start.
-The model download is checked for completeness by size, as on Windows, rather than a pinned hash.
+A fresh download of the model and the chat template is checked against pinned SHA-256 values, as on Windows; the size check only guards a file that is already on disk.
 CPU and Vulkan runtime files retain their upstream layout and shared-library links.
 The runtime archive's system requirements also apply; older distributions may need a
 locally built compatible llama.cpp runtime at `runtime/cpu/llama-server`.
