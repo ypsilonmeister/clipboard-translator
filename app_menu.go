@@ -309,7 +309,7 @@ func (a *app) startUpdate() {
 		if !askYesNo("Update to " + tag + "?\n\nThis downloads the new version, closes Clipboard Translator and starts it again.") {
 			return
 		}
-		if err := runInstaller(a.dir); err != nil {
+		if err := runInstaller(a.dir, tag); err != nil {
 			a.tray.Notify("Clipboard Translator", "Could not start the update: "+err.Error(), true)
 		}
 	case kindScoop:

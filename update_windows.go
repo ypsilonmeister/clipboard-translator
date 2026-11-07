@@ -3,6 +3,7 @@
 package main
 
 import (
+	"log"
 	"os"
 	"os/exec"
 	"syscall"
@@ -17,17 +18,29 @@ func recordedInstallLocation() string {
 	return v
 }
 
-// runInstaller starts install.ps1 in its own console window, aimed at this
-// app's folder. The script stops this app (through its STOP file), replaces the
-// files and starts the new version; this process only starts it and carries on.
-func runInstaller(dir string) error {
-	script := "irm " + installScriptURL + " | iex; if (-not $?) { Write-Host ''; Read-Host 'Update failed. Press Enter to close' }"
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
-	cmd.Env = append(os.Environ(), "CT_INSTALL_DIR="+dir)
+// installerCommand builds the PowerShell invocation of install.ps1, aimed at
+// this app's folder and at release tag.
+func installerCommand(dir, tag string) *exec.Cmd {
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", installerPowerShell(installScriptURL))
+	cmd.Env = installerEnv(os.Environ(), dir, tag)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewConsole}
+	return cmd
+}
+
+// runInstaller starts install.ps1 in its own console window, aimed at this
+// app's folder and at release tag. The script stops this app (through its STOP
+// file), replaces the files and starts the new version; this process only
+// starts it and carries on. A failure keeps that window open (see
+// installerPowerShell); the outcome is also logged.
+func runInstaller(dir, tag string) error {
+	cmd := installerCommand(dir, tag)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	go func() { _ = cmd.Wait() }()
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			log.Printf("the updater to %s ended with an error: %v", tag, err)
+		}
+	}()
 	return nil
 }

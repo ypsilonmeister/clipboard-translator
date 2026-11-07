@@ -7,7 +7,6 @@ import (
 	"log"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -114,8 +113,7 @@ func bindToParentLifetime(cmd *exec.Cmd) {
 // the window open (waiting for Enter) only when the script fails, so an error
 // can be read.
 func setupCommand(dir string) *exec.Cmd {
-	script := strings.ReplaceAll(filepath.Join(dir, "setup.ps1"), "'", "''")
-	ps := "& '" + script + "' -Backend auto; if (-not $?) { Write-Host ''; Write-Host 'Setup failed.'; Read-Host 'Press Enter to close' ; exit 1 }"
+	ps := setupPowerShell(filepath.Join(dir, "setup.ps1"))
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
 	cmd.Dir = dir
 	return cmd
