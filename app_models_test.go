@@ -313,10 +313,11 @@ func TestPageDownloadsAModelAndTheTrayIsTold(t *testing.T) {
 	if resp.StatusCode != 200 || decodeAPI(t, body).State == nil {
 		t.Fatalf("download: %d %s", resp.StatusCode, body)
 	}
-	waitFor(t, "the model to be installed", func() bool {
+	// The model file appears before the template is fetched, so wait for the end.
+	waitFor(t, "the download to finish", func() bool {
 		_, b := s.do(t, "GET", "/api/state", nil, nil)
 		st := decodeAPI(t, b).State
-		return st != nil && findModel(*st, "t1").Installed
+		return st != nil && st.Download != nil && st.Download.Phase == "done" && findModel(*st, "t1").Installed
 	})
 	_, b := s.do(t, "GET", "/api/state", nil, nil)
 	st := decodeAPI(t, b).State
