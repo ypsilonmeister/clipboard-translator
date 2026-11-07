@@ -54,8 +54,13 @@ type hotkeySpec struct {
 // parseHotkeySpec is the one place that knows the hotkey syntax, so loadConfig
 // can reject a bad config.json before the model is loaded and the per-platform
 // parsers (RegisterHotKey, X11) cannot drift from it. allowSuper accepts
-// "Super" as another name for the Windows key (X11 only).
+// "Super" as another name for the Windows key (X11 and macOS). allowMac accepts
+// the macOS names Cmd/Command (the same key as Win here) and Option (Alt).
 func parseHotkeySpec(s string, allowSuper bool) (hotkeySpec, error) {
+	return parseHotkeyNames(s, allowSuper, false)
+}
+
+func parseHotkeyNames(s string, allowSuper, allowMac bool) (hotkeySpec, error) {
 	var h hotkeySpec
 	for _, p := range strings.Split(strings.ToUpper(strings.ReplaceAll(s, " ", "")), "+") {
 		switch p {
@@ -67,6 +72,16 @@ func parseHotkeySpec(s string, allowSuper bool) (hotkeySpec, error) {
 			h.shift = true
 		case "WIN", "WINDOWS":
 			h.win = true
+		case "CMD", "COMMAND":
+			if !allowMac {
+				return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: %s is a macOS name; use Ctrl+Alt+E", s, p)
+			}
+			h.win = true
+		case "OPTION":
+			if !allowMac {
+				return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: Option is a macOS name; use Alt", s)
+			}
+			h.alt = true
 		case "SUPER":
 			if !allowSuper {
 				return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (one A-Z key)", s)
@@ -86,8 +101,12 @@ func parseHotkeySpec(s string, allowSuper bool) (hotkeySpec, error) {
 }
 
 // validateHotkey checks a hotkey for the platform this build runs on.
-func validateHotkey(s string) error {
-	_, err := parseHotkeySpec(s, runtime.GOOS != "windows")
+func validateHotkey(s string) error { return validateHotkeyFor(runtime.GOOS, s) }
+
+// validateHotkeyFor is validateHotkey for another OS, so tests can cover all
+// three parsers (RegisterHotKey, X11, Carbon) from any machine.
+func validateHotkeyFor(goos, s string) error {
+	_, err := parseHotkeyNames(s, goos != "windows", goos == "darwin")
 	return err
 }
 
