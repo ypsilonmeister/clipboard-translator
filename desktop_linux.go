@@ -119,17 +119,17 @@ func sendPaste() error {
 var linuxSelectionSequence uint32
 
 func clipboardSequence() uint32 { return linuxSelectionSequence }
-func captureSelectedText(cb Clipboard) (string, uint32, error) {
+func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
 	text := readX11Text(true)
 	if text == "" {
 		text, err := cb.Read()
-		return text, linuxSelectionSequence, err
+		return text, false, err
 	}
 	if err := cb.Write(text); err != nil {
-		return "", linuxSelectionSequence, err
+		return "", false, err
 	}
 	linuxSelectionSequence++
-	return text, linuxSelectionSequence, nil
+	return text, true, nil
 }
 func readX11Text(primary bool) string {
 	p := C.ct_read(C.int(boolInt(primary)))

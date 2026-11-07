@@ -176,36 +176,17 @@ func sendPaste() error {
 	return nil
 }
 
-// captureSelectedText tries to copy selected content in the focused app.
-// If Ctrl+C does not change the clipboard, it uses the previous clipboard text.
-func captureSelectedText(cb Clipboard) (string, uint32, error) {
-	old, err := cb.Read()
-	if err != nil {
-		return "", 0, err
-	}
-	before := clipboardSequence()
-	// Avoid Ctrl+Alt+E modifiers contaminating the simulated Ctrl+C.
-	deadline := time.Now().Add(900 * time.Millisecond)
-	for modifierPressed() && time.Now().Before(deadline) {
-		time.Sleep(15 * time.Millisecond)
-	}
-	if modifierPressed() {
-		return old, before, nil
-	}
-	if err := sendCopy(); err != nil {
-		return old, before, nil
-	}
-	deadline = time.Now().Add(700 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		seq := clipboardSequence()
-		if seq != before {
-			picked, err := cb.Read()
-			if err != nil {
-				return "", 0, err
-			}
-			return picked, seq, nil
-		}
-		time.Sleep(15 * time.Millisecond)
-	}
-	return old, before, nil
+// captureSelectedText tries to copy the selected content of window win, the
+// window that was in front when the hotkey was pressed. If Ctrl+C does not
+// change the clipboard, it uses the previous clipboard text (fromSelection is
+// then false). See captureWith for the ordering rules.
+func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
+	return captureWith(cb, win, captureOps{
+		foreground:      foregroundWindow,
+		waitModifiers:   waitModifiersReleased, // keep Ctrl+Alt+E from contaminating the simulated Ctrl+C
+		sequence:        clipboardSequence,
+		sendCopy:        sendCopy,
+		modifierTimeout: 900 * time.Millisecond,
+		copyTimeout:     700 * time.Millisecond,
+	})
 }

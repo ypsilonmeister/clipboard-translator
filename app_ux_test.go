@@ -20,7 +20,7 @@ func uxApp(t *testing.T) (a *app, tray *fakeTray, cb *testClipboard, pastes *int
 	a.foreground = func() uintptr { return *fg }
 	n := 0
 	pastes = &n
-	a.paste = func() error { n++; return nil }
+	a.paste = func(uintptr) error { n++; return nil }
 	return
 }
 
@@ -88,7 +88,7 @@ func TestHandleResultAutoPaste(t *testing.T) {
 	}
 
 	// A paste that fails is reported, and the translation stays in the clipboard.
-	a.paste = func() error { return errors.New("keys held") }
+	a.paste = func(uintptr) error { return errors.New("keys held") }
 	cb.text = "d"
 	g = pending(a)
 	a.handleResult(result{original: "d", translated: "D", generation: g, window: 100, fromSelection: true})
