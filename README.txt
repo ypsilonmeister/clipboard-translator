@@ -52,6 +52,9 @@ For manual choice, run in PowerShell from this folder:
   powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend cuda
   powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend cpu
 
+To use a different model size (default 2b, 1.8 GB; 0.8b is 0.6 GB, 8b is 5.3 GB):
+  powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Model 8b
+
 All model/executable paths are relative. Once set up, copy the whole folder
 to a Windows x64 PC. Drivers must support the selected GPU backend; otherwise
 the app falls back to the CPU build.

@@ -2,17 +2,19 @@
 # Linux setup: all downloads are explicit; normal translation remains offline.
 set -euo pipefail
 backend=cpu
-if [[ $# -gt 0 ]]; then
-    if [[ $# != 2 || $1 != --backend || ! $2 =~ ^(cpu|vulkan)$ ]]; then
-        echo 'Usage: bash setup.sh [--backend cpu|vulkan]' >&2
-        exit 2
-    fi
-    backend=$2
-fi
+model=''
+usage() { echo 'Usage: bash setup.sh [--backend cpu|vulkan] [--model 0.8b|2b|8b]' >&2; exit 2; }
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --backend) [[ $# -ge 2 && $2 =~ ^(cpu|vulkan)$ ]] || usage; backend=$2; shift 2 ;;
+        --model) [[ $# -ge 2 && $2 =~ ^(0\.8b|2b|8b)$ ]] || usage; model=$2; shift 2 ;;
+        *) usage ;;
+    esac
+done
 if [[ $(uname -s) != Linux ]]; then echo 'This setup script supports Linux only.' >&2; exit 1; fi
 command -v python3 >/dev/null || { echo 'Install Python 3.12+ to run setup.' >&2; exit 1; }
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-python3 - "$root" "$backend" <<'PY'
+python3 - "$root" "$backend" "$model" <<'PY'
 import hashlib
 import json
 import os
@@ -26,11 +28,27 @@ import tempfile
 import urllib.request
 
 root, backend = Path(sys.argv[1]), sys.argv[2]
+model_arg = sys.argv[3] if len(sys.argv) > 3 else ''
 if not hasattr(tarfile, 'data_filter'):
     sys.exit('Setup needs Python with tarfile.data_filter (Python 3.12+, or a security-patched Python 3.10/3.11).')
 arch = {'x86_64': 'x64', 'aarch64': 'arm64'}.get(platform.machine())
 if not arch:
     sys.exit('Supported Linux architectures: x86_64 and aarch64.')
+
+# The models setup can install. Each file is pinned to one Hugging Face commit and one SHA-256
+# (the model and the chat template), as in setup.ps1; keep the values the same.
+# `minimum` only guards files already on disk (they may come from an older revision).
+MODELS = {
+    '0.8b': dict(repo='plamo-3-translate-0.8b-GGUF', revision='0c4af2b003fdd94b6868aa955414c1c86ee96997',
+                 file='plamo-3-translate-0.8b-Q4_K_M.gguf', sha256='73a1d942d8ab1e654d83898d997b8b4808c32ba669b378df612230989d18f079',
+                 template_sha256='084af862c7844bdca74e8dca5516fde1f446919e00650ee4d8fae5b193fd064e', minimum=400 * 1024**2),
+    '2b': dict(repo='plamo-3-translate-2b-GGUF', revision='232fbd7916519edecddfdae0beae7e76fe70453f',
+               file='plamo-3-translate-2b-Q4_K_M.gguf', sha256='f36d0813dd95573a852ab5d76e374c543632d9e292929e922bcdbf7e53b494e0',
+               template_sha256='18dcc169548d794897084a04cd150a5a633717f1eb6e62de4a0e0973b377e02a', minimum=1024**3),
+    '8b': dict(repo='plamo-3-translate-8b-GGUF', revision='407c15bc44f6968e6734bc047d92f766c163bbec',
+               file='plamo-3-translate-8b-Q4_K_M.gguf', sha256='e021fb83dcda393a4f866291caa53380eebbe2f25be4c7585fb19e8486828bbf',
+               template_sha256='084af862c7844bdca74e8dca5516fde1f446919e00650ee4d8fae5b193fd064e', minimum=4 * 1024**3),
+}
 
 def fetch(url):
     request = urllib.request.Request(url, headers={'User-Agent': 'ClipboardTranslatorSetup', 'Accept': 'application/vnd.github+json'})
@@ -54,12 +72,20 @@ def download(url, dest, expected=None):
 
 (root / 'models').mkdir(exist_ok=True)
 (root / 'runtime').mkdir(exist_ok=True)
-hf = 'https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF/resolve/main/'
-for name, minimum in [('plamo-3-translate-2b-Q4_K_M.gguf', 1024**3), ('chat_template.jinja', 100)]:
+config_path = root / 'config.json'
+# Read config.json before the big download: a damaged file should fail now.
+config = json.loads(config_path.read_text(encoding='utf-8')) if config_path.exists() else {}
+# Without --model, keep the model config.json names (so an update never swaps a chosen model); else 2b.
+configured = Path(str(config.get('model_file') or '').replace(chr(92), '/')).name.lower()
+model_key = model_arg or next((k for k, m in MODELS.items() if m['file'].lower() == configured), '2b')
+model = MODELS[model_key]
+print(f'Model: PLaMo 3 Translate {model_key.upper()}', flush=True)
+hf = 'https://huggingface.co/pfnet/' + model['repo'] + '/resolve/' + model['revision'] + '/'
+for name, minimum, sha256 in [(model['file'], model['minimum'], model['sha256']), ('chat_template.jinja', 100, model['template_sha256'])]:
     dest = root / 'models' / name
     if not dest.exists():
         print('Downloading ' + name, flush=True)
-        download(hf + name, dest)
+        download(hf + name, dest, sha256)
     if dest.stat().st_size < minimum:
         raise RuntimeError('Incomplete file; remove it and retry: ' + str(dest))
 
@@ -115,8 +141,8 @@ if needed:
                 raise RuntimeError('Incomplete runtime directory exists; move it aside and retry: ' + str(target))
             staged.rename(target)
 
-config_path = root / 'config.json'
-config = json.loads(config_path.read_text(encoding='utf-8')) if config_path.exists() else {}
+if model_arg:
+    config['model_file'] = 'models/' + model['file']
 config.update(server_file=f'runtime/{backend}/llama-server', fallback_server_file='runtime/cpu/llama-server', gpu_layers=0 if backend == 'cpu' else 99)
 if config_path.exists():
     shutil.copyfile(config_path, root / 'config.json.bak')
