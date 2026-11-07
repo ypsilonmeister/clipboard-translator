@@ -48,6 +48,7 @@ func (s *supervisor) start(binary string, gpuLayers int, label string) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	bindToParentLifetime(cmd)
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }() // the only Wait on this child
 
