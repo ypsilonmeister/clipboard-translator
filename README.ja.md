@@ -228,7 +228,7 @@ CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け�
 
 | キー | 内容 |
 | --- | --- |
-| `hotkey` | 修飾キー + A〜Z の 1 文字。例: `Ctrl+Alt+E` |
+| `hotkey` | 修飾キー + A〜Z の 1 文字。例: `Ctrl+Alt+E`(macOS では `Cmd` / `Command` と `Option` も使えます) |
 | `auto_paste` | `true` で翻訳後に Ctrl+V を自動入力(初期値は `false`) |
 | `port` | ローカルの llama-server のポート(1024〜65534。アプリは `port + 1` も多重起動の防止に使います) |
 | `max_chars` | これより長いテキストは翻訳しません |

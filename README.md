@@ -241,7 +241,7 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 
 | Key | Meaning |
 | --- | --- |
-| `hotkey` | Modifier(s) + one letter A-Z, e.g. `Ctrl+Alt+E` |
+| `hotkey` | Modifier(s) + one letter A-Z, e.g. `Ctrl+Alt+E` (on macOS `Cmd` / `Command` and `Option` also work) |
 | `auto_paste` | `true` types Ctrl+V after translating (default `false`) |
 | `port` | Local llama-server port, 1024-65534 (the app also uses `port + 1` as an instance lock) |
 | `max_chars` | Longer text is skipped |
