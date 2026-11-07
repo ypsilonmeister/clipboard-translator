@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 type Config struct {
@@ -36,6 +40,57 @@ func defaultConfig() Config {
 		FallbackServerFile: "runtime/cpu/" + serverBinaryName(),
 	}
 }
+
+// utf8BOM is written at the start of a file by Windows PowerShell 5.1
+// (-Encoding UTF8), some editors and older Notepad. encoding/json rejects it.
+var utf8BOM = []byte("\xEF\xBB\xBF")
+
+// hotkeySpec is a parsed hotkey such as "Ctrl+Alt+E".
+type hotkeySpec struct {
+	ctrl, alt, shift, win bool
+	key                   byte // upper-case 'A'..'Z'
+}
+
+// parseHotkeySpec is the one place that knows the hotkey syntax, so loadConfig
+// can reject a bad config.json before the model is loaded and the per-platform
+// parsers (RegisterHotKey, X11) cannot drift from it. allowSuper accepts
+// "Super" as another name for the Windows key (X11 only).
+func parseHotkeySpec(s string, allowSuper bool) (hotkeySpec, error) {
+	var h hotkeySpec
+	for _, p := range strings.Split(strings.ToUpper(strings.ReplaceAll(s, " ", "")), "+") {
+		switch p {
+		case "CTRL", "CONTROL":
+			h.ctrl = true
+		case "ALT":
+			h.alt = true
+		case "SHIFT":
+			h.shift = true
+		case "WIN", "WINDOWS":
+			h.win = true
+		case "SUPER":
+			if !allowSuper {
+				return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (one A-Z key)", s)
+			}
+			h.win = true
+		default:
+			if len(p) != 1 || p[0] < 'A' || p[0] > 'Z' || h.key != 0 {
+				return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (one A-Z key)", s)
+			}
+			h.key = p[0]
+		}
+	}
+	if !(h.ctrl || h.alt || h.shift || h.win) || h.key == 0 {
+		return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: it must include a modifier (Ctrl, Alt, Shift or Win) and one letter A-Z, like Ctrl+Alt+E", s)
+	}
+	return h, nil
+}
+
+// validateHotkey checks a hotkey for the platform this build runs on.
+func validateHotkey(s string) error {
+	_, err := parseHotkeySpec(s, runtime.GOOS != "windows")
+	return err
+}
+
 func loadConfig(dir string) (Config, error) {
 	c := defaultConfig()
 	b, err := os.ReadFile(filepath.Join(dir, "config.json"))
@@ -45,14 +100,18 @@ func loadConfig(dir string) (Config, error) {
 	if err != nil {
 		return c, err
 	}
-	if err := json.Unmarshal(b, &c); err != nil {
+	if err := json.Unmarshal(bytes.TrimPrefix(b, utf8BOM), &c); err != nil {
 		return c, err
 	}
 	if c.Hotkey == "" {
 		return c, errors.New("hotkey cannot be empty")
 	}
-	if c.Port < 1024 || c.Port > 65535 {
-		return c, errors.New("port must be 1024..65535")
+	if err := validateHotkey(c.Hotkey); err != nil {
+		return c, err
+	}
+	// main() also listens on port+1 to allow only one instance, so 65535 would overflow.
+	if c.Port < 1024 || c.Port > 65534 {
+		return c, errors.New("port must be 1024..65534 (port+1 is used to allow only one running copy)")
 	}
 	if c.PollMS < 20 || c.PollMS > 10000 {
 		return c, errors.New("poll_ms must be 20..10000")

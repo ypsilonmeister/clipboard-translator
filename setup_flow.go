@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -59,26 +60,48 @@ type appPaths struct{ model, template, server, fallback string }
 func resolvePaths(dir string, c Config) (appPaths, error) {
 	var p appPaths
 	var err error
-	if p.model, err = pathWithin(dir, c.ModelFile); err != nil {
+	// The key name tells the user which line of config.json to fix.
+	resolve := func(key, value string) (string, error) {
+		full, err := pathWithin(dir, value)
+		if err != nil {
+			return "", fmt.Errorf("config.json %q: %w", key, err)
+		}
+		return full, nil
+	}
+	if p.model, err = resolve("model_file", c.ModelFile); err != nil {
 		return p, err
 	}
-	if p.template, err = pathWithin(dir, c.TemplateFile); err != nil {
+	if p.template, err = resolve("template_file", c.TemplateFile); err != nil {
 		return p, err
 	}
-	if p.server, err = pathWithin(dir, c.ServerFile); err != nil {
+	if p.server, err = resolve("server_file", c.ServerFile); err != nil {
 		return p, err
 	}
-	if p.fallback, err = pathWithin(dir, c.FallbackServerFile); err != nil {
+	if p.fallback, err = resolve("fallback_server_file", c.FallbackServerFile); err != nil {
 		return p, err
 	}
 	return p, nil
 }
 
-// missing lists the files the app cannot start without that do not exist.
+// checkFile reports why path cannot be used as a required file: it does not
+// exist, or it is a folder (or another non-regular entry) instead of a file.
+func checkFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a file (it is a folder or special entry)", path)
+	}
+	return nil
+}
+
+// missing lists the files the app cannot start without that do not exist or
+// are not regular files.
 func (p appPaths) missing() []string {
 	var out []string
 	for _, f := range []string{p.model, p.template, p.server} {
-		if _, err := os.Stat(f); err != nil {
+		if checkFile(f) != nil {
 			out = append(out, f)
 		}
 	}

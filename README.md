@@ -243,7 +243,7 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 | --- | --- |
 | `hotkey` | Modifier(s) + one letter A-Z, e.g. `Ctrl+Alt+E` |
 | `auto_paste` | `true` types Ctrl+V after translating (default `false`) |
-| `port` | Local llama-server port (the app also uses `port + 1` as an instance lock) |
+| `port` | Local llama-server port, 1024-65534 (the app also uses `port + 1` as an instance lock) |
 | `max_chars` | Longer text is skipped |
 | `gpu_layers` | Layers offloaded to GPU (`0` = CPU only) |
 | `server_file` / `fallback_server_file` | llama-server binaries (primary / CPU fallback) |
