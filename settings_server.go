@@ -47,6 +47,7 @@ type profileForm struct {
 type settingsForm struct {
 	Profiles  []profileForm `json:"profiles"`
 	AutoPaste bool          `json:"auto_paste"`
+	MaxChars  int           `json:"max_chars"`
 }
 
 type languageOption struct {
@@ -61,6 +62,30 @@ type settingsState struct {
 	MaxHotkeys int              `json:"max_hotkeys"`
 	WinKey     string           `json:"win_key"`  // what the Win modifier is called here
 	Inactive   []string         `json:"inactive"` // hotkeys that could not be registered, with the reason
+
+	Models      []modelState   `json:"models"`
+	CustomModel string         `json:"custom_model,omitempty"` // model_file when it is not one of the models above
+	Engines     []engineState  `json:"engines"`
+	Download    *downloadState `json:"download,omitempty"`
+	Busy        string         `json:"busy,omitempty"`   // what the app is doing now (loading a model ...)
+	Notice      string         `json:"notice,omitempty"` // why the last switch did not work
+	LicenseURL  string         `json:"license_url"`
+}
+
+type modelState struct {
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Note        string `json:"note"`
+	Size        string `json:"size"`
+	Installed   bool   `json:"installed"`
+	Active      bool   `json:"active"`
+	Downloading bool   `json:"downloading"`
+}
+
+type engineState struct {
+	Name   string `json:"name"`
+	Label  string `json:"label"`
+	Active bool   `json:"active"`
 }
 
 // settingsRequest goes from a handler to the main loop. save is nil for "give me
@@ -68,6 +93,8 @@ type settingsState struct {
 // told had failed is never applied later.
 type settingsRequest struct {
 	save     *settingsForm
+	action   string // "" (state or save), "use_model" or "engine"
+	arg      string // the model key or the engine name
 	deadline time.Time
 	reply    chan settingsReply // buffered: the loop never blocks on a reader that gave up
 }
@@ -84,12 +111,19 @@ func newSettingsRequest(save *settingsForm, wait time.Duration) settingsRequest 
 	return settingsRequest{save: save, deadline: time.Now().Add(wait), reply: make(chan settingsReply, 1)}
 }
 
+func newActionRequest(action, arg string, wait time.Duration) settingsRequest {
+	r := newSettingsRequest(nil, wait)
+	r.action, r.arg = action, arg
+	return r
+}
+
 type settingsServer struct {
 	token string
 	host  string // exactly what the browser sends as Host
 	ln    net.Listener
 	srv   *http.Server
 	ask   func(settingsRequest) settingsReply
+	dl    *downloadManager // owned by the app: a download outlives this server
 	idle  time.Duration
 
 	mu    sync.Mutex
@@ -100,7 +134,7 @@ type settingsServer struct {
 
 // startSettingsServer listens on a free loopback port. The server closes itself
 // after idle without a request (the page pings while it is open).
-func startSettingsServer(ask func(settingsRequest) settingsReply, idle time.Duration) (*settingsServer, error) {
+func startSettingsServer(ask func(settingsRequest) settingsReply, dl *downloadManager, idle time.Duration) (*settingsServer, error) {
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return nil, err
@@ -109,13 +143,17 @@ func startSettingsServer(ask func(settingsRequest) settingsReply, idle time.Dura
 	if err != nil {
 		return nil, err
 	}
-	s := &settingsServer{token: hex.EncodeToString(raw), host: ln.Addr().String(), ln: ln, ask: ask, idle: idle, done: make(chan struct{})}
+	s := &settingsServer{token: hex.EncodeToString(raw), host: ln.Addr().String(), ln: ln, ask: ask, dl: dl, idle: idle, done: make(chan struct{})}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.guard(false, s.serveIndex))
 	mux.HandleFunc("/app.js", s.guard(false, s.serveAsset("settings_web/app.js", "text/javascript; charset=utf-8")))
 	mux.HandleFunc("/app.css", s.guard(false, s.serveAsset("settings_web/app.css", "text/css; charset=utf-8")))
 	mux.HandleFunc("/api/state", s.guard(false, s.handleState))
 	mux.HandleFunc("/api/save", s.guard(true, s.handleSave))
+	mux.HandleFunc("/api/model/download", s.guard(true, s.handleDownload))
+	mux.HandleFunc("/api/model/cancel", s.guard(true, s.handleCancelDownload))
+	mux.HandleFunc("/api/model/use", s.guard(true, s.handleAction("use_model", "key")))
+	mux.HandleFunc("/api/engine", s.guard(true, s.handleAction("engine", "name")))
 	mux.HandleFunc("/api/ping", s.guard(true, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	mux.HandleFunc("/api/bye", s.guard(true, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -288,6 +326,63 @@ func (s *settingsServer) handleSave(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, apiResponse{State: &rep.state, Warnings: rep.warnings})
 }
 
+// decodeJSON reads a small JSON body into v and refuses unknown fields.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		writeJSON(w, http.StatusBadRequest, apiResponse{Error: "The request could not be read: " + err.Error()})
+		return false
+	}
+	return true
+}
+
+// handleAction forwards "use this model" and "use this engine" to the main loop.
+// The loop answers at once and then does the slow part; the page polls the state.
+func (s *settingsServer) handleAction(action, field string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body := map[string]string{}
+		if !decodeJSON(w, r, &body) {
+			return
+		}
+		rep, ok := s.roundTrip(newActionRequest(action, body[field], 8*time.Second))
+		if !ok {
+			status := http.StatusUnprocessableEntity
+			if errors.Is(rep.err, errSettingsBusy) {
+				status = http.StatusServiceUnavailable
+			}
+			writeJSON(w, status, apiResponse{State: stateOf(rep), Error: rep.err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, apiResponse{State: &rep.state, Warnings: rep.warnings})
+	}
+}
+
+func (s *settingsServer) handleDownload(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Key string `json:"key"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if s.dl == nil {
+		writeJSON(w, http.StatusNotImplemented, apiResponse{Error: "Downloads are not available."})
+		return
+	}
+	if err := s.dl.Start(body.Key); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, apiResponse{Error: err.Error()})
+		return
+	}
+	s.handleState(w, r)
+}
+
+func (s *settingsServer) handleCancelDownload(w http.ResponseWriter, r *http.Request) {
+	if s.dl != nil {
+		s.dl.Cancel()
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // languageOptions lists the model's languages by name, Japanese and English first.
 func languageOptions() []languageOption {
 	out := make([]languageOption, 0, len(languages))
@@ -367,6 +462,10 @@ func (f settingsForm) toConfig(base Config) (Config, error) {
 		}
 	}
 	c.AutoPaste = f.AutoPaste
+	if err := validateMaxChars(f.MaxChars); err != nil {
+		return base, err
+	}
+	c.MaxChars = f.MaxChars
 	if err := c.resolveProfiles(true); err != nil {
 		return base, err
 	}

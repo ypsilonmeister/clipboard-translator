@@ -54,7 +54,7 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 
 func (f *settingsFixture) server(t *testing.T) *settingsServer {
 	t.Helper()
-	s, err := startSettingsServer(f.a.askSettings, time.Minute)
+	s, err := startSettingsServer(f.a.askSettings, f.a.dl, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func decodeAPI(t *testing.T, b []byte) apiResponse {
 }
 
 func validForm() settingsForm {
-	return settingsForm{AutoPaste: true, Profiles: []profileForm{
+	return settingsForm{AutoPaste: true, MaxChars: 4000, Profiles: []profileForm{
 		{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}},
 		{Ctrl: true, Alt: true, Key: "K", Target: "ko"},
 	}}
@@ -172,6 +172,12 @@ func TestSettingsServerHeadersAndAssets(t *testing.T) {
 		if r.StatusCode != 200 || len(b) < 500 {
 			t.Errorf("%s: %d, %d bytes", p, r.StatusCode, len(b))
 		}
+	}
+	// An author rule like display:flex beats the hidden attribute; this one restores it
+	// (the busy bar once stayed on screen because of that).
+	css, _ := os.ReadFile("settings_web/app.css")
+	if !strings.Contains(string(css), "[hidden] { display: none !important; }") {
+		t.Error("app.css must make the hidden attribute win over author display rules")
 	}
 	js, _ := os.ReadFile("settings_web/app.js")
 	for _, bad := range []string{"innerHTML", "outerHTML", "document.write", "eval("} {
@@ -256,14 +262,14 @@ func TestSettingsSaveRejectsInvalidAndChangesNothing(t *testing.T) {
 
 	bad := map[string]settingsForm{
 		"no profiles":    {},
-		"no modifier":    {Profiles: []profileForm{{Key: "E", Languages: []string{"ja", "en"}}}},
-		"not a letter":   {Profiles: []profileForm{{Ctrl: true, Key: "1", Languages: []string{"ja", "en"}}}},
-		"same script":    {Profiles: []profileForm{{Ctrl: true, Key: "E", Languages: []string{"en", "de"}}}},
-		"unknown target": {Profiles: []profileForm{{Ctrl: true, Key: "E", Target: "xx"}}},
-		"duplicate key": {Profiles: []profileForm{
+		"no modifier":    {MaxChars: 4000, Profiles: []profileForm{{Key: "E", Languages: []string{"ja", "en"}}}},
+		"not a letter":   {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "1", Languages: []string{"ja", "en"}}}},
+		"same script":    {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Languages: []string{"en", "de"}}}},
+		"unknown target": {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Target: "xx"}}},
+		"duplicate key": {MaxChars: 4000, Profiles: []profileForm{
 			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}},
 			{Alt: true, Ctrl: true, Key: "e", Target: "ko"}}},
-		"both modes": {Profiles: []profileForm{{Ctrl: true, Key: "E", Languages: []string{"ja", "en"}, Target: "ko"}}},
+		"both modes": {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Languages: []string{"ja", "en"}, Target: "ko"}}},
 	}
 	for name, form := range bad {
 		resp, body := s.do(t, "POST", "/api/save", form, nil)
@@ -273,7 +279,7 @@ func TestSettingsSaveRejectsInvalidAndChangesNothing(t *testing.T) {
 		}
 	}
 	// The error names the profile so the page can show it there.
-	_, body := s.do(t, "POST", "/api/save", settingsForm{Profiles: []profileForm{
+	_, body := s.do(t, "POST", "/api/save", settingsForm{MaxChars: 4000, Profiles: []profileForm{
 		{Ctrl: true, Key: "E", Languages: []string{"ja", "en"}}, {Ctrl: true, Key: "K", Languages: []string{"en", "de"}}}}, nil)
 	if e := decodeAPI(t, body).Error; !strings.HasPrefix(e, "profiles[1]:") {
 		t.Errorf("error should start with profiles[1]: %q", e)
@@ -313,7 +319,7 @@ func TestSettingsSavePartialAndTotalHotkeyFailure(t *testing.T) {
 	f.taken["CTRL+SHIFT+Y"] = true
 	f.taken["CTRL+SHIFT+Z"] = true
 	prev := f.a.conf.Profiles
-	resp, body = s.do(t, "POST", "/api/save", settingsForm{Profiles: []profileForm{
+	resp, body = s.do(t, "POST", "/api/save", settingsForm{MaxChars: 4000, Profiles: []profileForm{
 		{Ctrl: true, Shift: true, Key: "Y", Languages: []string{"ja", "en"}}, {Ctrl: true, Shift: true, Key: "Z", Target: "ko"}}}, nil)
 	r = decodeAPI(t, body)
 	if resp.StatusCode != 422 || !strings.Contains(r.Error, "previous settings were kept") {
@@ -366,7 +372,7 @@ func TestSettingsRequestTimedOutIsNeverApplied(t *testing.T) {
 
 func TestSettingsServerClosesWhenIdleOrToldTo(t *testing.T) {
 	f := newSettingsFixture(t)
-	s, err := startSettingsServer(f.a.askSettings, 80*time.Millisecond)
+	s, err := startSettingsServer(f.a.askSettings, f.a.dl, 80*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
