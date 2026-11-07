@@ -32,6 +32,8 @@ func backendLabel(name string) string {
 		return "GPU (CUDA)"
 	case "vulkan":
 		return "GPU (Vulkan)"
+	case "metal":
+		return "GPU (Metal)"
 	}
 	return name
 }
@@ -146,7 +148,7 @@ func (a *app) copyFromHistory(i int) {
 		a.tray.Notify("Clipboard Translator", "Could not copy to the clipboard: "+err.Error(), true)
 		return
 	}
-	a.tray.Notify("Clipboard Translator", "Copied. Paste with Ctrl+V.", false)
+	a.tray.Notify("Clipboard Translator", "Copied. Paste with "+pasteShortcut()+".", false)
 }
 
 // saveConfig writes changed keys to config.json and tells the user if that fails.
