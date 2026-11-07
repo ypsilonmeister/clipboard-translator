@@ -1,0 +1,12 @@
+//go:build darwin && cgo && mactest
+
+package main
+
+/*
+void ct_mac_test_menu(int id);
+void ct_mac_test_hotkey(int pressed);
+*/
+import "C"
+
+func macTestMenu(id int)         { C.ct_mac_test_menu(C.int(id)) }
+func macTestHotkey(pressed bool) { C.ct_mac_test_hotkey(C.int(boolInt(pressed))) }

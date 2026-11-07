@@ -197,7 +197,7 @@ func (a *app) serve(cb Clipboard) {
 	tray := a.tray
 	log.Printf("ready: select text and press %s (or translate existing clipboard)", a.conf.Hotkey)
 	tray.SetStatus(a.readyTip)
-	tray.Notify("Clipboard Translator", "Ready. Select text and press "+a.conf.Hotkey+", then paste with Ctrl+V.", false)
+	tray.Notify("Clipboard Translator", "Ready. Select text and press "+a.conf.Hotkey+", then paste with "+pasteShortcut()+".", false)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -365,18 +365,18 @@ func (a *app) handleResult(res result) {
 	case pasteNow:
 		if err := a.paste(); err != nil {
 			log.Printf("auto-paste failed: %v", err)
-			a.tray.Notify("Clipboard Translator", "Translation ready, but it could not be pasted ("+err.Error()+"). Press Ctrl+V.", true)
+			a.tray.Notify("Clipboard Translator", "Translation ready, but it could not be pasted ("+err.Error()+"). Press "+pasteShortcut()+".", true)
 			return
 		}
 		log.Print("translation pasted")
 		a.tray.SetStatus("Clipboard Translator - translation pasted")
 	case pasteWindowChanged:
 		log.Print("translation ready; the active window changed, so it was not pasted")
-		a.tray.Notify("Clipboard Translator", "Translation ready in the clipboard. The active window changed, so it was not pasted. Press Ctrl+V.", false)
-		a.tray.SetStatus("Clipboard Translator - translation ready (Ctrl+V)")
+		a.tray.Notify("Clipboard Translator", "Translation ready in the clipboard. The active window changed, so it was not pasted. Press "+pasteShortcut()+".", false)
+		a.tray.SetStatus("Clipboard Translator - translation ready (" + pasteShortcut() + ")")
 	default:
-		log.Print("translation ready in clipboard (Ctrl+V to paste)")
-		a.tray.SetStatus("Clipboard Translator - translation ready (Ctrl+V)")
+		log.Print("translation ready in clipboard (", pasteShortcut(), " to paste)")
+		a.tray.SetStatus("Clipboard Translator - translation ready (" + pasteShortcut() + ")")
 	}
 }
 

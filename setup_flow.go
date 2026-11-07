@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -19,11 +20,24 @@ var embeddedSetup []byte
 var embeddedLinuxSetup []byte
 
 func setupContents() []byte {
+	if runtime.GOOS == "darwin" {
+		return embeddedMacSetup
+	}
 	if setupScriptName() == "setup.sh" {
 		return embeddedLinuxSetup
 	}
 	return embeddedSetup
 }
+
+func setupProgressDescription() string {
+	if runtime.GOOS == "darwin" {
+		return "over 1 GB; setup may take several minutes. Progress is written to setup.log in the app data folder"
+	}
+	return "over 1 GB; run setup.sh in a terminal to see progress (Windows opens a setup window)"
+}
+
+//go:embed setup-macos.sh
+var embeddedMacSetup []byte
 
 // ensureSetupScript makes sure setup.ps1 exists in dir, writing the embedded
 // copy when it is missing. An existing file (possibly edited by the user) is
@@ -88,7 +102,7 @@ func ensureInstalled(dir string, conf Config) (Config, bool) {
 		}
 		log.Printf("missing files: %v", missing)
 		if !askYesNo("Clipboard Translator needs the PLaMo translation model and llama.cpp, which are not installed yet:\n\n" +
-			list + "\n\nDownload them now? (over 1 GB; a setup window opens and closes by itself when it is done)") {
+			list + "\n\nDownload them now? (" + setupProgressDescription() + ")") {
 			log.Print("setup declined; quitting")
 			return conf, false
 		}

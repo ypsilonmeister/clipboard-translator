@@ -26,7 +26,7 @@ func hotkeyChoices(current string) []string {
 }
 
 // backendNames are the llama.cpp builds setup.ps1 can install, in menu order.
-var backendNames = []string{"cpu", "cuda", "vulkan"}
+var backendNames = []string{"cpu", "cuda", "vulkan", "metal"}
 
 // availableBackends lists the installed builds (runtime/<name>/llama-server.exe).
 func availableBackends(dir string) []string {

@@ -11,6 +11,32 @@ permissions:
   contents: write
 
 jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - run: go vet ./...
+      - run: go test ./...
+      - run: CT_TEST_MACOS=1 go test -tags mactest -run '^TestMacNative' -v -timeout 60s .
+      - run: python3 tools/test_macos_setup.py
+      - name: Package
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bash tools/package-macos.sh "$TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app-${{ matrix.runner }}
+          path: |
+            dist/*macos*.zip
+            dist/*macos*.sha256
+
   linux:
     runs-on: ubuntu-24.04
     steps:
@@ -35,7 +61,7 @@ jobs:
             dist/*.sha256
 
   release:
-    needs: linux
+    needs: [linux, macos]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -90,3 +116,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release upload $env:TAG (Get-ChildItem linux-dist -File).FullName --clobber
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-app-*
+          merge-multiple: true
+          path: macos-dist
+      - name: Attach macOS apps
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload $env:TAG (Get-ChildItem macos-dist -File).FullName --clobber

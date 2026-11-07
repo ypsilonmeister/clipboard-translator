@@ -193,6 +193,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	dir, err = writableAppDir(dir)
+	if err != nil {
+		fatal("app data folder: ", err)
+	}
 	logPath := filepath.Join(dir, "translator.log")
 	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
