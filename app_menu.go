@@ -23,6 +23,7 @@ const (
 	cmdBackendBase  = firstAppCommand + 200 // + index into availableBackends
 	cmdHistoryBase  = firstAppCommand + 300 // + index into history (newest first)
 	cmdLanguageBase = firstAppCommand + 400 // + index into languagePairChoices
+	cmdSettings     = firstAppCommand + 8
 )
 
 func backendLabel(name string) string {
@@ -63,6 +64,7 @@ func (a *app) buildMenu() []MenuItem {
 		recent = append(recent, MenuItem{Separator: true}, MenuItem{ID: cmdHistoryClear, Label: "Clear history"})
 	}
 	items = append(items, MenuItem{Label: "Recent translations (click to copy)", Sub: recent})
+	items = append(items, MenuItem{ID: cmdSettings, Label: "Settings..."})
 	items = append(items, MenuItem{ID: cmdAutoPaste, Label: "Paste automatically after translating", Checked: a.conf.AutoPaste})
 
 	var hotkeys []MenuItem
@@ -140,6 +142,8 @@ func (a *app) handleCommand(id int) {
 		if a.conf.AutoPaste {
 			a.tray.Notify("Clipboard Translator", "The translation will be pasted into the window you selected the text in.", false)
 		}
+	case id == cmdSettings:
+		a.openSettings()
 	case id == cmdHistoryClear:
 		a.hist.Clear()
 	case id == cmdCheckUpdate:
