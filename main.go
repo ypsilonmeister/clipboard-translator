@@ -15,7 +15,6 @@ import (
 	"runtime"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -30,36 +29,13 @@ type result struct {
 
 type translationDirection struct{ Source, Target string }
 
-// Japanese script takes precedence in mixed Japanese/English text.
-// Only the ja/en pair is supported. ASCII identifiers and URLs are not translated.
-func detectDirection(s string) (translationDirection, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" || strings.HasPrefix(strings.ToLower(s), "https://") || strings.HasPrefix(strings.ToLower(s), "http://") {
-		return translationDirection{}, false
-	}
-	hasJapanese, hasLatin := false, false
-	for _, r := range s {
-		if unicode.In(r, unicode.Hiragana, unicode.Katakana, unicode.Han) || r >= 0xFF66 && r <= 0xFF9D {
-			hasJapanese = true
-		}
-		if unicode.In(r, unicode.Latin) {
-			hasLatin = true
-		}
-	}
-	if hasJapanese {
-		return translationDirection{Source: "ja", Target: "en"}, true
-	}
-	if hasLatin {
-		return translationDirection{Source: "en", Target: "ja"}, true
-	}
-	return translationDirection{}, false
-}
-
-func shouldTranslate(s string, maxChars int) bool {
+// shouldTranslate is false for empty, too long, URL-only or undetectable text
+// (see directionFor in languages.go).
+func shouldTranslate(s string, maxChars int, pair []string) bool {
 	if strings.TrimSpace(s) == "" || utf8.RuneCountInString(s) > maxChars {
 		return false
 	}
-	_, ok := detectDirection(s)
+	_, ok := directionFor(pair, s)
 	return ok
 }
 

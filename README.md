@@ -258,7 +258,8 @@ The app lives in the **system tray** (notification area; on Windows 11 it may be
 under the `^` arrow). A balloon says *Ready* once the model has loaded; the
 tooltip shows the state and, while loading or translating, the elapsed seconds.
 
-Select Japanese or English text and press `Ctrl+Alt+E`. When the translation is
+Select text in your language pair (Japanese or English unless you changed it, see
+`languages` below) and press `Ctrl+Alt+E`. When the translation is
 ready it replaces the clipboard content; press `Ctrl+V` to paste. With no
 selection, the current clipboard text is translated.
 
@@ -270,6 +271,7 @@ Right-click the tray icon:
 | **Recent translations** | The last 10, kept in memory only (never written to disk). Click one to copy its translation again; *Clear history* empties the list. |
 | **Paste automatically after translating** | Off by default. When on, Ctrl+V is typed for you, but only if the text was a fresh selection and the same window is still in front; otherwise the translation just waits in the clipboard. |
 | **Hotkey** | Pick another combination. If another program already owns it, the old one stays. |
+| **Languages** | The pair that is translated in both directions (default Japanese ↔ English). Takes effect at once. Other pairs: see `languages` below. |
 | **Translation engine** | Switch between the installed llama.cpp builds (CPU, CUDA, Vulkan). Shown only when more than one is installed. |
 | **Check for updates** | Asks GitHub for the latest release when you click. The app never checks by itself. |
 | **Open config.json** | For everything else, see [Configuration](#configuration). |
@@ -295,13 +297,14 @@ written to `translator.log`.
 ## Configuration
 
 `config.json` (all paths are relative to the app folder). The tray menu edits
-`hotkey`, `server_file`, `gpu_layers` and `auto_paste` for you; everything else is
+`hotkey`, `languages`, `server_file`, `gpu_layers` and `auto_paste` for you; everything else is
 edited by hand and needs a restart. The previous file is kept as `config.json.bak`.
 
 | Key | Meaning |
 | --- | --- |
 | `hotkey` | Modifier(s) + one letter A-Z, e.g. `Ctrl+Alt+E` (on macOS `Cmd` / `Command` and `Option` also work) |
 | `auto_paste` | `true` types Ctrl+V after translating (default `false`) |
+| `languages` | Two language codes translated in both directions, e.g. `["ja", "en"]` (default), `["en", "ko"]`, `["ja", "zh-hans"]`. Codes are the model's: `ja en ko zh-hans zh-hant ru th ar de fr es ...` (53 in all, see the [model card](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)). The direction is read from the script of the text, so the two languages must use different scripts (en ↔ de is refused for now). Japanese ↔ English is the main use; other languages are best effort. |
 | `port` | Local llama-server port, 1024-65534 (the app also uses `port + 1` as an instance lock) |
 | `max_chars` | Longer text is skipped |
 | `gpu_layers` | Layers offloaded to GPU (`0` = CPU only) |
@@ -319,7 +322,7 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 - Some apps block the synthetic Ctrl+C used to read the selection.
 - Reading the selection changes the clipboard. The translation only replaces it
   if the clipboard text is still the text that was captured.
-- Only the Japanese <-> English pair is supported. URLs are not translated.
+- One language pair at a time, and the two languages must use different scripts (en ↔ de, or Simplified ↔ Traditional Chinese, cannot be told apart from the text). With Japanese and Chinese in one pair, text with only Han characters is read as Chinese; kana makes it Japanese. URLs are not translated.
 - A GPU backend can fail (too little VRAM, old driver, missing DLLs); the app
   then falls back to the CPU build. See `server.log` and `translator.log`.
 - The exe is not code-signed, so a zip downloaded in a browser may trigger a
