@@ -12,8 +12,8 @@ clipboard. Translation is fully local: the app starts a loopback-only
 `llama-server` (llama.cpp) child process with the PLaMo 3 Translate 2B GGUF
 model and talks to it over HTTP. Go, standard library only (no third-party
 modules), `go 1.21` in `go.mod`, MIT licensed. Windows x64 and experimental
-Linux X11 support. macOS still compiles stubs. Linux uses cgo with system
-GTK 3, X11 and XTest libraries (no extra Go modules).
+Linux X11 and macOS support. Linux uses cgo with system GTK 3, X11 and XTest;
+macOS uses cgo with Cocoa/Carbon/ApplicationServices (no extra Go modules).
 
 ## Commands
 
@@ -40,6 +40,16 @@ GTK event loop, XGrabKey, XTest input and X11 clipboard. `autostart_linux.go`
 manages an XDG autostart Desktop Entry. GTK supplies a control-window fallback
 if no tray host is present. X11 clipboard compare/write is best effort, not
 atomic like the Windows implementation.
+
+macOS needs a native macOS runner with Xcode Command Line Tools. Build with
+`bash tools/package-macos.sh dev`; `CGO_ENABLED=0` only compiles logic/stubs.
+`desktop_darwin.go` / `native_darwin.m` own AppKit/Carbon and must stay on the
+process main thread. `CT_TEST_MACOS=1 go test -tags mactest -run '^TestMacNative' -v .`
+executes native smoke checks through TestMain on that thread (CI only, no key
+injection or Accessibility prompts). `python3 tools/test_macos_setup.py` runs
+setup fixtures on any platform. macOS data goes to Application Support, never
+inside the `.app`. Packages are ad-hoc signed only; Developer ID signing and
+notarization are outside this implementation.
 
 On a Windows machine the Linux logic tests can be built with
 `GOOS=linux go test -c -o <outside the repo>/app.test .` and run in WSL **with

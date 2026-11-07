@@ -1,4 +1,4 @@
-//go:build !windows && (!linux || !cgo)
+//go:build !windows && ((!linux && !darwin) || !cgo)
 
 package main
 
@@ -18,7 +18,7 @@ func foregroundWindow() uintptr                    { return 0 }
 func waitModifiersReleased(max time.Duration) bool { return true }
 func sendPaste() error                             { return errors.New("Windows only") }
 func clipboardSequence() uint32                    { return 0 }
-func captureSelectedText(cb Clipboard) (string, uint32, error) {
+func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
 	s, err := cb.Read()
-	return s, 0, err
+	return s, false, err
 }

@@ -70,14 +70,25 @@ func appDir() (string, error) {
 	}
 	return filepath.Dir(p), nil
 }
+
+// pathWithin resolves a config.json path to a file below base. The result is
+// never base itself, and drive-relative ("C:foo") or rooted ("\foo", "/foo")
+// paths are refused because Windows would resolve them against the current
+// drive or directory instead of base.
 func pathWithin(base, p string) (string, error) {
-	if filepath.IsAbs(p) {
+	if strings.TrimSpace(p) == "" {
+		return "", errors.New("path is empty; use a path relative to the app folder")
+	}
+	if filepath.IsAbs(p) || filepath.VolumeName(p) != "" || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
 		return "", errors.New("paths must be relative to app folder")
 	}
 	full := filepath.Clean(filepath.Join(base, filepath.FromSlash(p)))
 	rel, err := filepath.Rel(base, full)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", errors.New("path outside app folder")
+	}
+	if rel == "." {
+		return "", errors.New("path must name a file inside the app folder, not the folder itself")
 	}
 	return full, nil
 }
@@ -105,6 +116,12 @@ func waitReady(ctx context.Context, endpoint string, stopped <-chan struct{}) er
 		}
 	}
 }
+
+// errTruncated means the model stopped at a token limit (finish_reason
+// "length"): the text is a partial translation and must not be used. That is
+// either max_tokens or, when prompt and answer outgrow it, the server's
+// context window (context_tokens), which llama-server reports the same way.
+var errTruncated = errors.New("translation cut off at the token limit (finish_reason=length)")
 
 func translate(ctx context.Context, endpoint, source string, direction translationDirection, maxTokens int) (string, error) {
 	payload := map[string]any{
@@ -143,6 +160,8 @@ func translate(ctx context.Context, endpoint, source string, direction translati
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			// Some servers omit it or send null; only "length" is rejected.
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
@@ -150,6 +169,9 @@ func translate(ctx context.Context, endpoint, source string, direction translati
 	}
 	if len(parsed.Choices) == 0 {
 		return "", errors.New("empty choices")
+	}
+	if parsed.Choices[0].FinishReason == "length" {
+		return "", errTruncated
 	}
 	out := strings.TrimSpace(parsed.Choices[0].Message.Content)
 	if out == "" {
@@ -192,6 +214,10 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	dir, err = writableAppDir(dir)
+	if err != nil {
+		fatal("app data folder: ", err)
 	}
 	logPath := filepath.Join(dir, "translator.log")
 	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)

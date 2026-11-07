@@ -3,9 +3,7 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"strings"
 	"time"
 	"unsafe"
 )
@@ -67,30 +65,24 @@ type Hotkey interface {
 type windowsHotkey struct{}
 
 func parseHotkey(s string) (uint32, uintptr, error) {
-	parts := strings.Split(strings.ToUpper(strings.ReplaceAll(s, " ", "")), "+")
+	h, err := parseHotkeySpec(s, false) // same syntax check as loadConfig
+	if err != nil {
+		return 0, 0, err
+	}
 	var mods uint32
-	var key uintptr
-	for _, p := range parts {
-		switch p {
-		case "CTRL", "CONTROL":
-			mods |= modControl
-		case "ALT":
-			mods |= modAlt
-		case "SHIFT":
-			mods |= modShift
-		case "WIN", "WINDOWS":
-			mods |= modWin
-		default:
-			if len(p) != 1 || p[0] < 'A' || p[0] > 'Z' || key != 0 {
-				return 0, 0, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (one A-Z key)", s)
-			}
-			key = uintptr(p[0])
-		}
+	if h.ctrl {
+		mods |= modControl
 	}
-	if mods == 0 || key == 0 {
-		return 0, 0, errors.New("hotkey must include a modifier and letter A-Z")
+	if h.alt {
+		mods |= modAlt
 	}
-	return mods | modNoRepeat, key, nil
+	if h.shift {
+		mods |= modShift
+	}
+	if h.win {
+		mods |= modWin
+	}
+	return mods | modNoRepeat, uintptr(h.key), nil
 }
 func newHotkey(spec string) (Hotkey, error) {
 	mods, vk, err := parseHotkey(spec)
@@ -176,36 +168,17 @@ func sendPaste() error {
 	return nil
 }
 
-// captureSelectedText tries to copy selected content in the focused app.
-// If Ctrl+C does not change the clipboard, it uses the previous clipboard text.
-func captureSelectedText(cb Clipboard) (string, uint32, error) {
-	old, err := cb.Read()
-	if err != nil {
-		return "", 0, err
-	}
-	before := clipboardSequence()
-	// Avoid Ctrl+Alt+E modifiers contaminating the simulated Ctrl+C.
-	deadline := time.Now().Add(900 * time.Millisecond)
-	for modifierPressed() && time.Now().Before(deadline) {
-		time.Sleep(15 * time.Millisecond)
-	}
-	if modifierPressed() {
-		return old, before, nil
-	}
-	if err := sendCopy(); err != nil {
-		return old, before, nil
-	}
-	deadline = time.Now().Add(700 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		seq := clipboardSequence()
-		if seq != before {
-			picked, err := cb.Read()
-			if err != nil {
-				return "", 0, err
-			}
-			return picked, seq, nil
-		}
-		time.Sleep(15 * time.Millisecond)
-	}
-	return old, before, nil
+// captureSelectedText tries to copy the selected content of window win, the
+// window that was in front when the hotkey was pressed. If Ctrl+C does not
+// change the clipboard, it uses the previous clipboard text (fromSelection is
+// then false). See captureWith for the ordering rules.
+func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
+	return captureWith(cb, win, captureOps{
+		foreground:      foregroundWindow,
+		waitModifiers:   waitModifiersReleased, // keep Ctrl+Alt+E from contaminating the simulated Ctrl+C
+		sequence:        clipboardSequence,
+		sendCopy:        sendCopy,
+		modifierTimeout: 900 * time.Millisecond,
+		copyTimeout:     700 * time.Millisecond,
+	})
 }

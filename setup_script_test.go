@@ -24,6 +24,13 @@ func TestEmbeddedSetupIsTheRealScript(t *testing.T) {
 	}
 }
 
+func TestEmbeddedMacSetupIsTheRealScript(t *testing.T) {
+	onDisk, err := os.ReadFile("setup-macos.sh")
+	if err != nil || string(onDisk) != string(embeddedMacSetup) {
+		t.Fatalf("embedded macOS setup differs: %v", err)
+	}
+}
+
 func TestEnsureSetupScript(t *testing.T) {
 	dir := t.TempDir()
 	if err := ensureSetupScript(dir); err != nil {

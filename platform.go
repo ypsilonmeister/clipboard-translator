@@ -10,8 +10,15 @@ func serverBinaryName() string {
 }
 
 func setupScriptName() string {
-	if runtime.GOOS == "linux" {
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
 		return "setup.sh"
 	}
 	return "setup.ps1"
+}
+
+func pasteShortcut() string {
+	if runtime.GOOS == "darwin" {
+		return "Cmd+V"
+	}
+	return "Ctrl+V"
 }

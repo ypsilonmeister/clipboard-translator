@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && !cgo
 
 package main
 
@@ -21,7 +21,7 @@ func (m *macClipboard) Write(text string) error {
 }
 func (m *macClipboard) Close() error { return nil }
 
-// Non-Windows implementation is best effort. The app currently supports Windows only.
+// Non-cgo builds only support portable logic tests; the desktop needs cgo.
 func (c *macClipboard) ReplaceIfUnchanged(expected, translated string) (bool, error) {
 	current, err := c.Read()
 	if err != nil {

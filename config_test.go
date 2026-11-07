@@ -1,0 +1,251 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+func writeConfig(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestLoadConfigPortRange(t *testing.T) {
+	for _, port := range []string{"1024", "18119", "65534"} {
+		if _, err := loadConfig(writeConfig(t, `{"port": `+port+`}`)); err != nil {
+			t.Errorf("port %s must be accepted: %v", port, err)
+		}
+	}
+	// 65535 would make the single-instance lock (port+1) listen on 65536.
+	for _, port := range []string{"65535", "65536", "1023", "0", "-1"} {
+		err := loadConfig2(t, `{"port": `+port+`}`)
+		if err == nil || !strings.Contains(err.Error(), "1024..65534") {
+			t.Errorf("port %s must be rejected with the valid range, got %v", port, err)
+		}
+	}
+}
+
+func loadConfig2(t *testing.T, content string) error {
+	t.Helper()
+	_, err := loadConfig(writeConfig(t, content))
+	return err
+}
+
+func TestLoadConfigHotkeyValidation(t *testing.T) {
+	good := []string{"Ctrl+Alt+E", "ctrl+shift+y", "Control + Alt + T", "Win+Q", "Ctrl+Alt+Shift+Z"}
+	for _, h := range good {
+		if err := loadConfig2(t, `{"hotkey": "`+h+`"}`); err != nil {
+			t.Errorf("hotkey %q must be accepted: %v", h, err)
+		}
+	}
+	bad := []string{"Ctrl+Alt+1", "F8", "E", "Ctrl+Alt", "Ctrl+Alt+E+R", "Ctrl++E", "Ctrl+Alt+", "Ctrl+Alt+Esc", "Hyper+E", ""}
+	for _, h := range bad {
+		err := loadConfig2(t, `{"hotkey": "`+h+`"}`)
+		if err == nil {
+			t.Errorf("hotkey %q must be rejected by loadConfig", h)
+		} else if h != "" && !strings.Contains(err.Error(), "hotkey") {
+			t.Errorf("hotkey %q: the error should say what is wrong with the hotkey, got %v", h, err)
+		}
+	}
+	// "Super" is the X11 name for the Windows key; Windows does not know it.
+	err := validateHotkey("Super+E")
+	if runtime.GOOS == "windows" && err == nil {
+		t.Error("Super+E must be rejected on Windows")
+	}
+	if runtime.GOOS != "windows" && err != nil {
+		t.Errorf("Super+E must be accepted off Windows: %v", err)
+	}
+}
+
+func TestParseHotkeySpec(t *testing.T) {
+	h, err := parseHotkeySpec("ctrl + ALT+e", false)
+	if err != nil || !h.ctrl || !h.alt || h.shift || h.win || h.key != 'E' {
+		t.Fatalf("parseHotkeySpec = %+v, %v", h, err)
+	}
+	if h, err = parseHotkeySpec("Windows+Shift+q", false); err != nil || !h.win || !h.shift || h.key != 'Q' {
+		t.Fatalf("parseHotkeySpec = %+v, %v", h, err)
+	}
+}
+
+func TestLoadConfigAcceptsUTF8BOM(t *testing.T) {
+	dir := writeConfig(t, "\xEF\xBB\xBF"+`{"hotkey":"Ctrl+Alt+T","port":18200}`)
+	c, err := loadConfig(dir)
+	if err != nil {
+		t.Fatalf("a BOM-prefixed config.json must load: %v", err)
+	}
+	if c.Hotkey != "Ctrl+Alt+T" || c.Port != 18200 {
+		t.Fatalf("loaded %+v", c)
+	}
+}
+
+func TestUpdateConfigFileAcceptsUTF8BOM(t *testing.T) {
+	original := "\xEF\xBB\xBF" + `{
+  "hotkey": "Ctrl+Alt+E",
+  "some_future_setting": [1, 2],
+  "port": 18119
+}
+`
+	dir := writeConfig(t, original)
+	if err := updateConfigFile(dir, map[string]any{"hotkey": "Ctrl+Alt+J"}); err != nil {
+		t.Fatalf("a BOM-prefixed config.json must be updatable: %v", err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "config.json"))
+	want := `{
+  "hotkey": "Ctrl+Alt+J",
+  "some_future_setting": [1,2],
+  "port": 18119
+}
+`
+	if string(b) != want {
+		t.Fatalf("config.json =\n%q\nwant (no BOM, order and unknown keys kept)\n%q", b, want)
+	}
+	if bak, _ := os.ReadFile(filepath.Join(dir, "config.json.bak")); string(bak) != original {
+		t.Fatalf("config.json.bak must hold the previous bytes untouched, got %q", bak)
+	}
+	if c, err := loadConfig(dir); err != nil || c.Hotkey != "Ctrl+Alt+J" {
+		t.Fatalf("loadConfig after update: %+v, %v", c, err)
+	}
+}
+
+func TestParseConfigEntries(t *testing.T) {
+	entries, err := parseConfigEntries([]byte("\xEF\xBB\xBF \n{\"a\": 1, \"b\": {\"x\": [1]}, \"a\": 2}\n\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[0].key != "a" || string(entries[0].val) != "2" || entries[1].key != "b" {
+		t.Fatalf("duplicate keys must collapse to the first position with the last value: %+v", entries)
+	}
+	if entries, err = parseConfigEntries([]byte(`{}`)); err != nil || len(entries) != 0 {
+		t.Fatalf("empty object: %+v, %v", entries, err)
+	}
+	for name, in := range map[string]string{
+		"trailing object":  `{"a": 1} {"b": 2}`,
+		"trailing text":    `{"a": 1} x`,
+		"trailing comma":   `{"a": 1},`,
+		"truncated":        `{"a": 1`,
+		"truncated string": `{"a": "x`,
+		"array":            `[1]`,
+		"empty":            ``,
+		"bom only":         "\xEF\xBB\xBF",
+	} {
+		if _, err := parseConfigEntries([]byte(in)); err == nil {
+			t.Errorf("%s: %q must be rejected", name, in)
+		}
+	}
+}
+
+func TestUpdateConfigFileRefusesTrailingDataAndDedups(t *testing.T) {
+	bad := writeConfig(t, `{"hotkey": "Ctrl+Alt+E"} garbage`)
+	if err := updateConfigFile(bad, map[string]any{"hotkey": "Ctrl+Alt+J"}); err == nil {
+		t.Fatal("trailing data must be refused")
+	}
+	if b, _ := os.ReadFile(filepath.Join(bad, "config.json")); string(b) != `{"hotkey": "Ctrl+Alt+E"} garbage` {
+		t.Fatal("a refused update must leave the file untouched")
+	}
+	dup := writeConfig(t, `{"port": 18119, "hotkey": "Ctrl+Alt+E", "port": 18200}`)
+	if err := updateConfigFile(dup, map[string]any{"auto_paste": true}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dup, "config.json"))
+	if want := "{\n  \"port\": 18200,\n  \"hotkey\": \"Ctrl+Alt+E\",\n  \"auto_paste\": true\n}\n"; string(b) != want {
+		t.Fatalf("config.json =\n%s\nwant\n%s", b, want)
+	}
+}
+
+func TestPathWithin(t *testing.T) {
+	base := t.TempDir()
+	good := map[string]string{
+		"models/m.gguf":     filepath.Join(base, "models", "m.gguf"),
+		`models\m.gguf`:     "", // checked below: separators differ per OS
+		"./models/m.gguf":   filepath.Join(base, "models", "m.gguf"),
+		"models/../a.bin":   filepath.Join(base, "a.bin"),
+		"runtime/cpu/x.exe": filepath.Join(base, "runtime", "cpu", "x.exe"),
+	}
+	for in, want := range good {
+		if in == `models\m.gguf` && runtime.GOOS != "windows" {
+			continue
+		}
+		if want == "" {
+			want = filepath.Join(base, "models", "m.gguf")
+		}
+		got, err := pathWithin(base, in)
+		if err != nil || got != want {
+			t.Errorf("pathWithin(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	bad := []string{
+		"", " ", ".", "./", "models/..", "models/../.",
+		"..", "../x", "models/../../x",
+		"/etc/passwd", `\windows\system32`, `\\server\share\f`,
+		filepath.Join(base, "abs.gguf"),
+	}
+	if runtime.GOOS == "windows" {
+		bad = append(bad, `..\x`, `C:foo`, `c:models\m.gguf`, `C:\abs.gguf`, `C:`, `D:\`)
+	}
+	for _, in := range bad {
+		if got, err := pathWithin(base, in); err == nil {
+			t.Errorf("pathWithin(%q) = %q, want an error", in, got)
+		}
+	}
+}
+
+func TestResolvePathsNamesTheBadKey(t *testing.T) {
+	dir := t.TempDir()
+	conf := defaultConfig()
+	conf.TemplateFile = ""
+	_, err := resolvePaths(dir, conf)
+	if err == nil || !strings.Contains(err.Error(), "template_file") {
+		t.Fatalf("resolvePaths must say which key is wrong, got %v", err)
+	}
+	for key, set := range map[string]func(*Config){
+		"model_file":           func(c *Config) { c.ModelFile = "." },
+		"server_file":          func(c *Config) { c.ServerFile = "" },
+		"fallback_server_file": func(c *Config) { c.FallbackServerFile = "models/.." },
+	} {
+		c := defaultConfig()
+		set(&c)
+		if _, err := resolvePaths(dir, c); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s: got %v", key, err)
+		}
+	}
+}
+
+func TestMissingTreatsDirectoriesAsMissing(t *testing.T) {
+	dir := t.TempDir()
+	conf := defaultConfig()
+	p, err := resolvePaths(dir, conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A folder where a file is expected must not count as installed.
+	for _, f := range []string{p.model, p.template, p.server} {
+		if err := os.MkdirAll(f, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := p.missing(); len(got) != 3 {
+		t.Fatalf("folders in place of files: missing = %v, want all 3", got)
+	}
+	if err := checkFile(p.model); err == nil || !strings.Contains(err.Error(), "not a file") {
+		t.Fatalf("checkFile on a folder = %v", err)
+	}
+	if err := checkFile(filepath.Join(dir, "nope")); !os.IsNotExist(err) {
+		t.Fatalf("checkFile on a missing path = %v", err)
+	}
+	for _, f := range []string{p.model, p.template, p.server} {
+		os.Remove(f)
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := p.missing(); len(got) != 0 {
+		t.Fatalf("regular files: missing = %v", got)
+	}
+}
