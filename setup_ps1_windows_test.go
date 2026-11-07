@@ -1,0 +1,408 @@
+//go:build windows
+
+package main
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// These tests run the functions of setup.ps1 under Windows PowerShell 5.1 (the
+// functions are loaded from the script's AST, so the script's download and
+// config code is exercised without running the network part) and run the whole
+// script once in a folder where everything is already installed. Nothing is
+// downloaded: Download-File is replaced by a fake that copies local zips.
+
+const setupHarnessPrelude = `
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:CT_SETUP_PS1, [ref]$null, [ref]$null)
+$funcs = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)
+foreach ($f in $funcs) { . ([scriptblock]::Create($f.Extent.Text)) }
+$work = $env:CT_WORK
+function Assert-That($cond, [string]$msg) { if (-not $cond) { throw "FAILED: $msg" } }
+function Assert-Throws([scriptblock]$sb, [string]$pattern) {
+    $threw = $false
+    try { & $sb } catch {
+        $threw = $true
+        if ($_.Exception.Message -notmatch $pattern) { throw "wrong error: $($_.Exception.Message)" }
+    }
+    if (-not $threw) { throw "expected an error matching $pattern" }
+}
+function New-File([string]$path, [string]$content = 'x') {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    Set-Content -LiteralPath $path -Value $content
+}
+function New-Zip([string]$zip, [hashtable]$files) {
+    $src = Join-Path $work ([guid]::NewGuid().ToString('N'))
+    foreach ($k in $files.Keys) { New-File (Join-Path $src $k) $files[$k] }
+    Compress-Archive -Path (Join-Path $src '*') -DestinationPath $zip
+}
+`
+
+func powershellExe(t *testing.T) string {
+	t.Helper()
+	p, err := exec.LookPath("powershell.exe")
+	if err != nil {
+		t.Skip("Windows PowerShell is not available")
+	}
+	return p
+}
+
+// psEnv is the environment without PSModulePath: when go test runs from
+// PowerShell 7 it would point Windows PowerShell 5.1 at modules it cannot load
+// (Get-FileHash and friends go missing).
+func psEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(kv), "PSMODULEPATH=") {
+			env = append(env, kv)
+		}
+	}
+	return env
+}
+
+func runSetupHarness(t *testing.T, body string) {
+	t.Helper()
+	exe := powershellExe(t)
+	script, err := filepath.Abs("setup.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	file := filepath.Join(work, "harness.ps1")
+	if err := os.WriteFile(file, []byte("\xef\xbb\xbf"+setupHarnessPrelude+body+"\n'HARNESS-OK'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file)
+	cmd.Env = append(psEnv(), "CT_SETUP_PS1="+script, "CT_WORK="+work, "TEMP="+work, "TMP="+work)
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "HARNESS-OK") {
+		t.Fatalf("PowerShell test failed: %v\n%s", err, out)
+	}
+}
+
+func TestSetupParsesOnBothPowerShells(t *testing.T) {
+	script, err := filepath.Abs("setup.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := `$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:CT_SETUP_PS1, [ref]$null, [ref]$e); if ($e) { $e | Out-String; exit 1 }`
+	ran := 0
+	for _, name := range []string{"powershell.exe", "pwsh.exe"} {
+		exe, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		ran++
+		cmd := exec.Command(exe, "-NoProfile", "-Command", check)
+		cmd.Env = append(psEnv(), "CT_SETUP_PS1="+script)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Errorf("%s cannot parse setup.ps1: %v\n%s", name, err, out)
+		}
+	}
+	if ran == 0 {
+		t.Skip("no PowerShell available")
+	}
+}
+
+func TestSetupBackendCompleteness(t *testing.T) {
+	runSetupHarness(t, `
+$r = Join-Path $work 'runtime'
+Assert-That (-not (Test-BackendComplete 'cpu' (Join-Path $r 'cpu'))) 'a missing folder is not complete'
+New-File (Join-Path $r 'cpu\llama-server.exe')
+Assert-That (Test-BackendComplete 'cpu' (Join-Path $r 'cpu')) 'cpu needs only the exe'
+New-File (Join-Path $r 'vulkan\llama-server.exe')
+Assert-That (Test-BackendComplete 'vulkan' (Join-Path $r 'vulkan')) 'vulkan needs only the exe'
+New-File (Join-Path $r 'cuda\llama-server.exe')
+Assert-That (-not (Test-BackendComplete 'cuda' (Join-Path $r 'cuda'))) 'cuda without DLLs is the broken state of issue 20'
+New-File (Join-Path $r 'cuda\cudart64_12.dll')
+Assert-That (-not (Test-BackendComplete 'cuda' (Join-Path $r 'cuda'))) 'cuda needs cublas too'
+New-File (Join-Path $r 'cuda\cublas64_12.dll')
+Assert-That (Test-BackendComplete 'cuda' (Join-Path $r 'cuda')) 'cuda with exe and both DLLs is complete'
+Remove-Item (Join-Path $r 'cuda\llama-server.exe')
+Assert-That (-not (Test-BackendComplete 'cuda' (Join-Path $r 'cuda'))) 'DLLs alone are not complete'
+`)
+}
+
+func TestSetupInstallBackendIsAllOrNothing(t *testing.T) {
+	runSetupHarness(t, `
+$runtimeDir = Join-Path $work 'runtime'
+$srvZip = Join-Path $work 'srv.zip'
+$dllZip = Join-Path $work 'dll.zip'
+$emptyZip = Join-Path $work 'empty.zip'
+New-Zip $srvZip @{ 'llama-server.exe' = 'new-server'; 'ggml-cuda.dll' = 'g' }
+New-Zip $dllZip @{ 'cudart64_12.dll' = 'a'; 'cublas64_12.dll' = 'b'; 'cublasLt64_12.dll' = 'c' }
+New-Zip $emptyZip @{ 'readme.txt' = 'no dlls here' }
+function New-TestAsset([string]$name, [string]$zip, [string]$digest = 'auto') {
+    $o = [ordered]@{ name = $name; browser_download_url = "https://example.invalid/$name" }
+    if ($digest -eq 'auto') { $o.digest = 'sha256:' + (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower() }
+    elseif ($digest) { $o.digest = $digest }
+    $global:zipFor[$o.browser_download_url] = $zip
+    [pscustomobject]$o
+}
+$global:zipFor = @{}
+$global:fail = @()
+$global:downloads = @()
+function Download-File([string]$url, [string]$dest, [string]$sha256 = '') {
+    $global:downloads += $url
+    if ($global:fail -contains $url) { throw 'simulated network failure' }
+    Copy-Item -LiteralPath $global:zipFor[$url] -Destination $dest
+}
+$srv = New-TestAsset 'srv.zip' $srvZip
+$dll = New-TestAsset 'dll.zip' $dllZip
+$cuda = Join-Path $runtimeDir 'cuda'
+function Assert-NoStaging { Assert-That (@(Get-ChildItem -LiteralPath $runtimeDir -Force -Filter '.staging-*' -ErrorAction SilentlyContinue).Count -eq 0) 'a staging folder was left behind' }
+
+# 1. A clean install is complete and leaves nothing else behind.
+Install-Backend $runtimeDir 'cuda' $srv $dll
+Assert-That (Test-BackendComplete 'cuda' $cuda) 'cuda install is complete'
+Assert-That (Test-Path (Join-Path $cuda 'ggml-cuda.dll')) 'the server package files are installed'
+Assert-NoStaging
+
+# 2. A failed CUDA DLL download must not leave llama-server.exe without its DLLs.
+Remove-Item -Recurse -Force $cuda
+$global:fail = @($dll.browser_download_url)
+Assert-Throws { Install-Backend $runtimeDir 'cuda' $srv $dll } 'simulated network failure'
+Assert-That (-not (Test-Path $cuda)) 'no cuda folder after a failed DLL download'
+Assert-NoStaging
+
+# 3. The broken state of an older setup.ps1 (exe without DLLs) is removed on failure and replaced on success.
+New-File (Join-Path $cuda 'llama-server.exe') 'old-server'
+Assert-Throws { Install-Backend $runtimeDir 'cuda' $srv $dll } 'simulated network failure'
+Assert-That (-not (Test-Path $cuda)) 'the incomplete leftover must be removed when the retry fails'
+New-File (Join-Path $cuda 'llama-server.exe') 'old-server'
+$global:fail = @()
+Install-Backend $runtimeDir 'cuda' $srv $dll
+Assert-That (Test-BackendComplete 'cuda' $cuda) 'the retry completes cuda'
+Assert-That ((Get-Content -Raw (Join-Path $cuda 'llama-server.exe')) -match 'new-server') 'the old exe was replaced by the one of the same release'
+
+# 4. A complete backend survives a failed attempt (nothing is deleted that works).
+$global:fail = @($srv.browser_download_url)
+Assert-Throws { Install-Backend $runtimeDir 'cuda' $srv $dll } 'simulated network failure'
+Assert-That (Test-BackendComplete 'cuda' $cuda) 'a complete backend must stay'
+$global:fail = @()
+
+# 5. A package without any DLL is rejected for cuda.
+$emptyDll = New-TestAsset 'emptydll.zip' $emptyZip
+Remove-Item -Recurse -Force $cuda
+Assert-Throws { Install-Backend $runtimeDir 'cuda' $srv $emptyDll } 'no DLL files'
+Assert-That (-not (Test-Path $cuda)) 'no cuda folder after an empty DLL package'
+Assert-NoStaging
+
+# 6. Bad or missing digests are refused and nothing is installed.
+$wrong = New-TestAsset 'wrong.zip' $srvZip ('sha256:' + ('0' * 64))
+Assert-Throws { Install-Backend $runtimeDir 'vulkan' $wrong $null } 'checksum mismatch'
+Assert-That (-not (Test-Path (Join-Path $runtimeDir 'vulkan'))) 'nothing installed after a checksum mismatch'
+$nodigest = New-TestAsset 'nodigest.zip' $srvZip ''
+Assert-Throws { Install-Backend $runtimeDir 'vulkan' $nodigest $null } 'No SHA256 digest'
+Assert-That (-not (Test-Path (Join-Path $runtimeDir 'vulkan'))) 'nothing installed without a digest'
+Assert-NoStaging
+
+# 7. Plain backends install too.
+Install-Backend $runtimeDir 'cpu' $srv $null
+Assert-That (Test-BackendComplete 'cpu' (Join-Path $runtimeDir 'cpu')) 'cpu installs'
+`)
+}
+
+func TestSetupAssertHashFailsClosed(t *testing.T) {
+	runSetupHarness(t, `
+$file = Join-Path $work 'a.bin'
+Set-Content -LiteralPath $file -Value 'hello'
+$good = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash
+Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a' }) $file } 'No SHA256 digest'
+Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a'; digest = $null }) $file } 'No SHA256 digest'
+Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a'; digest = '' }) $file } 'No SHA256 digest'
+Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a'; digest = 'md5:abc' }) $file } 'No SHA256 digest'
+Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a'; digest = 'sha256:abc' }) $file } 'No SHA256 digest'
+Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a'; digest = ('sha256:' + ('0' * 64)) }) $file } 'checksum mismatch'
+Assert-Hash ([pscustomobject]@{ name = 'a'; digest = ('sha256:' + $good.ToLower()) }) $file
+Assert-Hash ([pscustomobject]@{ name = 'a'; digest = ('sha256:' + $good.ToUpper()) }) $file
+Assert-FileSha256 $file $good.ToLower() 'a'
+Assert-Throws { Assert-FileSha256 $file ('1' * 64) 'a' } 'checksum mismatch'
+`)
+}
+
+func TestSetupFindLlamaRelease(t *testing.T) {
+	runSetupHarness(t, `
+function New-TestAsset([string]$name, [bool]$digest) {
+    $o = [ordered]@{ name = $name }
+    if ($digest) { $o.digest = 'sha256:' + ('a' * 64) }
+    [pscustomobject]$o
+}
+$noAssets = [pscustomobject]@{ tag_name = 'b4'; assets = $null }
+# newest usable-looking release publishes no digest for the CUDA runtime package
+$noDigest = [pscustomobject]@{ tag_name = 'b3'; assets = @(
+    (New-TestAsset 'llama-b3-bin-win-cpu-x64.zip' $true),
+    (New-TestAsset 'llama-b3-bin-win-cuda-12.4-x64.zip' $true),
+    (New-TestAsset 'cudart-llama-bin-win-cuda-12.4-x64.zip' $false)) }
+$good = [pscustomobject]@{ tag_name = 'b2'; assets = @(
+    (New-TestAsset 'llama-b2-bin-win-cpu-x64.zip' $true),
+    (New-TestAsset 'llama-b2-bin-win-cuda-12.4-x64.zip' $true),
+    (New-TestAsset 'cudart-llama-bin-win-cuda-12.4-x64.zip' $true),
+    (New-TestAsset 'llama-b2-bin-win-vulkan-x64.zip' $true)) }
+$vulkanOnly = [pscustomobject]@{ tag_name = 'b1'; assets = @((New-TestAsset 'llama-b1-bin-win-vulkan-x64.zip' $true)) }
+$all = @($noAssets, $noDigest, $good, $vulkanOnly)
+
+$f = Find-LlamaRelease $all 'cuda' $true
+Assert-That ($f.Release.tag_name -eq 'b2') 'a release without a digest for every needed asset is skipped'
+Assert-That ($null -ne $f.Cpu -and $null -ne $f.Gpu -and $null -ne $f.CudaDll) 'cuda selection has cpu, gpu and dll assets'
+$f = Find-LlamaRelease $all 'cpu' $true
+Assert-That ($f.Release.tag_name -eq 'b3' -and $null -eq $f.Gpu) 'cpu selection needs only the cpu asset'
+$f = Find-LlamaRelease $all 'vulkan' $false
+Assert-That ($f.Release.tag_name -eq 'b2' -and $null -eq $f.Cpu) 'the cpu asset is not required when cpu is installed'
+$f = Find-LlamaRelease @($noAssets, $noDigest, $vulkanOnly) 'vulkan' $false
+Assert-That ($f.Release.tag_name -eq 'b1') 'a vulkan-only release works when cpu is already installed'
+Assert-That ($null -eq (Find-LlamaRelease @($noDigest, $vulkanOnly) 'cuda' $false)) 'no usable release returns null'
+`)
+}
+
+func TestSetupConfigPreservesUserEngine(t *testing.T) {
+	runSetupHarness(t, `
+New-File (Join-Path $work 'runtime\cpu\llama-server.exe')
+New-File (Join-Path $work 'runtime\cuda\llama-server.exe')
+function New-TestConfig([string]$server, $layers) {
+    [pscustomobject]@{ hotkey = 'Ctrl+Alt+E'; gpu_layers = $layers; server_file = $server; fallback_server_file = 'runtime/cpu/llama-server.exe'; extra_unknown = 'keep' }
+}
+$cpu = 'runtime/cpu/llama-server.exe'
+$cudaFile = 'runtime/cuda/llama-server.exe'
+
+# Update (as scoop update does): the user switched to CPU in the tray, or limited the GPU layers.
+$c = New-TestConfig $cpu 7
+$changed = Update-BackendConfig $c $work 'cuda' $false $true $true
+Assert-That (-not $changed) 'nothing to change on an update'
+Assert-That ($c.server_file -eq $cpu -and $c.gpu_layers -eq 7) 'the engine the user chose on the tray must survive'
+$c = New-TestConfig $cudaFile 24
+$changed = Update-BackendConfig $c $work 'cuda' $false $true $true
+Assert-That ((-not $changed) -and $c.server_file -eq $cudaFile -and $c.gpu_layers -eq 24) 'a custom gpu_layers must survive'
+
+# Fresh install: the shipped config points at the CPU build, which did not exist at the start.
+$c = New-TestConfig $cpu 0
+$changed = Update-BackendConfig $c $work 'vulkan' $false $false $false
+Assert-That ($changed -and $c.server_file -eq 'runtime/vulkan/llama-server.exe' -and $c.gpu_layers -eq 99) 'a fresh GPU install must switch to the GPU'
+Assert-That ($c.fallback_server_file -eq $cpu -and $c.extra_unknown -eq 'keep') 'fallback is set and unknown keys survive'
+$c = New-TestConfig $cpu 99
+$changed = Update-BackendConfig $c $work 'cpu' $false $false $false
+Assert-That ($c.server_file -eq $cpu -and $c.gpu_layers -eq 0) 'a fresh CPU install uses 0 layers'
+
+# Retry after a failed GPU install: the GPU build was incomplete at the start and is complete now.
+$c = New-TestConfig $cpu 0
+$changed = Update-BackendConfig $c $work 'cuda' $false $true $false
+Assert-That ($changed -and $c.server_file -eq $cudaFile -and $c.gpu_layers -eq 99) 'a newly completed GPU build is switched to'
+
+# Explicit -Backend reconfigures.
+$c = New-TestConfig $cudaFile 24
+$changed = Update-BackendConfig $c $work 'cpu' $true $true $true
+Assert-That ($changed -and $c.server_file -eq $cpu -and $c.gpu_layers -eq 0) 'an explicit backend rewrites the settings'
+
+# The configured server is gone (for example removed after a failed install): fall back to what is installed.
+$c = New-TestConfig 'runtime/vulkan/llama-server.exe' 99
+$changed = Update-BackendConfig $c $work 'cpu' $false $true $true
+Assert-That ($changed -and $c.server_file -eq $cpu -and $c.gpu_layers -eq 0) 'a missing configured server is replaced'
+
+# Paths outside the folder are never trusted.
+$abs = (Join-Path $work 'runtime\cuda\llama-server.exe')
+foreach ($bad in @($abs, '..\runtime\cuda\llama-server.exe', '')) {
+    $c = New-TestConfig $bad 5
+    $changed = Update-BackendConfig $c $work 'cpu' $false $true $true
+    Assert-That ($changed -and $c.server_file -eq $cpu) "unsafe server_file '$bad' is replaced"
+}
+
+# A custom (non-standard) existing server file is kept, and missing keys are filled in.
+New-File (Join-Path $work 'runtime\custom\llama-server.exe')
+$c = [pscustomobject]@{ server_file = 'runtime/custom/llama-server.exe' }
+$changed = Update-BackendConfig $c $work 'cpu' $false $true $true
+Assert-That ($changed -and $c.server_file -eq 'runtime/custom/llama-server.exe') 'a custom server file stays'
+Assert-That ($c.fallback_server_file -eq $cpu -and $c.gpu_layers -eq 99) 'missing fallback and gpu_layers are filled in'
+
+# A bare exe has no config.json: everything is created.
+$c = [pscustomobject]@{}
+$changed = Update-BackendConfig $c $work 'cpu' $false $false $false
+Assert-That ($changed -and $c.server_file -eq $cpu -and $c.gpu_layers -eq 0 -and $c.fallback_server_file -eq $cpu) 'an empty config is filled in'
+`)
+}
+
+// TestSetupWholeScriptWhenInstalled runs the real script in a folder where the
+// model and all backends are already installed: it must not need the network
+// (no GitHub query) and must leave the user's engine settings alone.
+func TestSetupWholeScriptWhenInstalled(t *testing.T) {
+	exe := powershellExe(t)
+	script, err := os.ReadFile("setup.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("setup.ps1", string(script))
+	write("models/chat_template.jinja", strings.Repeat("x", 200))
+	for _, b := range []string{"cpu", "cuda", "vulkan"} {
+		write("runtime/"+b+"/llama-server.exe", "exe")
+	}
+	write("runtime/cuda/cudart64_12.dll", "dll")
+	write("runtime/cuda/cublas64_12.dll", "dll")
+	// A model just over 1 GB; NTFS does not write the zeros.
+	f, err := os.Create(filepath.Join(dir, "models", "plamo-3-translate-2b-Q4_K_M.gguf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(1<<30 + 1); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+
+	const userConfig = `{
+  "hotkey": "Ctrl+Alt+E",
+  "gpu_layers": 7,
+  "server_file": "runtime/cpu/llama-server.exe",
+  "fallback_server_file": "runtime/cpu/llama-server.exe",
+  "custom_key": "keep me"
+}`
+	configPath := filepath.Join(dir, "config.json")
+	run := func(backend string) string {
+		t.Helper()
+		cmd := exec.Command(exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(dir, "setup.ps1"), "-Backend", backend)
+		cmd.Env = psEnv()
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("setup.ps1 -Backend %s failed: %v\n%s", backend, err, out)
+		}
+		if strings.Contains(string(out), "Discovering") || strings.Contains(string(out), "Downloading") {
+			t.Fatalf("setup.ps1 -Backend %s went to the network although everything is installed:\n%s", backend, out)
+		}
+		return string(out)
+	}
+
+	// auto: whatever GPU the test machine has, every backend is installed, so nothing is needed.
+	if err := os.WriteFile(configPath, []byte(userConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("auto")
+	if got, _ := os.ReadFile(configPath); string(got) != userConfig {
+		t.Fatalf("-Backend auto rewrote the user's config:\n%s", got)
+	}
+
+	// An explicit backend is an explicit reconfiguration.
+	run("cuda")
+	raw, _ := os.ReadFile(configPath)
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("config.json is not valid JSON after setup: %v\n%s", err, raw)
+	}
+	if got["server_file"] != "runtime/cuda/llama-server.exe" || got["gpu_layers"] != float64(99) || got["custom_key"] != "keep me" {
+		t.Errorf("config after -Backend cuda is wrong:\n%s", raw)
+	}
+}

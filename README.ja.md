@@ -182,8 +182,11 @@ CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け�
 | `gpu_layers` | GPU に載せる層の数(`0` は CPU のみ) |
 | `server_file` / `fallback_server_file` | llama-server の実行ファイル(通常用 / CPU の予備) |
 
-> `setup.ps1` は、検出したバックエンドに合わせて `server_file`、`fallback_server_file`、`gpu_layers` を
-> 書き換えます。そのため、セットアップ後に git 上でこのファイルが変更扱いになります。
+> `setup.ps1` が `server_file`、`fallback_server_file`、`gpu_layers` を検出したバックエンドに合わせて設定するのは、
+> 新規インストールのとき、`-Backend cuda|vulkan|cpu` を明示したとき、GPU 版を新しくインストールしたときです。
+> 通常の再実行や更新(Scoop のように `-Backend auto`)では、使用中のエンジンと `gpu_layers` はそのまま残ります。
+> 不足している、または不完全なバックエンドだけをダウンロードし、すべてのダウンロードを SHA-256 で検証します
+> (モデルファイルは特定のリビジョンに固定しています)。
 
 ## 制限事項
 

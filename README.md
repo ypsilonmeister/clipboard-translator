@@ -193,9 +193,12 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 | `gpu_layers` | Layers offloaded to GPU (`0` = CPU only) |
 | `server_file` / `fallback_server_file` | llama-server binaries (primary / CPU fallback) |
 
-> `setup.ps1` rewrites `server_file`, `fallback_server_file` and `gpu_layers`
-> to match the detected backend, so the file shows up as modified in git after
-> setup.
+> `setup.ps1` sets `server_file`, `fallback_server_file` and `gpu_layers` to match
+> the detected backend on a fresh install, when you pass `-Backend cuda|vulkan|cpu`
+> explicitly, or when it newly installs a GPU build. A plain re-run or an update
+> (`-Backend auto`, as Scoop does) keeps the engine and `gpu_layers` you already
+> use. It only downloads a backend that is missing or incomplete, and verifies
+> every download against a SHA-256 (the model files are pinned to one revision).
 
 ## Limitations
 
