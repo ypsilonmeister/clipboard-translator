@@ -20,7 +20,7 @@ func uxApp(t *testing.T) (a *app, tray *fakeTray, cb *testClipboard, pastes *int
 	a.foreground = func() uintptr { return *fg }
 	n := 0
 	pastes = &n
-	a.paste = func() error { n++; return nil }
+	a.paste = func(uintptr) error { n++; return nil }
 	return
 }
 
@@ -88,12 +88,26 @@ func TestHandleResultAutoPaste(t *testing.T) {
 	}
 
 	// A paste that fails is reported, and the translation stays in the clipboard.
-	a.paste = func() error { return errors.New("keys held") }
+	a.paste = func(uintptr) error { return errors.New("keys held") }
 	cb.text = "d"
 	g = pending(a)
 	a.handleResult(result{original: "d", translated: "D", generation: g, window: 100, fromSelection: true})
 	if !strings.Contains(tray.lastNote(), "could not be pasted") || cb.text != "D" {
 		t.Fatalf("note=%q clipboard=%q", tray.lastNote(), cb.text)
+	}
+}
+
+func TestHandleResultTruncatedKeepsClipboard(t *testing.T) {
+	a, tray, cb, pastes, _ := uxApp(t)
+	a.conf.AutoPaste = true
+	cb.text = "こんにちは"
+	g := pending(a)
+	a.handleResult(result{original: "こんにちは", generation: g, window: 100, fromSelection: true, err: errTruncated})
+	if cb.text != "こんにちは" || cb.writes != 0 || *pastes != 0 || len(a.hist.Items()) != 0 {
+		t.Fatalf("clipboard=%q writes=%d pastes=%d history=%d", cb.text, cb.writes, *pastes, len(a.hist.Items()))
+	}
+	if !strings.Contains(tray.lastNote(), "max_tokens") {
+		t.Fatalf("the notification must say what to change, note=%q", tray.lastNote())
 	}
 }
 

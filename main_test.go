@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -56,6 +57,39 @@ func TestTranslatePayloadBothWays(t *testing.T) {
 			defer srv.Close()
 			got, err := translate(context.Background(), srv.URL, tc.source, translationDirection{tc.sourceLang, tc.targetLang}, 128)
 			if err != nil || got != tc.answer {
+				t.Fatalf("got=%q err=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestTranslateFinishReason(t *testing.T) {
+	cases := []struct {
+		name      string
+		choice    map[string]any
+		want      string
+		truncated bool
+	}{
+		{"stop", map[string]any{"message": map[string]any{"content": "Hello."}, "finish_reason": "stop"}, "Hello.", false},
+		{"missing", map[string]any{"message": map[string]any{"content": "Hello."}}, "Hello.", false},
+		{"null", map[string]any{"message": map[string]any{"content": "Hello."}, "finish_reason": nil}, "Hello.", false},
+		{"length", map[string]any{"message": map[string]any{"content": "incomplete translation"}, "finish_reason": "length"}, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"choices": []any{tc.choice}})
+			}))
+			defer srv.Close()
+			got, err := translate(context.Background(), srv.URL, "こんにちは", translationDirection{"ja", "en"}, 1)
+			if tc.truncated {
+				if !errors.Is(err, errTruncated) || got != "" {
+					t.Fatalf("got=%q err=%v, want errTruncated", got, err)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
 				t.Fatalf("got=%q err=%v", got, err)
 			}
 		})

@@ -4,12 +4,12 @@
 
 [English](README.md) | 日本語
 
-Windows と Linux（X11）用の、日本語 <-> 英語のクリップボード翻訳ツールです。テキストを選択して
+Windows、Linux（X11）、macOS 用の、日本語 <-> 英語のクリップボード翻訳ツールです。テキストを選択して
 **Ctrl+Alt+E** を押し、翻訳結果を **Ctrl+V** で貼り付けます。
 
 翻訳はすべて手元の PC で、[llama.cpp](https://github.com/ggml-org/llama.cpp) と
 [PLaMo 3 Translate 2B (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)
-を使って行います。Ollama は不要です。Windows では Python も不要で、Linux ではセットアップ時だけ使用します。
+を使って行います。Ollama は不要です。Windows では Python も不要で、Linux／macOS ではセットアップ時だけ使用します。
 
 **Built with PLaMo.** 翻訳モデルは Preferred Networks 社の PLaMo で、
 [PLaMo コミュニティライセンス](https://plamo.preferredai.jp/info/plamo-community-license-ja)
@@ -71,10 +71,63 @@ exe のパスを `HKCU\...\Run` に登録します。フォルダーを移動し
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend vulkan   # または cuda / cpu
 ```
 
+## macOS（実験的対応、macOS 13 以降）
+
+CI は Apple Silicon（`arm64`）と Intel（`amd64`）用に、それぞれ
+`clipboard-translator-macos-<アーキテクチャ>-<バージョン>.zip` と SHA-256 ファイルを作成します。
+開発版は PR の Actions 成果物、タグ付きビルドは Releases から取得できます。
+対応する zip を展開し、権限を与える前に **Clipboard Translator.app** を最終配置先（例: Applications）へ移してください。
+これは **ad-hoc 署名の開発用ビルド**です。Developer ID 署名・公証は含まず、Gatekeeper の受け入れや
+一般配布の署名手順は未検証です。
+開発用ビルドの置き換え後は、アクセシビリティ権限の再設定が必要になる場合があります。
+
+初回セットアップには `tarfile.data_filter` が使える Python（3.12 以降、またはセキュリティ更新済みの
+3.10／3.11）が必要です。例えば Homebrew で Python を導入してください。
+アプリを開き、ダウンロードの確認に同意すると、キャンセル可能なセットアップウィンドウを表示します。
+詳細は `setup.log` に記録します。公式 llama.cpp アーカイブは GitHub 公開の SHA-256 と照合し、
+標準で Metal を使用します。同じランタイムを CPU としても利用でき、メニューから切り替えられます。
+モデルは Windows／Linux と同様にサイズで不完全な取得を検出し、固定ハッシュとは照合しません。
+
+アプリは Dock ではなく **メニューバー**に常駐します。標準のキーは **Control+Option+E**
+（設定上は `Ctrl+Alt+E`）、貼り付けは **Command+V** です。
+選択テキストの取得（Cmd+C の送信）と任意の自動貼り付け（Cmd+V）には、
+**システム設定 > プライバシーとセキュリティ > アクセシビリティ**でアプリへの許可が必要です。
+メニューの **Open Accessibility Settings...** から設定ページを開けます。権限の要求は自動では行いません。
+許可がない場合も、手動で Cmd+C → ホットキー → Cmd+V と操作してクリップボードを翻訳できます。
+自動貼り付けは初期オフで、修飾キーを離した後にも最前面のプロセスとウィンドウを確認します。
+同じウィンドウ内の選択変更は確実に検出できず、クリップボードの比較・置換も不可分な操作ではありません。
+アプリのサンドボックスや Secure Input により操作できない場合があります。
+
+設定・モデル・ログはアプリ本体を変更せず、次の場所に保存します。
+
+```text
+~/Library/Application Support/ClipboardTranslator/
+    config.json, setup.sh, setup.log, translator.log, server.log
+    models/, runtime/
+```
+
+埋め込みの macOS 用スクリプトはここに `setup.sh` として保存します。
+手動で CPU に切り替える場合はアプリを終了し、
+`bash "$HOME/Library/Application Support/ClipboardTranslator/setup.sh" --backend cpu`
+を実行します（Metal は `metal`）。**Start at login** は
+`~/Library/LaunchAgents/com.github.ypsilonmeister.clipboard-translator.plist` だけを管理し、
+次回ログインから適用します。アプリを移動した場合は設定を入れ直してください。
+更新は終了してアプリを置き換える方式で、Application Support のデータは残ります。
+状態やエラーの通知はメニューバーのツールチップとログに表示し、通知センターの権限は要求しません。
+操作が必要なエラーにはネイティブダイアログも使用します。
+
+Mac または GitHub の macOS ランナーで Go と Xcode Command Line Tools を用意し、
+`bash tools/package-macos.sh dev` を実行すると、その環境のアーキテクチャ向けにビルドします。
+`.app` の情報・アイコン・ad-hoc 署名と検証を行い、`dist/` に zip とチェックサムを作成します。
+CI は Apple Silicon／Intel の両方で、AppKit、クリップボード、Carbon ホットキーの登録・イベント配送、
+メニューを検証します。キー送信やアクセシビリティ権限の付与は行いません。
+他アプリでの選択取得・貼り付け、US 以外のキーボード、Gatekeeper、Metal の性能は実機での確認が必要です。
+`CGO_ENABLED=0` のクロスコンパイルではロジックとスタブのみを確認できます。
+
 ## Linux（X11、実験的対応）
 
 [#13](https://github.com/ypsilonmeister/clipboard-translator/issues/13) の最初の段階として Linux に対応しています。
-macOS 対応は未実装です。**Wayland セッション（XWayland を含む）は非対応**です。
+**Wayland セッション（XWayland を含む）は非対応**です。
 ログイン時に Xorg／X11 セッションを選んでください。
 
 Ubuntu 24.04 では、実行に必要なパッケージを入れます。
@@ -177,7 +230,7 @@ CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け�
 | --- | --- |
 | `hotkey` | 修飾キー + A〜Z の 1 文字。例: `Ctrl+Alt+E` |
 | `auto_paste` | `true` で翻訳後に Ctrl+V を自動入力(初期値は `false`) |
-| `port` | ローカルの llama-server のポート(アプリは `port + 1` も多重起動の防止に使います) |
+| `port` | ローカルの llama-server のポート(1024〜65534。アプリは `port + 1` も多重起動の防止に使います) |
 | `max_chars` | これより長いテキストは翻訳しません |
 | `gpu_layers` | GPU に載せる層の数(`0` は CPU のみ) |
 | `server_file` / `fallback_server_file` | llama-server の実行ファイル(通常用 / CPU の予備) |
@@ -228,10 +281,11 @@ go run ./tools/mksyso -version 0.5.1     # アイコン + assets/app.manifest + 
 - `.github/workflows/ci.yml` は、`main` への push と、すべての Pull Request で、Windows 上の `gofmt`、
   `go vet`、`go test`、リリース用のフラグでのビルドを行い、PowerShell の構文も確認します。
   Linux では Xvfb 上の X11 デスクトップ機能、セットアップのフィクスチャテスト、tarball 作成も検証します。
-  macOS は現時点ではロジックとスタブのテストのみです。
+  macOS は Apple Silicon／Intel の両方でネイティブテストとアプリの作成を行います。
 - `v0.6.0` のようなタグを push すると、`.github/workflows/release.yml` が動きます。タグをバージョンとして
   exe をビルドし、`Portable-Clipboard-Translator-Windows-x64-<タグ>.zip` にまとめて、GitHub のリリースに
   添付します。Ubuntu 24.04 で作成した Linux amd64 用 tarball と SHA-256 ファイルも添付します。
+  macOS Apple Silicon／Intel 用の ad-hoc 署名済みアプリ zip と SHA-256 ファイルも添付します。
   そのタグのリリースがすでにあれば、成果物を追加します。
 - `bucket/clipboard-translator.json` は Scoop のマニフェストです。リリースのたびに更新します
   (`scoop checkver -u` でできます)。

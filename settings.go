@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,7 +28,7 @@ func hotkeyChoices(current string) []string {
 }
 
 // backendNames are the llama.cpp builds setup.ps1 can install, in menu order.
-var backendNames = []string{"cpu", "cuda", "vulkan"}
+var backendNames = []string{"cpu", "cuda", "vulkan", "metal"}
 
 // availableBackends lists the installed builds (runtime/<name>/llama-server.exe).
 func availableBackends(dir string) []string {
@@ -63,12 +65,17 @@ type configEntry struct {
 	val json.RawMessage
 }
 
+// parseConfigEntries splits a config.json object into its entries, in file
+// order. A leading UTF-8 BOM is ignored. A key that appears twice becomes one
+// entry at its first position with the last value, as json.Unmarshal (and so
+// loadConfig) reads it. Anything after the closing brace is an error.
 func parseConfigEntries(b []byte) ([]configEntry, error) {
-	dec := json.NewDecoder(bytes.NewReader(b))
+	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(b, utf8BOM)))
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
 		return nil, errors.New("config.json must be a JSON object")
 	}
 	var out []configEntry
+	index := map[string]int{}
 	for dec.More() {
 		kt, err := dec.Token()
 		if err != nil {
@@ -78,7 +85,24 @@ func parseConfigEntries(b []byte) ([]configEntry, error) {
 		if err := dec.Decode(&raw); err != nil {
 			return nil, err
 		}
-		out = append(out, configEntry{kt.(string), raw})
+		key := kt.(string)
+		if i, dup := index[key]; dup {
+			out[i].val = raw
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, configEntry{key, raw})
+	}
+	// Consume the closing brace (a truncated file fails here) ...
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		if err == nil || errors.Is(err, io.EOF) {
+			err = io.ErrUnexpectedEOF
+		}
+		return nil, fmt.Errorf("config.json is incomplete or not valid JSON: %w", err)
+	}
+	// ... and make sure nothing but whitespace follows it.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("config.json has extra data after the closing }")
 	}
 	return out, nil
 }
@@ -86,7 +110,9 @@ func parseConfigEntries(b []byte) ([]configEntry, error) {
 // updateConfigFile sets the given keys in config.json. Every other key, known
 // to this version or not, keeps its value and its position. The previous file is
 // saved as config.json.bak. The file is rewritten in place (not replaced by a
-// rename) so a hard link, as used by Scoop's "persist", stays intact.
+// rename) so a hard link, as used by Scoop's "persist", stays intact. A UTF-8
+// BOM at the start of the old file is accepted; the .bak keeps it, the new
+// file is written without one.
 func updateConfigFile(dir string, set map[string]any) error {
 	path := filepath.Join(dir, "config.json")
 	old, err := os.ReadFile(path)

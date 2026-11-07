@@ -68,9 +68,12 @@ jobs:
       - name: Keep non-cgo logic builds working
         run: CGO_ENABLED=0 go test ./...
 
-  macos-stubs:
-    # macOS desktop support is the next phase of issue #13.
-    runs-on: macos-latest
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -78,3 +81,19 @@ jobs:
           go-version: stable
       - run: go vet ./...
       - run: go test ./...
+      - name: Native AppKit, clipboard, hotkey and menu smoke checks
+        run: CT_TEST_MACOS=1 go test -tags mactest -run '^TestMacNative' -v -timeout 60s .
+      - name: Setup fixtures and shell syntax
+        run: |
+          bash -n setup-macos.sh
+          bash -n tools/package-macos.sh
+          python3 tools/test_macos_setup.py
+      - name: Build and verify app bundle
+        run: bash tools/package-macos.sh dev
+      - name: Upload macOS development app
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app-${{ matrix.runner }}
+          path: |
+            dist/*macos*.zip
+            dist/*macos*.sha256

@@ -16,6 +16,9 @@ func TestMain(m *testing.M) {
 		runFakeServer()
 		return
 	}
+	if runPlatformSmokeTests() {
+		return
+	}
 	os.Exit(m.Run())
 }
 
