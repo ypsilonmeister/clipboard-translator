@@ -23,12 +23,12 @@ func TestDetectDirection(t *testing.T) {
 		{"", "", "", false},
 	}
 	for _, tc := range cases {
-		got, ok := detectDirection(tc.input)
+		got, ok := directionFor(defaultLanguages, tc.input)
 		if ok != tc.ok || got.Source != tc.source || got.Target != tc.target {
 			t.Errorf("%q: got %+v, %v", tc.input, got, ok)
 		}
 	}
-	if shouldTranslate("日本語をたくさん", 2) {
+	if shouldTranslate("日本語をたくさん", 2, defaultLanguages) {
 		t.Fatal("max chars ignored")
 	}
 }

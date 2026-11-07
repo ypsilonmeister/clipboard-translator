@@ -28,12 +28,15 @@ type Config struct {
 	// AutoPaste types Ctrl+V into the window the text was selected in once the
 	// translation is ready. Off by default.
 	AutoPaste bool `json:"auto_paste"`
+	// Languages is the pair translated in both directions, e.g. ["ja", "en"].
+	Languages []string `json:"languages"`
 }
 
 func defaultConfig() Config {
 	return Config{
 		Hotkey: "Ctrl+Alt+E", Port: 18119, PollMS: 50, MaxChars: 4000, MaxTokens: 2048, ContextTokens: 4096,
 		GPULayers: 0, TranslationTimeoutSec: 180, StartupTimeoutSec: 120,
+		Languages:          append([]string(nil), defaultLanguages...),
 		ModelFile:          "models/plamo-3-translate-2b-Q4_K_M.gguf",
 		TemplateFile:       "models/chat_template.jinja",
 		ServerFile:         "runtime/cpu/" + serverBinaryName(),
@@ -153,5 +156,10 @@ func loadConfig(dir string) (Config, error) {
 	if c.GPULayers < 0 || c.GPULayers > 10000 {
 		return c, errors.New("gpu_layers out of range")
 	}
+	langs, err := validateLanguages(c.Languages)
+	if err != nil {
+		return c, err
+	}
+	c.Languages = langs
 	return c, nil
 }

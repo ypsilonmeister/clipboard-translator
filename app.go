@@ -340,12 +340,12 @@ func (a *app) startTranslation() {
 		}
 		return
 	}
-	if !shouldTranslate(source, a.conf.MaxChars) {
+	if !shouldTranslate(source, a.conf.MaxChars, a.conf.Languages) {
 		log.Print("skipped: empty, unsupported, URL, or too long")
 		a.tray.SetStatus(a.readyTip)
 		return
 	}
-	direction, _ := detectDirection(source)
+	direction, _ := directionFor(a.conf.Languages, source)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.conf.TranslationTimeoutSec)*time.Second)
 	a.cancelCurrent = cancel
 	a.translating, a.translateStart, a.lastTranslSec = true, time.Now(), 0

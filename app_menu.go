@@ -22,6 +22,7 @@ const (
 	cmdHotkeyBase   = firstAppCommand + 100 // + index into hotkeyChoices
 	cmdBackendBase  = firstAppCommand + 200 // + index into availableBackends
 	cmdHistoryBase  = firstAppCommand + 300 // + index into history (newest first)
+	cmdLanguageBase = firstAppCommand + 400 // + index into languagePairChoices
 )
 
 func backendLabel(name string) string {
@@ -71,6 +72,12 @@ func (a *app) buildMenu() []MenuItem {
 	}
 	items = append(items, MenuItem{Label: "Hotkey", Sub: hotkeys})
 
+	var pairs []MenuItem
+	for i, p := range languagePairChoices(a.conf.Languages) {
+		pairs = append(pairs, MenuItem{ID: cmdLanguageBase + i, Label: pairLabel(p), Checked: samePair(p, a.conf.Languages)})
+	}
+	items = append(items, MenuItem{Label: "Languages", Sub: pairs})
+
 	// Only offer a choice when more than one build is installed.
 	if backends := availableBackends(a.dir); len(backends) > 1 {
 		cur := currentBackend(a.conf.ServerFile)
@@ -102,6 +109,10 @@ func (a *app) buildMenu() []MenuItem {
 // handleCommand runs one app-specific menu command. It runs on the UI thread.
 func (a *app) handleCommand(id int) {
 	switch {
+	case id >= cmdLanguageBase:
+		if choices := languagePairChoices(a.conf.Languages); id-cmdLanguageBase < len(choices) {
+			a.changeLanguages(choices[id-cmdLanguageBase])
+		}
 	case id >= cmdHistoryBase:
 		a.copyFromHistory(id - cmdHistoryBase)
 	case id >= cmdHotkeyBase && id < cmdBackendBase:
@@ -158,6 +169,19 @@ func (a *app) saveConfig(set map[string]any) {
 		log.Printf("could not save config.json: %v", err)
 		a.tray.Notify("Clipboard Translator", "The change works now but could not be saved to config.json: "+err.Error(), true)
 	}
+}
+
+// changeLanguages switches the language pair. Nothing needs restarting: the
+// languages are sent with every request. A translation already running keeps its
+// own direction.
+func (a *app) changeLanguages(pair []string) {
+	if samePair(pair, a.conf.Languages) {
+		return
+	}
+	a.conf.Languages = append([]string(nil), pair...)
+	a.saveConfig(map[string]any{"languages": a.conf.Languages})
+	log.Printf("languages changed to %s/%s", pair[0], pair[1])
+	a.tray.Notify("Clipboard Translator", "Languages: "+pairLabel(pair)+".", false)
 }
 
 // changeHotkey re-registers the hotkey. If the new one is taken, the old one
