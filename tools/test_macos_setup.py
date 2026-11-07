@@ -24,10 +24,12 @@ class MacSetupTests(linux.SetupTests):
             return io.BytesIO(json.dumps([{'tag_name': 'test', 'assets': assets}]).encode())
         if url.startswith('https://github.com/ggml-org/llama.cpp/releases/download/test/'):
             return io.BytesIO(self.archive)
+        if url.startswith('https://huggingface.co/pfnet/') and self.model_bytes is not None:
+            return io.BytesIO(self.model_bytes)
         raise AssertionError('Unexpected request: ' + url)
 
-    def run_setup(self, backend='metal'):
-        with mock.patch('sys.argv', ['setup', str(self.root), backend]), mock.patch('platform.machine', return_value=self.machine), mock.patch('urllib.request.urlopen', side_effect=self.response), contextlib.redirect_stdout(io.StringIO()):
+    def run_setup(self, backend='metal', *model):
+        with mock.patch('sys.argv', ['setup', str(self.root), backend, *model]), mock.patch('platform.machine', return_value=self.machine), mock.patch('urllib.request.urlopen', side_effect=self.response), contextlib.redirect_stdout(io.StringIO()):
             exec(PROGRAM, {'__name__': '__main__'})
 
     def test_cpu_vulkan_config_and_symlinks(self):
