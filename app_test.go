@@ -46,10 +46,10 @@ func newTestApp(t *testing.T) (*app, *fakeTray, *[]string) {
 	dir := t.TempDir()
 	self, _ := os.Executable()
 	for _, b := range []string{"cpu", "cuda"} {
-		copyFile(t, self, filepath.Join(dir, "runtime", b, "llama-server.exe"))
+		copyFile(t, self, filepath.Join(dir, "runtime", b, serverBinaryName()))
 	}
 	os.MkdirAll(filepath.Join(dir, "runtime", "vulkan"), 0o755)
-	os.WriteFile(filepath.Join(dir, "runtime", "vulkan", "llama-server.exe"), []byte("not an executable"), 0o644)
+	os.WriteFile(filepath.Join(dir, "runtime", "vulkan", serverBinaryName()), []byte("not an executable"), 0o644)
 	os.MkdirAll(filepath.Join(dir, "models"), 0o755)
 	os.WriteFile(filepath.Join(dir, "models", "m.gguf"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(dir, "models", "t.jinja"), []byte("x"), 0o644)
@@ -144,7 +144,7 @@ func TestSwitchBackend(t *testing.T) {
 			a.conf.ServerFile, a.conf.GPULayers, healthy(a), tray.notes)
 	}
 	c, err := loadConfig(a.dir)
-	if err != nil || c.ServerFile != "runtime/cuda/llama-server.exe" || c.GPULayers != 99 {
+	if err != nil || c.ServerFile != "runtime/cuda/"+serverBinaryName() || c.GPULayers != 99 {
 		t.Fatalf("the choice must be saved: %+v, %v", c, err)
 	}
 
@@ -154,7 +154,7 @@ func TestSwitchBackend(t *testing.T) {
 	if currentBackend(a.conf.ServerFile) != "cuda" || !healthy(a) {
 		t.Fatalf("a failed switch must keep cuda: server_file=%q healthy=%v", a.conf.ServerFile, healthy(a))
 	}
-	if c, _ := loadConfig(a.dir); c.ServerFile != "runtime/cuda/llama-server.exe" {
+	if c, _ := loadConfig(a.dir); c.ServerFile != "runtime/cuda/"+serverBinaryName() {
 		t.Fatalf("a failed switch must not be saved, config has %q", c.ServerFile)
 	}
 	if !strings.Contains(tray.lastNote(), "keeping the previous engine") {

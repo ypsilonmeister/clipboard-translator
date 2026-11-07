@@ -45,9 +45,32 @@ jobs:
           if ($vi.ProductName -ne 'Clipboard Translator') { throw "version info missing: $($vi.ProductName)" }
           "ok: $($vi.ProductName) $($vi.ProductVersion)"
 
-  portable:
-    # The non-Windows files only hold stubs, but they must keep compiling.
-    runs-on: ubuntu-latest
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Install Linux desktop development libraries
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev xvfb dbus-x11
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Test the X11 desktop in an isolated virtual display
+        run: env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 CT_TEST_X11=1 xvfb-run -a go test -tags x11test -run '^TestX11' -v -timeout 60s .
+      - name: Check setup and package scripts
+        run: |
+          bash -n setup.sh
+          bash -n tools/package-linux.sh
+          python3 tools/test_linux_setup.py
+      - name: Build Linux tarball
+        run: bash tools/package-linux.sh dev
+      - name: Keep non-cgo logic builds working
+        run: CGO_ENABLED=0 go test ./...
+
+  macos-stubs:
+    # macOS desktop support is the next phase of issue #13.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

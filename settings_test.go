@@ -33,17 +33,17 @@ func TestBackendHelpers(t *testing.T) {
 	if got := currentBackend("tools/llama-server.exe"); got != "" {
 		t.Errorf("custom location must give no backend, got %q", got)
 	}
-	if f, n := backendSettings("cpu"); f != "runtime/cpu/llama-server.exe" || n != 0 {
+	if f, n := backendSettings("cpu"); f != "runtime/cpu/"+serverBinaryName() || n != 0 {
 		t.Errorf("cpu settings = %q, %d", f, n)
 	}
-	if f, n := backendSettings("cuda"); f != "runtime/cuda/llama-server.exe" || n != 99 {
+	if f, n := backendSettings("cuda"); f != "runtime/cuda/"+serverBinaryName() || n != 99 {
 		t.Errorf("cuda settings = %q, %d", f, n)
 	}
 	dir := t.TempDir()
 	for _, b := range []string{"cpu", "vulkan"} {
 		p := filepath.Join(dir, "runtime", b)
 		os.MkdirAll(p, 0o755)
-		os.WriteFile(filepath.Join(p, "llama-server.exe"), []byte("x"), 0o644)
+		os.WriteFile(filepath.Join(p, serverBinaryName()), []byte("x"), 0o644)
 	}
 	if got := availableBackends(dir); !reflect.DeepEqual(got, []string{"cpu", "vulkan"}) {
 		t.Errorf("availableBackends = %v", got)

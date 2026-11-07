@@ -11,8 +11,9 @@ Ctrl+Alt+E), and the app puts the Japanese<->English translation on the
 clipboard. Translation is fully local: the app starts a loopback-only
 `llama-server` (llama.cpp) child process with the PLaMo 3 Translate 2B GGUF
 model and talks to it over HTTP. Go, standard library only (no third-party
-modules), `go 1.21` in `go.mod`, MIT licensed. Windows x64 only; other
-platforms compile stubs so CI on Linux can run the logic tests.
+modules), `go 1.21` in `go.mod`, MIT licensed. Windows x64 and experimental
+Linux X11 support. macOS still compiles stubs. Linux uses cgo with system
+GTK 3, X11 and XTest libraries (no extra Go modules).
 
 ## Commands
 
@@ -22,6 +23,23 @@ go vet ./...
 go test ./...       # Windows runs the Win32 tests too
 go build -trimpath -buildvcs=false -ldflags "-H=windowsgui -s -w" -o ClipboardTranslator.exe .
 ```
+
+Linux: install `libgtk-3-dev libx11-dev libxtst-dev pkg-config`, then run
+`go test ./...` and `bash tools/package-linux.sh dev`. `setup.sh` needs Python
+with `tarfile.data_filter`. Native integration tests require a disposable Xvfb
+display, never the user's desktop:
+
+```bash
+env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 CT_TEST_X11=1 xvfb-run -a go test -tags x11test -run '^TestX11' -timeout 60s .
+python3 tools/test_linux_setup.py
+```
+
+`CGO_ENABLED=0` builds only the portable logic/stubs on Linux. Wayland is
+explicitly rejected at runtime. `desktop_linux.go` / `native_linux.c` own the
+GTK event loop, XGrabKey, XTest input and X11 clipboard. `autostart_linux.go`
+manages an XDG autostart Desktop Entry. GTK supplies a control-window fallback
+if no tray host is present. X11 clipboard compare/write is best effort, not
+atomic like the Windows implementation.
 
 On a Windows machine the Linux logic tests can be built with
 `GOOS=linux go test -c -o <outside the repo>/app.test .` and run in WSL **with

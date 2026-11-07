@@ -32,7 +32,7 @@ var backendNames = []string{"cpu", "cuda", "vulkan"}
 func availableBackends(dir string) []string {
 	var out []string
 	for _, b := range backendNames {
-		if _, err := os.Stat(filepath.Join(dir, "runtime", b, "llama-server.exe")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "runtime", b, serverBinaryName())); err == nil {
 			out = append(out, b)
 		}
 	}
@@ -55,7 +55,7 @@ func backendSettings(name string) (serverFile string, gpuLayers int) {
 	if name == "cpu" {
 		gpuLayers = 0
 	}
-	return "runtime/" + name + "/llama-server.exe", gpuLayers
+	return "runtime/" + name + "/" + serverBinaryName(), gpuLayers
 }
 
 type configEntry struct {
