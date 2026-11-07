@@ -18,6 +18,20 @@ see [Licenses](#licenses) before using the app for business.
 > **Status: prototype.** It has not been tested on a wide range of PCs or GPU
 > drivers. Use at your own risk.
 
+## Which download?
+
+Every [release](https://github.com/ypsilonmeister/clipboard-translator/releases) has one file per platform
+(each with a `.sha256` file next to it):
+
+| Your computer | File | Instructions |
+| --- | --- | --- |
+| Windows 10/11 x64 | install script, Scoop, or `Portable-Clipboard-Translator-Windows-x64-<version>.zip` | [Windows](#install-windows-1011-x64) |
+| Mac with Apple silicon (M1 or later) | `clipboard-translator-macos-arm64-<version>.zip` | [macOS](#macos-experimental-macos-13) |
+| Mac with an Intel processor | `clipboard-translator-macos-amd64-<version>.zip` | [macOS](#macos-experimental-macos-13) |
+| Linux x86_64, X11 session | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linux-x11-experimental) |
+
+macOS and Linux are experimental, and no Linux arm64 build is published.
+
 ## Install (Windows 10/11 x64)
 
 ### Install script (recommended)
@@ -77,6 +91,34 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend vulkan   # or cuda
 
 ## macOS (experimental, macOS 13+)
 
+### Install steps
+
+1. **Pick the file for your Mac.** Apple menu > *About This Mac* shows the chip
+   (*Apple M...* means `arm64`, *Intel* means `amd64`), or run `uname -m` in Terminal
+   (`arm64` or `x86_64`).
+2. **Download** `clipboard-translator-macos-<arch>-<version>.zip` and its `.sha256` file from
+   Releases, then check the download (in the folder that holds both files):
+
+   ```bash
+   shasum -a 256 -c clipboard-translator-macos-<arch>-<version>.zip.sha256
+   ```
+
+3. **Unzip** it and move **Clipboard Translator.app** to `/Applications` (or wherever it should stay).
+4. **Open it for the first time.** The app is not notarized, so macOS may refuse to open it
+   (the exact prompts differ between macOS versions). Either open *System Settings > Privacy & Security*
+   and choose **Open Anyway** after the first blocked attempt, or remove the download quarantine flag
+   before opening it:
+
+   ```bash
+   xattr -dr com.apple.quarantine "/Applications/Clipboard Translator.app"
+   ```
+
+5. **Install Python 3.12+** if you do not have it (`brew install python`); first-run setup needs it.
+6. **Start the app** and accept the download prompt (model over 1 GB). Then grant access in
+   *System Settings > Privacy & Security > Accessibility* so it can copy the selection.
+
+The details below explain each part.
+
 CI produces separate Apple Silicon (`arm64`) and Intel (`amd64`) app bundles:
 `clipboard-translator-macos-<arch>-<version>.zip`, with SHA-256 files. Development
 builds are available from the PR's Actions artifacts; tagged builds are attached to
@@ -131,6 +173,23 @@ selection/paste, non-US keyboard use, Gatekeeper behavior and Metal performance 
 manual testing. Cross-compilation with `CGO_ENABLED=0` only verifies portable logic/stubs.
 
 ## Linux (X11, experimental)
+
+### Install steps
+
+1. Log in to an **X11 (Xorg) session**: `echo $XDG_SESSION_TYPE` must print `x11`.
+2. Install the dependencies (Ubuntu 24.04, below), then download
+   `clipboard-translator-linux-amd64-<version>.tar.gz` and its `.sha256` file from Releases
+   (x86_64 only). Check it, extract it into a dedicated folder in your home directory and run it:
+
+   ```bash
+   sha256sum -c clipboard-translator-linux-amd64-<version>.tar.gz.sha256
+   tar -xzf clipboard-translator-linux-amd64-<version>.tar.gz -C ~
+   cd ~/clipboard-translator-linux-amd64-<version>
+   bash setup.sh            # downloads the model and the official CPU runtime
+   ./clipboard-translator
+   ```
+
+The details below explain each part.
 
 Linux support is the first phase of [#13](https://github.com/ypsilonmeister/clipboard-translator/issues/13).
 **Wayland sessions, including XWayland, are not supported**;
