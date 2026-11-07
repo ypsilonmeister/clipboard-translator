@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -52,5 +53,25 @@ func TestEnsureSetupScript(t *testing.T) {
 
 	if err := ensureSetupScript(filepath.Join(dir, "no", "such", "folder")); err == nil {
 		t.Fatal("a folder that cannot be written must be reported")
+	}
+}
+
+// The model files must be fetched from a pinned Hugging Face revision and
+// checked against a SHA-256 (a moving "main" would break the pinned hashes).
+func TestSetupPinsModelDownloads(t *testing.T) {
+	s := string(embeddedSetup)
+	if strings.Contains(s, "resolve/main") {
+		t.Error("setup.ps1 must download the model from a pinned revision, not resolve/main")
+	}
+	for _, re := range []string{
+		`\$modelRevision = '[0-9a-f]{40}'`,
+		`\$modelSha256 = '[0-9a-f]{64}'`,
+		`\$templateSha256 = '[0-9a-f]{64}'`,
+		`Download-File \(\$hf \+ 'plamo-3-translate-2b-Q4_K_M\.gguf'\) \$modelFile \$modelSha256`,
+		`Download-File \(\$hf \+ 'chat_template\.jinja'\) \$templateFile \$templateSha256`,
+	} {
+		if !regexp.MustCompile(re).MatchString(s) {
+			t.Errorf("setup.ps1 does not match %s", re)
+		}
 	}
 }
