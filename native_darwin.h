@@ -25,4 +25,7 @@ void ct_mac_menu_show(void *menu);
 int ct_mac_command(void);
 int ct_mac_dialog(const char *text, int question, int error);
 void ct_mac_open(const char *target);
+void ct_mac_setup_begin(const char *logpath);
+int ct_mac_setup_cancelled(void);
+void ct_mac_setup_end(void);
 #endif

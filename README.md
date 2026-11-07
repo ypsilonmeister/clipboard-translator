@@ -4,12 +4,12 @@
 
 English | [日本語](README.ja.md)
 
-Japanese <-> English clipboard translator for Windows and Linux (X11). Select text, press
+Japanese <-> English clipboard translator for Windows, Linux (X11), and macOS. Select text, press
 **Ctrl+Alt+E**, then paste the translation with **Ctrl+V**.
 
 Translation runs fully locally with [llama.cpp](https://github.com/ggml-org/llama.cpp)
 and [PLaMo 3 Translate 2B (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF).
-No Ollama is required. Windows needs no Python; Linux uses Python only for setup.
+No Ollama is required. Windows needs no Python; Linux/macOS use Python only for setup.
 
 **Built with PLaMo.** The translation model is PLaMo by Preferred Networks and is
 used under the [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-ja);
@@ -73,10 +73,64 @@ Manual backend choice:
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend vulkan   # or cuda / cpu
 ```
 
+## macOS (experimental, macOS 13+)
+
+CI produces separate Apple Silicon (`arm64`) and Intel (`amd64`) app bundles:
+`clipboard-translator-macos-<arch>-<version>.zip`, with SHA-256 files. Development
+builds are available from the PR's Actions artifacts; tagged builds are attached to
+Releases. Extract the matching zip and move **Clipboard Translator.app** to its final
+location (for example Applications) before granting permissions or enabling autostart.
+These are **ad-hoc signed development builds**, without Developer ID signing or
+notarization. Gatekeeper acceptance and public-distribution signing are not verified.
+
+First-run setup requires Python with `tarfile.data_filter` (Python 3.12+, or a security-patched
+3.10/3.11; for example install Python with Homebrew). Start the app and accept the explicit
+download prompt. A responsive setup window offers Cancel; download details go to `setup.log`.
+The official llama.cpp macOS archive is verified against GitHub's SHA-256 and supports
+both CPU and Metal. Metal is selected by default; CPU is available as a fallback/menu option.
+As on Windows/Linux, the model download has a size check rather than a pinned model hash.
+
+The app runs in the **menu bar**, without a Dock icon. The default hotkey is
+**Control+Option+E** (`Ctrl+Alt+E` in config); paste with **Command+V**.
+Grant the app access in **System Settings > Privacy & Security > Accessibility** to
+enable selected-text capture (synthetic Cmd+C) and optional auto-paste (Cmd+V).
+The menu's **Open Accessibility Settings...** opens that page; permissions are never
+requested automatically. Without access, manually copy text with Cmd+C, press the
+hotkey, and paste the translation yourself. Auto-paste is off by default. The app
+rechecks the frontmost process/window after modifiers are released, but cannot reliably
+detect a changed selection in the same window. Its pasteboard compare/write is best
+effort, not atomic. Sandbox restrictions and Secure Input may prevent some operations.
+
+The app keeps writable data outside the bundle, in:
+
+```text
+~/Library/Application Support/ClipboardTranslator/
+    config.json, setup.sh, setup.log, translator.log, server.log
+    models/, runtime/
+```
+
+The embedded macOS script is written there as `setup.sh`. To reinstall/select CPU manually,
+quit the app, then run `bash "$HOME/Library/Application Support/ClipboardTranslator/setup.sh" --backend cpu`
+(or `metal`). **Start at login** writes only
+`~/Library/LaunchAgents/com.github.ypsilonmeister.clipboard-translator.plist`; the setting
+applies at the next login. Toggle it after moving the app. Quit from the menu before
+replacing the app to update it; data in Application Support is retained. Status/error
+notifications appear in the menu-bar tooltip and log, without requesting Notification
+Center access. Errors requiring intervention also use native dialogs.
+
+To build on a Mac (or a GitHub-hosted macOS runner), install Go and Xcode Command Line Tools,
+then run `bash tools/package-macos.sh dev`. This builds the runner's native architecture,
+creates `.app` metadata/icons, ad-hoc signs/verifies the bundle, and writes a zip/checksum
+under `dist/`. CI uses separate Apple Silicon and Intel runners. Native smoke checks cover
+AppKit startup, pasteboard round trips, Carbon hotkey registration/event dispatch, and
+menu commands without injecting input or granting Accessibility access. Actual inter-app
+selection/paste, non-US keyboard use, Gatekeeper behavior and Metal performance need
+manual testing. Cross-compilation with `CGO_ENABLED=0` only verifies portable logic/stubs.
+
 ## Linux (X11, experimental)
 
 Linux support is the first phase of [#13](https://github.com/ypsilonmeister/clipboard-translator/issues/13).
-macOS support is still pending. **Wayland sessions, including XWayland, are not supported**;
+**Wayland sessions, including XWayland, are not supported**;
 select an Xorg/X11 session when logging in.
 
 On Ubuntu 24.04, install the runtime dependencies:
@@ -240,13 +294,14 @@ build" and never claims to be outdated). `setup.ps1` is embedded in the exe.
 - `.github/workflows/ci.yml` runs `gofmt`, `go vet`, `go test` and a release-flag
   build on Windows for every push to `main` and every pull request, and checks
   that the PowerShell scripts parse. Linux builds/tests include native X11 desktop
-  checks under Xvfb, setup fixture tests, and tarball packaging. macOS currently
-  runs only the portable logic/stub tests.
+  checks under Xvfb, setup fixture tests, and tarball packaging. macOS runs native
+  tests/smoke checks and app packaging on Apple Silicon and Intel runners.
 - Pushing a tag such as `v0.6.0` runs `.github/workflows/release.yml`: it builds
   the exe with the tag as its version, packages
   `Portable-Clipboard-Translator-Windows-x64-<tag>.zip` and attaches it to the
   GitHub release. It also attaches a Linux amd64 tarball and SHA-256 file, built
-  on Ubuntu 24.04. An existing release receives the build artifacts.
+  on Ubuntu 24.04, plus ad-hoc signed macOS Apple Silicon/Intel app zips/checksums.
+  An existing release receives the build artifacts.
 - `bucket/clipboard-translator.json` is the Scoop manifest; bump it with each
   release (`scoop checkver -u` can do it).
 

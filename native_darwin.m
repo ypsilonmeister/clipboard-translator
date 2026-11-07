@@ -12,14 +12,18 @@ static EventHandlerRef hotkey_handler;
 static int hotkey_down, hotkey_fired, wants_menu;
 static NSStatusItem *status_item;
 static NSMutableArray *commands;
+static NSWindow *setup_window;
+static int setup_cancelled;
 
 @interface CTMenuTarget : NSObject
 - (void)requestMenu:(id)sender;
 - (void)command:(id)sender;
+- (void)cancelSetup:(id)sender;
 @end
 @implementation CTMenuTarget
 - (void)requestMenu:(id)sender { wants_menu = 1; }
 - (void)command:(id)sender { [commands addObject:@([sender tag])]; }
+- (void)cancelSetup:(id)sender { setup_cancelled = 1; }
 @end
 static CTMenuTarget *menu_target;
 
@@ -218,4 +222,30 @@ void ct_mac_open(const char *target) {
         if (![url scheme]) url = [NSURL fileURLWithPath:text];
         [[NSWorkspace sharedWorkspace] openURL:url];
     }
+}
+
+void ct_mac_setup_begin(const char *logpath) {
+    @autoreleasepool {
+        setup_cancelled = 0;
+        setup_window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 540, 180) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+        [setup_window setReleasedWhenClosed:NO];
+        [setup_window setTitle:@"Clipboard Translator — Setup"];
+        NSTextField *label = [NSTextField wrappingLabelWithString:[NSString stringWithFormat:@"Downloading the model and llama.cpp (over 1 GB). This can take several minutes.\n\nProgress log: %s", logpath]];
+        [label setFrame:NSMakeRect(20, 65, 500, 95)];
+        [[setup_window contentView] addSubview:label];
+        NSProgressIndicator *spinner = [[[NSProgressIndicator alloc] initWithFrame:NSMakeRect(20, 22, 24, 24)] autorelease];
+        [spinner setStyle:NSProgressIndicatorStyleSpinning];
+        [spinner startAnimation:nil];
+        [[setup_window contentView] addSubview:spinner];
+        NSButton *cancel = [NSButton buttonWithTitle:@"Cancel" target:menu_target action:@selector(cancelSetup:)];
+        [cancel setFrame:NSMakeRect(420, 16, 100, 32)];
+        [[setup_window contentView] addSubview:cancel];
+        [setup_window center];
+        [setup_window makeKeyAndOrderFront:nil];
+        [NSApp activateIgnoringOtherApps:YES];
+    }
+}
+int ct_mac_setup_cancelled(void) { return setup_cancelled; }
+void ct_mac_setup_end(void) {
+    @autoreleasepool { [setup_window close]; [setup_window release]; setup_window = nil; }
 }

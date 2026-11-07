@@ -213,3 +213,7 @@ func showError(msg string)     { dialog(msg, false, true) }
 func showInfo(msg string)      { dialog(msg, false, false) }
 func askYesNo(msg string) bool { return dialog(msg, true, false) }
 func openTarget(target string) { withCString(target, func(p *C.char) { C.ct_mac_open(p) }) }
+
+func beginSetupProgress(path string) { withCString(path, func(p *C.char) { C.ct_mac_setup_begin(p) }) }
+func setupCancelled() bool           { return C.ct_mac_setup_cancelled() != 0 }
+func endSetupProgress()              { C.ct_mac_setup_end() }

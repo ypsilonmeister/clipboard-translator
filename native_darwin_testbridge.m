@@ -22,3 +22,14 @@ void ct_mac_test_hotkey(int pressed) {
     SendEventToEventTarget(event, GetApplicationEventTarget());
     ReleaseEvent(event);
 }
+
+void ct_mac_test_cancel_setup_soon(void) {
+    [NSTimer scheduledTimerWithTimeInterval:0.15 repeats:NO block:^(NSTimer *timer) {
+        for (NSWindow *window in [NSApp windows]) {
+            if (![[window title] isEqualToString:@"Clipboard Translator — Setup"]) continue;
+            for (NSView *view in [[window contentView] subviews]) {
+                if ([view isKindOfClass:[NSButton class]] && [[(NSButton *)view title] isEqualToString:@"Cancel"]) [(NSButton *)view performClick:nil];
+            }
+        }
+    }];
+}

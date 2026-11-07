@@ -5,7 +5,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
+	"time"
 )
 
 // AppKit must run on the process's main thread, including in a Go test binary.
@@ -83,6 +86,29 @@ func macNativeSmoke() error {
 	pumpMessages()
 	if !tray.QuitRequested() {
 		return fmt.Errorf("menu Quit was not processed")
+	}
+	dir, err := os.MkdirTemp("", "clipboard-translator-macos-setup-smoke-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	script := filepath.Join(dir, "setup.sh")
+	if err := os.WriteFile(script, []byte("echo setup-smoke\n"), 0o600); err != nil {
+		return err
+	}
+	if err := runSetup(dir); err != nil {
+		return fmt.Errorf("setup progress window: %w", err)
+	}
+	if err := os.WriteFile(script, []byte("echo cancel-smoke\nsleep 30\n"), 0o600); err != nil {
+		return err
+	}
+	macTestCancelSetupSoon()
+	begin := time.Now()
+	if err := runSetup(dir); err == nil || !strings.Contains(err.Error(), "cancelled") {
+		return fmt.Errorf("setup cancellation: %v", err)
+	}
+	if time.Since(begin) > 5*time.Second {
+		return fmt.Errorf("setup cancellation was unresponsive")
 	}
 	// No CGEvent injection, accessibility prompts or model downloads in CI.
 	return nil
