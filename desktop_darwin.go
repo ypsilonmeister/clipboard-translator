@@ -99,27 +99,29 @@ func sendPaste() error {
 	}
 	return nil
 }
-func captureSelectedText(cb Clipboard) (string, uint32, error) {
-	old, err := cb.Read()
-	if err != nil {
-		return "", 0, err
-	}
-	before := clipboardSequence()
-	if !accessibilityGranted() || !waitModifiersReleased(900*time.Millisecond) {
-		return old, before, nil
-	}
+func sendCopy() error {
 	if C.ct_mac_send(0) == 0 {
-		return old, before, nil
+		return errors.New("Cmd+C could not be sent; grant Accessibility access to Clipboard Translator in System Settings")
 	}
-	deadline := time.Now().Add(700 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if seq := clipboardSequence(); seq != before {
-			text, err := cb.Read()
-			return text, seq, err
-		}
-		time.Sleep(15 * time.Millisecond)
+	return nil
+}
+
+// captureSelectedText copies the selection of window win (see captureWith for
+// the ordering rules). Without Accessibility access no keys can be sent, so the
+// existing clipboard text is translated instead.
+func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
+	if !accessibilityGranted() {
+		text, err := cb.Read()
+		return text, false, err
 	}
-	return old, before, nil
+	return captureWith(cb, win, captureOps{
+		foreground:      foregroundWindow,
+		waitModifiers:   waitModifiersReleased,
+		sequence:        clipboardSequence,
+		sendCopy:        sendCopy,
+		modifierTimeout: 900 * time.Millisecond,
+		copyTimeout:     700 * time.Millisecond,
+	})
 }
 
 type macTray struct {
