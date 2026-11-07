@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Clipboard Translator Settings</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="app.css?t={{TOKEN}}">
+</head>
+<body>
+<main>
+  <header class="top">
+    <h1>Clipboard Translator</h1>
+    <p class="sub">Settings</p>
+  </header>
+
+  <div id="banner" class="banner" role="alert" hidden></div>
+
+  <section class="card" aria-labelledby="hotkeys-title">
+    <h2 id="hotkeys-title">Hotkeys</h2>
+    <p class="hint">Select text in any program and press a hotkey. The translation replaces what is on the clipboard. Each hotkey can translate in its own way.</p>
+    <div id="profiles"></div>
+    <div class="add-row">
+      <button id="add" type="button" class="secondary">+ Add hotkey</button>
+      <p id="limit" class="hint" hidden></p>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="general-title">
+    <h2 id="general-title">General</h2>
+    <label class="check">
+      <input type="checkbox" id="auto-paste">
+      <span>Paste automatically after translating</span>
+    </label>
+    <p class="hint">Types the paste shortcut for you, but only when the text was a fresh selection and the same window is still in front.</p>
+  </section>
+
+  <footer class="bar">
+    <button id="save" type="button" class="primary">Save</button>
+    <span id="status" role="status" aria-live="polite"></span>
+    <button id="close" type="button" class="link">Close this page</button>
+  </footer>
+
+  <p class="foot">This page is served by the app on this computer only, and goes away when you close it. Other settings are in <code>config.json</code> (tray menu: Open config.json).</p>
+</main>
+<script src="app.js?t={{TOKEN}}"></script>
+</body>
+</html>

@@ -269,6 +269,7 @@ Right-click the tray icon:
 | --- | --- |
 | **Cancel translation** | Shown while a translation runs. |
 | **Recent translations** | The last 10, kept in memory only (never written to disk). Click one to copy its translation again; *Clear history* empties the list. |
+| **Settings...** | Opens a settings page in your browser: add, change and remove hotkeys (keys, a language pair or one target language each) and turn auto-paste on or off. Changes apply at once and are saved to `config.json`. |
 | **Paste automatically after translating** | Off by default. When on, Ctrl+V is typed for you, but only if the text was a fresh selection and the same window is still in front; otherwise the translation just waits in the clipboard. |
 | **Hotkey** | Pick another combination. If another program already owns it, the old one stays. |
 | **Languages** | The pair that is translated in both directions (default Japanese ↔ English). Takes effect at once. Other pairs: see `languages` below. |
@@ -291,6 +292,10 @@ written to `translator.log`.
   download (`Setup.cmd`, `setup.ps1`, the first-run offer, the install script)
   and *Check for updates* / *Update*. There is no telemetry and no background
   check.
+- *Settings...* opens a page served by the app itself on `127.0.0.1` (a free port,
+  only while the page is open; it closes a few minutes after the last request or
+  with *Close this page*). It is protected by a random token in its address and
+  loads nothing from the internet.
 - Logs record errors but not the text you translate. Translation history lives in
   memory only and is gone when the app quits.
 

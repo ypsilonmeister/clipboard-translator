@@ -35,6 +35,10 @@ type app struct {
 	extras      []extraHotkey
 	hotkeyLimit int // how many hotkeys this OS build can register, hotkeyLimit() in production
 
+	settings     *settingsServer      // the settings page, while it is open
+	settingsReqs chan settingsRequest // page -> main loop
+	openURL      func(target string)  // openTarget, replaceable in tests
+
 	updates  chan updateResult
 	checking bool
 	latest   releaseInfo // newest release seen by "Check for updates"
@@ -61,14 +65,16 @@ type extraHotkey struct {
 func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Writer) *app {
 	conf.normalizeProfiles()
 	a := &app{
-		hotkeyLimit: hotkeyLimit(),
-		dir:         dir,
-		conf:        conf,
-		endpoint:    fmt.Sprintf("http://127.0.0.1:%d", conf.Port),
-		paths:       paths,
-		tray:        tray,
-		limiter:     restartLimiter{max: 3, window: 10 * time.Minute},
-		readyTip:    "Clipboard Translator - ready (" + conf.Hotkey + ")",
+		hotkeyLimit:  hotkeyLimit(),
+		settingsReqs: make(chan settingsRequest, 8),
+		openURL:      openTarget,
+		dir:          dir,
+		conf:         conf,
+		endpoint:     fmt.Sprintf("http://127.0.0.1:%d", conf.Port),
+		paths:        paths,
+		tray:         tray,
+		limiter:      restartLimiter{max: 3, window: 10 * time.Minute},
+		readyTip:     "Clipboard Translator - ready (" + conf.Hotkey + ")",
 
 		newHotkey:  newHotkey,
 		showErr:    showError,
@@ -206,6 +212,7 @@ func (a *app) run() {
 	}
 	defer cb.Close()
 	a.registerStartupHotkey()
+	defer a.closeSettings()
 	defer func() { // a.hotkey changes when the user picks another one
 		_ = a.hotkey.Close()
 		for _, e := range a.extras {
@@ -382,6 +389,8 @@ func (a *app) serve(cb Clipboard) {
 			if pressed {
 				a.startTranslation(pressedProfile)
 			}
+		case req := <-a.settingsReqs:
+			a.handleSettingsRequest(req)
 		case u := <-a.updates:
 			a.onUpdateResult(u)
 		case res := <-a.results:
