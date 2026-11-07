@@ -100,7 +100,7 @@ func (a *app) startServer() error {
 	if a.paths.server == a.paths.fallback {
 		return fmt.Errorf("The translation server failed to start: %w", err)
 	}
-	if _, statErr := os.Stat(a.paths.fallback); statErr != nil {
+	if statErr := checkFile(a.paths.fallback); statErr != nil {
 		return fmt.Errorf("CPU fallback unavailable: %w", statErr)
 	}
 	log.Print("falling back to CPU")
