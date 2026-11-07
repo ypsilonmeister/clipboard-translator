@@ -21,7 +21,7 @@ Windows、Linux（X11）、macOS 用の、日本語 <-> 英語のクリップボ
 ## どれをダウンロードするか
 
 [リリース](https://github.com/ypsilonmeister/clipboard-translator/releases)には、環境ごとに 1 つずつファイルがあります
-(それぞれ隣に `.sha256` ファイルも付きます)。
+(macOS と Linux のファイルには隣に `.sha256` ファイルが付きます。Windows の zip の SHA-256 はリリースノートに載ります)。
 
 | お使いのコンピューター | ファイル | 手順 |
 | --- | --- | --- |
