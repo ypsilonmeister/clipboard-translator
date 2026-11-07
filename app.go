@@ -178,26 +178,40 @@ func (a *app) run() {
 	cb, err := newClipboard()
 	if err != nil {
 		log.Printf("clipboard initialization failed: %v", err)
-		showError(fmt.Sprintf("Clipboard initialization failed: %v", err))
+		a.showErr(fmt.Sprintf("Clipboard initialization failed: %v", err))
 		return
 	}
 	defer cb.Close()
-	a.hotkey, err = a.newHotkey(a.conf.Hotkey)
-	if err != nil {
-		log.Printf("hotkey: %v", err)
-		showError(fmt.Sprintf("Could not register the hotkey %s: %v", a.conf.Hotkey, err))
-		return
-	}
+	a.registerStartupHotkey()
 	defer func() { _ = a.hotkey.Close() }() // a.hotkey changes when the user picks another one
 	a.serve(cb)
+}
+
+// registerStartupHotkey registers the configured hotkey. If another program
+// owns it, the app still starts (without a hotkey) so the user can pick a free
+// one from the tray menu instead of having to edit config.json.
+func (a *app) registerStartupHotkey() {
+	hk, err := a.newHotkey(a.conf.Hotkey)
+	if err != nil {
+		log.Printf("hotkey %s: %v", a.conf.Hotkey, err)
+		a.hotkey = noHotkey{}
+		a.readyTip = noHotkeyTip
+		return
+	}
+	a.hotkey = hk
 }
 
 func (a *app) serve(cb Clipboard) {
 	a.cb = cb
 	tray := a.tray
-	log.Printf("ready: select text and press %s (or translate existing clipboard)", a.conf.Hotkey)
 	tray.SetStatus(a.readyTip)
-	tray.Notify("Clipboard Translator", "Ready. Select text and press "+a.conf.Hotkey+", then paste with Ctrl+V.", false)
+	if a.hasNoHotkey() {
+		log.Printf("ready, but the hotkey %s could not be registered; waiting for the user to pick another", a.conf.Hotkey)
+		tray.Notify("Clipboard Translator", fmt.Sprintf("Could not register the hotkey %s (another program may be using it). Choose another one from the tray menu: Hotkey.", a.conf.Hotkey), true)
+	} else {
+		log.Printf("ready: select text and press %s (or translate existing clipboard)", a.conf.Hotkey)
+		tray.Notify("Clipboard Translator", "Ready. Select text and press "+a.conf.Hotkey+", then paste with Ctrl+V.", false)
+	}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)

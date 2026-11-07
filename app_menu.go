@@ -63,8 +63,9 @@ func (a *app) buildMenu() []MenuItem {
 	items = append(items, MenuItem{ID: cmdAutoPaste, Label: "Paste automatically after translating", Checked: a.conf.AutoPaste})
 
 	var hotkeys []MenuItem
+	none := a.hasNoHotkey()
 	for i, h := range hotkeyChoices(a.conf.Hotkey) {
-		hotkeys = append(hotkeys, MenuItem{ID: cmdHotkeyBase + i, Label: h, Checked: strings.EqualFold(h, a.conf.Hotkey)})
+		hotkeys = append(hotkeys, MenuItem{ID: cmdHotkeyBase + i, Label: h, Checked: !none && strings.EqualFold(h, a.conf.Hotkey)})
 	}
 	items = append(items, MenuItem{Label: "Hotkey", Sub: hotkeys})
 
@@ -160,18 +161,27 @@ func (a *app) saveConfig(set map[string]any) {
 // changeHotkey re-registers the hotkey. If the new one is taken, the old one
 // is restored and nothing is saved.
 func (a *app) changeHotkey(spec string) {
-	if strings.EqualFold(spec, a.conf.Hotkey) {
-		return
+	none := a.hasNoHotkey()
+	if !none && strings.EqualFold(spec, a.conf.Hotkey) {
+		return // with no hotkey registered, picking the configured one is a retry
 	}
 	_ = a.hotkey.Close()
 	nh, err := a.newHotkey(spec)
 	if err != nil {
 		log.Printf("hotkey %s: %v", spec, err)
+		if none {
+			// Nothing to restore: stay without a hotkey and keep the menu usable.
+			a.hotkey = noHotkey{}
+			a.tray.Notify("Clipboard Translator", fmt.Sprintf("Could not use %s (already taken?). No hotkey is active; pick another one from the menu.", spec), true)
+			return
+		}
 		old, err2 := a.newHotkey(a.conf.Hotkey)
 		if err2 != nil {
 			a.failed(fmt.Errorf("Could not register %s (%v) and could not restore %s: %v", spec, err, a.conf.Hotkey, err2))
 			a.tray.Notify("Clipboard Translator", "The hotkey is not registered. Pick one from the menu or restart the app.", true)
 			a.hotkey = noHotkey{}
+			a.readyTip = noHotkeyTip
+			a.tray.SetStatus(a.readyTip)
 			return
 		}
 		a.hotkey = old
@@ -189,6 +199,15 @@ func (a *app) changeHotkey(spec string) {
 
 // noHotkey stands in when no hotkey could be registered at all.
 type noHotkey struct{}
+
+// noHotkeyTip is the tooltip while no hotkey is registered.
+const noHotkeyTip = "Clipboard Translator - no hotkey (choose one in the tray menu)"
+
+// hasNoHotkey reports whether the app is running without a registered hotkey.
+func (a *app) hasNoHotkey() bool {
+	_, none := a.hotkey.(noHotkey)
+	return none
+}
 
 func (noHotkey) Pressed() (bool, error) { return false, nil }
 func (noHotkey) Close() error           { return nil }
