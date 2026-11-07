@@ -89,6 +89,29 @@ Manual backend choice:
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend vulkan   # or cuda / cpu
 ```
 
+### Choosing the model size
+
+Setup installs PLaMo 3 Translate **2B** (1.8 GB) by default. To use another size:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Model 8b   # or 0.8b / 2b
+```
+
+| `-Model` | File | Download |
+| --- | --- | --- |
+| `0.8b` | `plamo-3-translate-0.8b-Q4_K_M.gguf` | 0.6 GB |
+| `2b` (default) | `plamo-3-translate-2b-Q4_K_M.gguf` | 1.8 GB |
+| `8b` | `plamo-3-translate-8b-Q4_K_M.gguf` | 5.3 GB |
+
+A bigger model needs more disk space, memory and time per translation; a
+smaller one is faster. The 31B model is not offered. `-Model` downloads the file
+(checked against a pinned SHA-256) and sets `model_file` in `config.json`; the
+old model file stays in `models\` until you delete it. Setup without `-Model`
+(including updates through Scoop) keeps the model `config.json` names. All sizes
+use the same [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-en).
+On Linux and macOS the option is `--model 0.8b|2b|8b` (for example
+`bash setup.sh --backend cpu --model 8b`).
+
 ## macOS (experimental, macOS 13+)
 
 ### Install steps
@@ -309,6 +332,7 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 | `port` | Local llama-server port, 1024-65534 (the app also uses `port + 1` as an instance lock) |
 | `max_chars` | Longer text is skipped |
 | `gpu_layers` | Layers offloaded to GPU (`0` = CPU only) |
+| `model_file` | The model, e.g. `models/plamo-3-translate-8b-Q4_K_M.gguf`; `setup.ps1 -Model` sets it (see *Choosing the model size*) |
 | `server_file` / `fallback_server_file` | llama-server binaries (primary / CPU fallback) |
 
 > `setup.ps1` sets `server_file`, `fallback_server_file` and `gpu_layers` to match

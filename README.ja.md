@@ -85,6 +85,27 @@ exe のパスを `HKCU\...\Run` に登録します。フォルダーを移動し
 powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Backend vulkan   # または cuda / cpu
 ```
 
+### モデルのサイズを選ぶ
+
+セットアップは、初期値で PLaMo 3 Translate **2B**(1.8 GB)を入れます。別のサイズを使うには:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Model 8b   # または 0.8b / 2b
+```
+
+| `-Model` | ファイル | ダウンロード |
+| --- | --- | --- |
+| `0.8b` | `plamo-3-translate-0.8b-Q4_K_M.gguf` | 0.6 GB |
+| `2b`(初期値) | `plamo-3-translate-2b-Q4_K_M.gguf` | 1.8 GB |
+| `8b` | `plamo-3-translate-8b-Q4_K_M.gguf` | 5.3 GB |
+
+大きいモデルほど、ディスク容量、メモリ、1回あたりの翻訳時間が必要です。小さいモデルは速くなります。
+31B は選べません。`-Model` を付けると、ファイルをダウンロードし(固定した SHA-256 で検証)、`config.json` の
+`model_file` を書き換えます。以前のモデルのファイルは、削除するまで `models\` に残ります。`-Model` を付けない
+セットアップ(Scoop の更新を含む)は、`config.json` に書かれているモデルのままにします。どのサイズも同じ
+[PLaMo コミュニティライセンス](https://plamo.preferredai.jp/info/plamo-community-license-ja)です。
+Linux と macOS では `--model 0.8b|2b|8b` を使います(例: `bash setup.sh --backend cpu --model 8b`)。
+
 ## macOS（実験的対応、macOS 13 以降）
 
 ### インストール手順
@@ -295,6 +316,7 @@ CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け�
 | `port` | ローカルの llama-server のポート(1024〜65534。アプリは `port + 1` も多重起動の防止に使います) |
 | `max_chars` | これより長いテキストは翻訳しません |
 | `gpu_layers` | GPU に載せる層の数(`0` は CPU のみ) |
+| `model_file` | 使うモデル。例: `models/plamo-3-translate-8b-Q4_K_M.gguf`。`setup.ps1 -Model` が設定します(「モデルのサイズを選ぶ」を見てください) |
 | `server_file` / `fallback_server_file` | llama-server の実行ファイル(通常用 / CPU の予備) |
 
 > `setup.ps1` が `server_file`、`fallback_server_file`、`gpu_layers` を検出したバックエンドに合わせて設定するのは、

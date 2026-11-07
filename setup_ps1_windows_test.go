@@ -327,6 +327,41 @@ Assert-That ($changed -and $c.server_file -eq $cpu -and $c.gpu_layers -eq 0 -and
 `)
 }
 
+func TestSetupModelChoice(t *testing.T) {
+	runSetupHarness(t, `
+$catalog = Get-ModelCatalog
+Assert-That (@($catalog.Keys) -join ',' -eq '0.8b,2b,8b') 'the catalog offers 0.8b, 2b and 8b in that order'
+foreach ($k in $catalog.Keys) {
+    $m = $catalog[$k]
+    Assert-That ($m.File -eq "plamo-3-translate-$k-Q4_K_M.gguf" -and $m.Repo -eq "plamo-3-translate-$k-GGUF") "names of $k"
+    Assert-That ($m.Revision -match '^[0-9a-f]{40}$' -and $m.Sha256 -match '^[0-9a-f]{64}$' -and $m.TemplateSha256 -match '^[0-9a-f]{64}$') "$k is pinned"
+}
+
+# Nothing asked, nothing configured: the default.
+Assert-That ((Resolve-ModelKey $catalog ([pscustomobject]@{}) $false '2b') -eq '2b') 'a fresh install gets 2b'
+# An update (no -Model) keeps the model config.json names, with either slash and any case.
+foreach ($v in @('models/plamo-3-translate-8b-Q4_K_M.gguf', 'models\PLAMO-3-translate-8b-q4_k_m.gguf')) {
+    Assert-That ((Resolve-ModelKey $catalog ([pscustomobject]@{ model_file = $v }) $false '2b') -eq '8b') "an update keeps $v"
+}
+# A file that is not in the catalog does not decide anything.
+Assert-That ((Resolve-ModelKey $catalog ([pscustomobject]@{ model_file = 'models/my.gguf' }) $false '2b') -eq '2b') 'an unknown model_file falls back to 2b'
+Assert-That ((Resolve-ModelKey $catalog ([pscustomobject]@{ model_file = 5 }) $false '2b') -eq '2b') 'a non-string model_file is ignored'
+# -Model wins over the config.
+Assert-That ((Resolve-ModelKey $catalog ([pscustomobject]@{ model_file = 'models/plamo-3-translate-8b-Q4_K_M.gguf' }) $true '0.8B') -eq '0.8b') '-Model overrides the config'
+
+# Only an explicit -Model rewrites model_file.
+$c = [pscustomobject]@{ model_file = 'models/plamo-3-translate-8b-Q4_K_M.gguf'; keep = 1 }
+Assert-That (-not (Update-ModelConfig $c $catalog['2b'] $false)) 'no -Model, no config change'
+Assert-That ($c.model_file -eq 'models/plamo-3-translate-8b-Q4_K_M.gguf') 'model_file untouched without -Model'
+Assert-That (Update-ModelConfig $c $catalog['2b'] $true) '-Model changes model_file'
+Assert-That ($c.model_file -eq 'models/plamo-3-translate-2b-Q4_K_M.gguf' -and $c.keep -eq 1) 'model_file switched, other keys kept'
+Assert-That (-not (Update-ModelConfig $c $catalog['2b'] $true)) 'asking for the model already set changes nothing'
+$empty = [pscustomobject]@{}
+Assert-That (Update-ModelConfig $empty $catalog['0.8b'] $true) 'a config without model_file gets one'
+Assert-That ($empty.model_file -eq 'models/plamo-3-translate-0.8b-Q4_K_M.gguf') 'model_file added'
+`)
+}
+
 // TestSetupWholeScriptWhenInstalled runs the real script in a folder where the
 // model and all backends are already installed: it must not need the network
 // (no GitHub query) and must leave the user's engine settings alone.
@@ -372,9 +407,10 @@ func TestSetupWholeScriptWhenInstalled(t *testing.T) {
   "custom_key": "keep me"
 }`
 	configPath := filepath.Join(dir, "config.json")
-	run := func(backend string) string {
+	run := func(backend string, extra ...string) string {
 		t.Helper()
-		cmd := exec.Command(exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(dir, "setup.ps1"), "-Backend", backend)
+		args := append([]string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(dir, "setup.ps1"), "-Backend", backend}, extra...)
+		cmd := exec.Command(exe, args...)
 		cmd.Env = psEnv()
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -404,5 +440,51 @@ func TestSetupWholeScriptWhenInstalled(t *testing.T) {
 	}
 	if got["server_file"] != "runtime/cuda/llama-server.exe" || got["gpu_layers"] != float64(99) || got["custom_key"] != "keep me" {
 		t.Errorf("config after -Backend cuda is wrong:\n%s", raw)
+	}
+	if _, has := got["model_file"]; has {
+		t.Errorf("model_file was written without -Model:\n%s", raw)
+	}
+
+	// -Model switches model_file to a model that is already on disk, offline.
+	f08, err := os.Create(filepath.Join(dir, "models", "plamo-3-translate-0.8b-Q4_K_M.gguf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f08.Truncate(400<<20 + 1); err != nil {
+		f08.Close()
+		t.Fatal(err)
+	}
+	f08.Close()
+	out := run("auto", "-Model", "0.8b")
+	if !strings.Contains(out, "PLaMo 3 Translate 0.8B") {
+		t.Errorf("setup does not say which model it uses:\n%s", out)
+	}
+	raw, _ = os.ReadFile(configPath)
+	got = map[string]any{}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("config.json is not valid JSON after -Model: %v\n%s", err, raw)
+	}
+	if got["model_file"] != "models/plamo-3-translate-0.8b-Q4_K_M.gguf" || got["custom_key"] != "keep me" || got["server_file"] != "runtime/cuda/llama-server.exe" {
+		t.Errorf("config after -Model 0.8b is wrong:\n%s", raw)
+	}
+
+	// A later plain run (an update) keeps the chosen model and does not rewrite the file.
+	before, _ := os.ReadFile(configPath)
+	out = run("auto")
+	if !strings.Contains(out, "0.8B") {
+		t.Errorf("an update must keep using the configured model:\n%s", out)
+	}
+	if after, _ := os.ReadFile(configPath); string(after) != string(before) {
+		t.Errorf("a plain run rewrote the config:\n%s", after)
+	}
+
+	// A model that is too small for its size is refused, not used.
+	if err := os.Truncate(filepath.Join(dir, "models", "plamo-3-translate-0.8b-Q4_K_M.gguf"), 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(dir, "setup.ps1"), "-Backend", "auto", "-Model", "0.8b")
+	cmd.Env = psEnv()
+	if o, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(o), "incomplete") {
+		t.Errorf("a truncated model must be rejected: %v\n%s", err, o)
 	}
 }

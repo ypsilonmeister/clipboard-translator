@@ -1,4 +1,9 @@
-param([ValidateSet('auto','cuda','vulkan','cpu')][string]$Backend = 'auto')
+param(
+    [ValidateSet('auto','cuda','vulkan','cpu')][string]$Backend = 'auto',
+    # Which PLaMo 3 Translate size to install. Without -Model the model named in config.json
+    # is kept (2b on a fresh install); with it, config.json is switched to that model.
+    [ValidateSet('0.8b','2b','8b')][string]$Model = '2b'
+)
 # Portable Clipboard Translator setup. Downloads only from official PFN Hugging Face
 # and official ggml-org GitHub release assets. Windows 10/11 x64.
 Set-StrictMode -Version Latest
@@ -7,15 +12,52 @@ $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 # Only an explicit -Backend cuda/vulkan/cpu may rewrite the engine settings of an existing setup.
 $explicitBackend = $PSBoundParameters.ContainsKey('Backend') -and $PSBoundParameters['Backend'] -ne 'auto'
+$explicitModel = $PSBoundParameters.ContainsKey('Model')
 $root = $PSScriptRoot
 $runtime = Join-Path $root 'runtime'
 $models = Join-Path $root 'models'
 
-# The model files are pinned to one Hugging Face commit and one SHA-256 each, so a moved
-# "main" or a corrupted download cannot slip through. To update: bump all four values.
-$modelRevision = '232fbd7916519edecddfdae0beae7e76fe70453f'
-$modelSha256 = 'f36d0813dd95573a852ab5d76e374c543632d9e292929e922bcdbf7e53b494e0'
-$templateSha256 = '18dcc169548d794897084a04cd150a5a633717f1eb6e62de4a0e0973b377e02a'
+# The models setup can install. Each file is pinned to one Hugging Face commit and one
+# SHA-256 (the model and the chat template), so a moved "main" or a corrupted download cannot
+# slip through. To update a model: bump its Revision, Sha256 and TemplateSha256 together.
+# MinBytes only guards files that are already on disk (they may come from an older revision).
+# Only Q4_K_M is offered; the 31B model is not (about 20 GB).
+function Get-ModelCatalog {
+    return [ordered]@{
+        '0.8b' = @{ Repo = 'plamo-3-translate-0.8b-GGUF'; File = 'plamo-3-translate-0.8b-Q4_K_M.gguf'; Size = '0.6 GB'; MinBytes = 400MB
+            Revision = '0c4af2b003fdd94b6868aa955414c1c86ee96997'
+            Sha256 = '73a1d942d8ab1e654d83898d997b8b4808c32ba669b378df612230989d18f079'
+            TemplateSha256 = '084af862c7844bdca74e8dca5516fde1f446919e00650ee4d8fae5b193fd064e' }
+        '2b' = @{ Repo = 'plamo-3-translate-2b-GGUF'; File = 'plamo-3-translate-2b-Q4_K_M.gguf'; Size = '1.8 GB'; MinBytes = 1GB
+            Revision = '232fbd7916519edecddfdae0beae7e76fe70453f'
+            Sha256 = 'f36d0813dd95573a852ab5d76e374c543632d9e292929e922bcdbf7e53b494e0'
+            TemplateSha256 = '18dcc169548d794897084a04cd150a5a633717f1eb6e62de4a0e0973b377e02a' }
+        '8b' = @{ Repo = 'plamo-3-translate-8b-GGUF'; File = 'plamo-3-translate-8b-Q4_K_M.gguf'; Size = '5.3 GB'; MinBytes = 4GB
+            Revision = '407c15bc44f6968e6734bc047d92f766c163bbec'
+            Sha256 = 'e021fb83dcda393a4f866291caa53380eebbe2f25be4c7585fb19e8486828bbf'
+            TemplateSha256 = '084af862c7844bdca74e8dca5516fde1f446919e00650ee4d8fae5b193fd064e' }
+    }
+}
+
+# The catalog key to install: the one asked for with -Model, else the model config.json
+# already names (so an update never swaps a chosen model for another), else 2b.
+function Resolve-ModelKey($catalog, $config, [bool]$explicit, [string]$requested) {
+    if ($explicit) { return $requested.ToLowerInvariant() }
+    $configured = Get-ConfigValue $config 'model_file'
+    if ($configured -is [string] -and $configured) {
+        $leaf = ($configured -split '[\\/]')[-1]
+        foreach ($key in $catalog.Keys) {
+            if ($catalog[$key].File -ieq $leaf) { return $key }
+        }
+    }
+    return '2b'
+}
+
+# Only an explicit -Model rewrites model_file. Returns $true when the config changed.
+function Update-ModelConfig($config, $entry, [bool]$explicit) {
+    if (-not $explicit) { return $false }
+    return (Set-ConfigValue $config 'model_file' ('models/' + $entry.File))
+}
 
 function Download-File([string]$url, [string]$dest, [string]$sha256 = '') {
     Write-Host "Downloading: $url"
@@ -206,12 +248,18 @@ foreach ($b in @('cpu', 'cuda', 'vulkan')) { $completeAtStart[$b] = Test-Backend
 
 # Files already on disk are only length-checked: they may come from an older model revision,
 # and re-downloading 1.8 GB on every update would be worse. New downloads must match the pinned SHA-256.
-$modelFile = Join-Path $models 'plamo-3-translate-2b-Q4_K_M.gguf'
+$catalog = Get-ModelCatalog
+$modelKey = Resolve-ModelKey $catalog $config $explicitModel $Model
+$modelInfo = $catalog[$modelKey]
+Write-Host "Model: PLaMo 3 Translate $($modelKey.ToUpperInvariant()) ($($modelInfo.Size))"
+$modelFile = Join-Path $models $modelInfo.File
 $templateFile = Join-Path $models 'chat_template.jinja'
-$hf = "https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF/resolve/$modelRevision/"
-if (-not (Test-Path $modelFile)) { Download-File ($hf + 'plamo-3-translate-2b-Q4_K_M.gguf') $modelFile $modelSha256 }
-if ((Get-Item $modelFile).Length -lt 1GB) { throw 'Model appears incomplete (<1GB). Remove damaged GGUF and run Setup.cmd again.' }
-if (-not (Test-Path $templateFile)) { Download-File ($hf + 'chat_template.jinja') $templateFile $templateSha256 }
+$hf = "https://huggingface.co/pfnet/$($modelInfo.Repo)/resolve/$($modelInfo.Revision)/"
+if (-not (Test-Path $modelFile)) { Download-File ($hf + $modelInfo.File) $modelFile $modelInfo.Sha256 }
+if ((Get-Item $modelFile).Length -lt $modelInfo.MinBytes) { throw "Model appears incomplete (smaller than expected for the $modelKey model). Remove the damaged GGUF and run Setup.cmd again." }
+# The template is shared by all sizes (the app only passes source_lang / target_lang, which
+# every revision handles alike), so one that is already in models\ is kept.
+if (-not (Test-Path $templateFile)) { Download-File ($hf + 'chat_template.jinja') $templateFile $modelInfo.TemplateSha256 }
 if ((Get-Item $templateFile).Length -lt 100) { throw 'Chat template download appears incomplete.' }
 
 if ($Backend -eq 'auto') {
@@ -254,6 +302,7 @@ if (-not $needCpu -and -not $needGpu) {
 
 # Modify only relevant properties; retain user's other settings/hotkey.
 $changed = Update-BackendConfig $config $root $installedBackend $explicitBackend $serverPresentAtStart $completeAtStart[$installedBackend]
+if (Update-ModelConfig $config $modelInfo $explicitModel) { $changed = $true }
 if ($changed -or -not (Test-Path -LiteralPath $configFile)) {
     $json = $config | ConvertTo-Json -Depth 8
     [System.IO.File]::WriteAllText($configFile, $json, (New-Object System.Text.UTF8Encoding($false)))
@@ -264,4 +313,4 @@ Write-Host ''
 Write-Host "Setup finished. Engine in config.json: $(Get-ConfigValue $config 'server_file'); CPU fallback installed."
 Write-Host "Now start ClipboardTranslator.exe (or Start.cmd). The full folder can be copied to another Windows x64 PC."
 Write-Host 'A different GPU or driver on the destination may trigger CPU fallback.'
-Write-Host 'PLaMo terms: https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF'
+Write-Host "PLaMo terms: https://huggingface.co/pfnet/$($modelInfo.Repo)"
