@@ -35,17 +35,38 @@ function Invoke-ClipboardTranslatorInstaller {
     $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
+    if (-not [Environment]::Is64BitOperatingSystem) { throw 'Clipboard Translator needs 64-bit Windows 10 or 11.' }
+    if ([string]::IsNullOrWhiteSpace($InstallDir)) { throw 'Install directory cannot be empty.' }
+
     $repo = 'ypsilonmeister/clipboard-translator'
     $exeName = 'ClipboardTranslator.exe'
     $headers = @{ 'User-Agent' = 'ClipboardTranslatorInstaller'; 'Accept' = 'application/vnd.github+json' }
     $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipboardTranslator'
     $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
     $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Clipboard Translator.lnk'
-    $InstallDir = [IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+    $fullPath = [IO.Path]::GetFullPath($InstallDir)
+    $dirRoot = [IO.Path]::GetPathRoot($fullPath)
+    if ($fullPath -ieq $dirRoot -or $InstallDir.TrimEnd('\') -ieq $dirRoot.TrimEnd('\') -or $fullPath.TrimEnd('\').Length -lt 4) {
+        throw "Refusing to use drive root or unsafe directory: $InstallDir"
+    }
+
+    $InstallDir = $fullPath.TrimEnd('\')
     $exe = Join-Path $InstallDir $exeName
 
     function Say([string]$m) { Write-Host $m }
     function Step([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
+
+    $criticalDirs = @(
+        [Environment]::GetFolderPath('Windows'),
+        [Environment]::GetFolderPath('System'),
+        [Environment]::GetFolderPath('ProgramFiles'),
+        [Environment]::GetFolderPath('ProgramFilesX86'),
+        [Environment]::GetFolderPath('UserProfile'),
+        [Environment]::GetFolderPath('Desktop')
+    ) | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\') }
+    if (@($criticalDirs | Where-Object { $InstallDir -ieq $_ }).Count -gt 0) {
+        throw "Refusing to use system directory: $InstallDir"
+    }
 
     # Asks the running app to quit through its STOP file (which also ends its
     # llama-server child), and only force-kills what is left.
@@ -68,29 +89,95 @@ function Invoke-ClipboardTranslatorInstaller {
     if ($Uninstall) {
         if (-not (Test-Path -LiteralPath $exe)) { throw "Clipboard Translator is not installed at $InstallDir" }
         if (-not $Yes) {
-            Say "This removes $InstallDir, including the downloaded model and llama.cpp,"
-            Say 'the Start menu shortcut and the "Start with Windows" entry.'
+            Say "This removes Clipboard Translator from $InstallDir, including the downloaded model"
+            Say 'and llama.cpp, the Start menu shortcut and the "Start with Windows" entry.'
             if ((Read-Host 'Continue? (y/N)') -notmatch '^[yY]') { Say 'Cancelled.'; return }
         }
         Stop-App
+
+        # The Start menu entry, the Run value and the Apps & features entry are
+        # per user, not per folder: only remove the ones that belong to this folder.
         $run = Get-ItemProperty -Path $runKey -Name 'ClipboardTranslator' -ErrorAction SilentlyContinue
-        if ($run -and $run.ClipboardTranslator -like "*$exeName*" -and $run.ClipboardTranslator -like "*$InstallDir*") {
+        if ($run -and $run.ClipboardTranslator.IndexOf($exe, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             Remove-ItemProperty -Path $runKey -Name 'ClipboardTranslator' -ErrorAction SilentlyContinue
         }
-        Remove-Item -LiteralPath $shortcut -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $shortcut) {
+            try {
+                $target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
+                if ($target -ieq $exe) { Remove-Item -LiteralPath $shortcut -Force -ErrorAction SilentlyContinue }
+            } catch { }
+        }
+        $reg = Get-ItemProperty -Path $uninstallKey -ErrorAction SilentlyContinue
+        if ($reg -and ($reg.PSObject.Properties.Name -contains 'InstallLocation') -and ([string]$reg.InstallLocation).TrimEnd('\') -ieq $InstallDir) {
+            Remove-Item -Path $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
+        }
         Set-Location -Path $env:TEMP   # this script may be running from the folder being removed
-        Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $InstallDir) {
-            Write-Warning "Some files in $InstallDir could not be removed (in use?). Delete the folder manually."
+
+        # Only files this app owns are removed, never the folder as a whole.
+        $failed = New-Object System.Collections.Generic.List[string]
+        function Remove-Owned([string]$path, [bool]$recurse = $false) {
+            if (-not (Test-Path -LiteralPath $path)) { return }
+            try {
+                if ($recurse) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
+                else { Remove-Item -LiteralPath $path -Force -ErrorAction Stop }
+            } catch { $failed.Add($path) }
+        }
+        function Remove-IfEmpty([string]$path) {
+            if (-not (Test-Path -LiteralPath $path)) { return }
+            if (@(Get-ChildItem -LiteralPath $path -Force -ErrorAction SilentlyContinue).Count -eq 0) { Remove-Owned $path }
+        }
+
+        # Files the app creates while it runs.
+        $owned = @($exeName, 'translator.log', 'server.log', 'STOP', '.installed', 'install.ps1')
+        $manifest = Join-Path $InstallDir '.installed'
+        if (Test-Path -LiteralPath $manifest -PathType Leaf) {
+            # The installer recorded exactly what it unpacked. Entries are plain file
+            # names; anything else (paths, "..") is ignored so this file cannot point
+            # the removal outside the install folder.
+            foreach ($line in @(Get-Content -LiteralPath $manifest -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+                $name = ([string]$line).Trim()
+                if ($name -and $name -ne '.' -and $name -ne '..' -and $name.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -lt 0) { $owned += $name }
+            }
+            if ($owned -contains 'config.json') { $owned += 'config.json.bak' }
+        } else {
+            # Installed before the manifest existed: the fixed file set of the release zip.
+            $owned += @('Setup.cmd', 'Start.cmd', 'Stop.cmd', 'setup.ps1', 'config.json', 'config.json.bak', 'README.txt', 'LICENSE')
+        }
+        foreach ($name in ($owned | Select-Object -Unique)) {
+            $p = Join-Path $InstallDir $name
+            if (Test-Path -LiteralPath $p -PathType Leaf) { Remove-Owned $p }
+        }
+
+        # setup.ps1 downloads exactly these into models\ and one folder per backend into runtime\.
+        $modelsDir = Join-Path $InstallDir 'models'
+        foreach ($name in @('plamo-3-translate-2b-Q4_K_M.gguf', 'chat_template.jinja')) {
+            Remove-Owned (Join-Path $modelsDir $name)
+            Remove-Owned (Join-Path $modelsDir ($name + '.partial'))
+        }
+        Remove-IfEmpty $modelsDir
+        $runtimeDir = Join-Path $InstallDir 'runtime'
+        foreach ($backend in @('cpu', 'cuda', 'vulkan')) { Remove-Owned (Join-Path $runtimeDir $backend) $true }
+        Remove-IfEmpty $runtimeDir
+
+        # Remove the folder itself only when nothing else is left in it.
+        Remove-IfEmpty $InstallDir
+        if ($failed.Count -gt 0) {
+            Write-Warning "Some files could not be removed (in use?). Delete them manually:`n  $($failed -join "`n  ")"
+        } elseif (Test-Path -LiteralPath $InstallDir) {
+            Say "Clipboard Translator has been removed. Other files in $InstallDir were left alone."
         } else {
             Say 'Clipboard Translator has been removed.'
         }
         return
     }
 
-    if (-not [Environment]::Is64BitOperatingSystem) { throw 'Clipboard Translator needs 64-bit Windows 10 or 11.' }
-    if ($InstallDir.Length -lt 4) { throw "Refusing to install into $InstallDir" }
+    # Never install into a folder that already holds other things: uninstall would
+    # have to tell our files from theirs, and the zip overwrites same-named files.
+    if ((Test-Path -LiteralPath $InstallDir -PathType Container) -and
+        -not (Test-Path -LiteralPath $exe) -and -not (Test-Path -LiteralPath (Join-Path $InstallDir '.installed')) -and
+        @(Get-ChildItem -LiteralPath $InstallDir -Force -ErrorAction SilentlyContinue).Count -gt 0) {
+        throw "$InstallDir is not empty and is not a Clipboard Translator folder. Use an empty or new folder, for example $(Join-Path $InstallDir 'ClipboardTranslator')."
+    }
 
     Step 'Looking up the release'
     $tag = if ($Version) { 'v' + ([string]$Version).TrimStart('v') } else { $null }
@@ -132,11 +219,16 @@ function Invoke-ClipboardTranslatorInstaller {
             Stop-App
             Step "Installing to $InstallDir"
             New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+            $installedFiles = @()
+            $oldManifest = Join-Path $InstallDir '.installed'
+            if (Test-Path -LiteralPath $oldManifest) { $installedFiles += @(Get-Content -LiteralPath $oldManifest -Encoding UTF8 -ErrorAction SilentlyContinue) }
             foreach ($f in Get-ChildItem -LiteralPath $unpacked -File) {
                 $dest = Join-Path $InstallDir $f.Name
+                $installedFiles += $f.Name
                 if ($f.Name -eq 'config.json' -and (Test-Path -LiteralPath $dest)) { continue }   # keep the user's settings
                 Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
             }
+            Set-Content -LiteralPath (Join-Path $InstallDir '.installed') -Value @($installedFiles | Where-Object { $_ } | Select-Object -Unique) -Encoding UTF8
         } finally {
             Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
