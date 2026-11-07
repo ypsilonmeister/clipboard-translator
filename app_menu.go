@@ -228,6 +228,7 @@ func (a *app) switchBackend(name string) {
 	}
 	a.paths = paths
 	log.Printf("switching engine to %s", name)
+	a.abortTranslation() // the server it was talking to is about to go away
 	a.sup.Stop()
 	// Start the chosen build itself, without the CPU fallback of startServer:
 	// silently running on the CPU would make the menu check mark a lie.
@@ -243,9 +244,16 @@ func (a *app) switchBackend(name string) {
 	}
 	log.Printf("engine %s failed: %v; going back", name, err)
 	a.conf, a.paths = oldConf, oldPaths
-	if err := a.startServer(); err != nil && !errors.Is(err, errQuit) {
-		a.failed(err)
-		a.tray.Notify("Clipboard Translator", "The translation server could not be restarted.", true)
+	if err := a.startServer(); err != nil {
+		if errors.Is(err, errQuit) {
+			return // the main loop sees the quit request
+		}
+		// Neither build runs, so nothing is monitoring a server. Say so and
+		// leave it to the main loop, which sees the supervisor is idle and
+		// retries through the bounded restart policy (or quits cleanly).
+		log.Printf("could not restore the previous engine: %v", err)
+		a.tray.SetStatus("Clipboard Translator - server stopped, restarting...")
+		a.tray.Notify("Clipboard Translator", "Could not switch to "+backendLabel(name)+", and the previous engine did not start either. Trying to recover the translation server...", true)
 		return
 	}
 	a.tray.SetStatus(a.readyTip)

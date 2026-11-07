@@ -95,6 +95,9 @@ func (s *supervisor) Exited() <-chan struct{} {
 	return s.done
 }
 
+// Running reports whether a server is started and being watched.
+func (s *supervisor) Running() bool { return s.cmd != nil }
+
 // Stop kills the server if it is still running and reaps it.
 func (s *supervisor) Stop() {
 	if s.cmd == nil {

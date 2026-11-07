@@ -2,8 +2,10 @@ package main
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStartupHotkeyConflictFallsBackToNoHotkey(t *testing.T) {
@@ -58,6 +60,78 @@ func TestStartupHotkeyConflictFallsBackToNoHotkey(t *testing.T) {
 	}
 	if c, _ := loadConfig(a.dir); c.Hotkey != "Ctrl+Shift+Y" {
 		t.Fatalf("hotkey not saved: %q", c.Hotkey)
+	}
+}
+
+// breakPreviousEngine makes the app's current server paths unusable, as if the
+// runtime it was using had been deleted or damaged.
+func breakPreviousEngine(a *app) {
+	missing := filepath.Join(a.dir, "runtime", "gone", serverBinaryName())
+	a.paths.server, a.paths.fallback = missing, missing
+}
+
+func TestSwitchBackendBothFailLeavesRecoverableState(t *testing.T) {
+	a, tray, _ := newTestApp(t)
+	good := a.paths
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+	gen := pending(a) // a translation is in flight
+	breakPreviousEngine(a)
+
+	a.switchBackend("vulkan") // vulkan cannot start and neither can the old engine
+	if a.sup.Running() || healthy(a) {
+		t.Fatal("expected no server after both the switch and the rollback failed")
+	}
+	if a.sup.Exited() != nil {
+		t.Fatal("precondition: Exited() is nil with no server, so the main loop needs another trigger")
+	}
+	if a.translating || a.generation == gen {
+		t.Fatal("the in-flight translation must be aborted when the engine is switched")
+	}
+	if !strings.Contains(tray.lastNote(), "recover") {
+		t.Fatalf("the user must be told the server is being recovered, got %q", tray.lastNote())
+	}
+
+	// The main loop notices and recovers through the bounded restart policy.
+	a.paths = good // the old runtime is repaired in the meantime
+	if !a.recoverServer() {
+		t.Fatal("recoverServer must bring the server back once the runtime works")
+	}
+	if !a.sup.Running() || !healthy(a) {
+		t.Fatal("a healthy server must be running after recovery")
+	}
+}
+
+func TestServeRecoversOrQuitsAfterFailedSwitch(t *testing.T) {
+	a, tray, errs := newTestApp(t)
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+	a.hotkey = fakeHotkey{"Ctrl+Alt+E"}
+	breakPreviousEngine(a)
+	a.limiter = restartLimiter{max: 0, window: time.Minute} // no recovery attempts allowed
+	for i, b := range availableBackends(a.dir) {
+		if b == "vulkan" { // the unusable build
+			tray.cmds = []int{cmdBackendBase + i}
+		}
+	}
+	if len(tray.cmds) == 0 {
+		t.Fatal("vulkan must be listed")
+	}
+
+	done := make(chan struct{})
+	go func() { a.serve(&testClipboard{}); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve must not keep running without a server")
+	}
+	if len(*errs) != 1 || !strings.Contains((*errs)[0], "keeps stopping") {
+		t.Fatalf("the user must see why the app quits, got %v", *errs)
+	}
+	if a.sup.Running() {
+		t.Fatal("no server may be running")
 	}
 }
 

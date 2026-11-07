@@ -162,6 +162,14 @@ func (a *app) restartServer() bool {
 	return true
 }
 
+// recoverServer brings the translation server back after it died or after a
+// failed engine switch left none. It reports false when the app should quit.
+func (a *app) recoverServer() bool {
+	a.abortTranslation() // a translation in flight can no longer succeed
+	a.sup.Stop()
+	return a.restartServer()
+}
+
 // run starts the server and then serves hotkey presses until the user quits.
 func (a *app) run() {
 	a.tray.SetStatus("Clipboard Translator - loading model...")
@@ -233,9 +241,7 @@ func (a *app) serve(cb Clipboard) {
 			return
 		case <-a.sup.Exited():
 			log.Print("llama-server exited unexpectedly")
-			a.abortTranslation() // a translation in flight can no longer succeed
-			a.sup.Stop()
-			if !a.restartServer() {
+			if !a.recoverServer() {
 				return
 			}
 		case <-ticker.C:
@@ -267,6 +273,15 @@ func (a *app) serve(cb Clipboard) {
 				log.Print("stop requested")
 				a.cancelTranslation()
 				return
+			}
+			// An engine switch that failed twice leaves no server at all, and
+			// Exited() is nil then; recover (or quit) rather than serve nothing.
+			if !a.sup.Running() {
+				log.Print("no translation server is running")
+				if !a.recoverServer() {
+					return
+				}
+				continue
 			}
 			a.tickTranslationStatus()
 			if pressed {
