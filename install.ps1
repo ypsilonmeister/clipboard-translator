@@ -35,17 +35,38 @@ function Invoke-ClipboardTranslatorInstaller {
     $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
+    if (-not [Environment]::Is64BitOperatingSystem) { throw 'Clipboard Translator needs 64-bit Windows 10 or 11.' }
+    if ([string]::IsNullOrWhiteSpace($InstallDir)) { throw 'Install directory cannot be empty.' }
+
     $repo = 'ypsilonmeister/clipboard-translator'
     $exeName = 'ClipboardTranslator.exe'
     $headers = @{ 'User-Agent' = 'ClipboardTranslatorInstaller'; 'Accept' = 'application/vnd.github+json' }
     $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ClipboardTranslator'
     $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
     $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Clipboard Translator.lnk'
-    $InstallDir = [IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+    $fullPath = [IO.Path]::GetFullPath($InstallDir)
+    $dirRoot = [IO.Path]::GetPathRoot($fullPath)
+    if ($fullPath -ieq $dirRoot -or $InstallDir.TrimEnd('\') -ieq $dirRoot.TrimEnd('\') -or $fullPath.TrimEnd('\').Length -lt 4) {
+        throw "Refusing to use drive root or unsafe directory: $InstallDir"
+    }
+
+    $InstallDir = $fullPath.TrimEnd('\')
     $exe = Join-Path $InstallDir $exeName
 
     function Say([string]$m) { Write-Host $m }
     function Step([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
+
+    $criticalDirs = @(
+        [Environment]::GetFolderPath('Windows'),
+        [Environment]::GetFolderPath('System'),
+        [Environment]::GetFolderPath('ProgramFiles'),
+        [Environment]::GetFolderPath('ProgramFilesX86'),
+        [Environment]::GetFolderPath('UserProfile'),
+        [Environment]::GetFolderPath('Desktop')
+    ) | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\') }
+    if (@($criticalDirs | Where-Object { $InstallDir -ieq $_ }).Count -gt 0) {
+        throw "Refusing to use system directory: $InstallDir"
+    }
 
     # Asks the running app to quit through its STOP file (which also ends its
     # llama-server child), and only force-kills what is left.
@@ -68,8 +89,8 @@ function Invoke-ClipboardTranslatorInstaller {
     if ($Uninstall) {
         if (-not (Test-Path -LiteralPath $exe)) { throw "Clipboard Translator is not installed at $InstallDir" }
         if (-not $Yes) {
-            Say "This removes $InstallDir, including the downloaded model and llama.cpp,"
-            Say 'the Start menu shortcut and the "Start with Windows" entry.'
+            Say "This removes Clipboard Translator from $InstallDir, including the downloaded model"
+            Say 'and llama.cpp, the Start menu shortcut and the "Start with Windows" entry.'
             if ((Read-Host 'Continue? (y/N)') -notmatch '^[yY]') { Say 'Cancelled.'; return }
         }
         Stop-App
@@ -80,17 +101,81 @@ function Invoke-ClipboardTranslatorInstaller {
         Remove-Item -LiteralPath $shortcut -Force -ErrorAction SilentlyContinue
         Remove-Item -Path $uninstallKey -Recurse -Force -ErrorAction SilentlyContinue
         Set-Location -Path $env:TEMP   # this script may be running from the folder being removed
-        Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $InstallDir) {
-            Write-Warning "Some files in $InstallDir could not be removed (in use?). Delete the folder manually."
+
+        # Remove explicitly managed app files
+        $managedFiles = @(
+            $exeName,
+            'Setup.cmd',
+            'Start.cmd',
+            'Stop.cmd',
+            'setup.ps1',
+            'config.json',
+            'config.json.bak',
+            'README.txt',
+            'LICENSE',
+            'translator.log',
+            'server.log',
+            'STOP',
+            '.installed'
+        )
+        $manifest = Join-Path $InstallDir '.installed'
+        if (Test-Path -LiteralPath $manifest) {
+            $manifestEntries = @(Get-Content -LiteralPath $manifest -ErrorAction SilentlyContinue)
+            if ($manifestEntries.Count -gt 0) {
+                $managedFiles += $manifestEntries
+            }
+        }
+        $managedFiles += 'install.ps1'
+
+        foreach ($f in ($managedFiles | Select-Object -Unique)) {
+            $p = Join-Path $InstallDir $f
+            if (Test-Path -LiteralPath $p) {
+                Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        # Clean models directory: remove downloaded models and chat templates
+        $modelsDir = Join-Path $InstallDir 'models'
+        if (Test-Path -LiteralPath $modelsDir) {
+            Get-ChildItem -LiteralPath $modelsDir -Filter '*.gguf' -File -ErrorAction SilentlyContinue |
+                Remove-Item -Force -ErrorAction SilentlyContinue
+            Get-ChildItem -LiteralPath $modelsDir -Filter 'chat_template.jinja' -File -ErrorAction SilentlyContinue |
+                Remove-Item -Force -ErrorAction SilentlyContinue
+            $modelsRem = @(Get-ChildItem -LiteralPath $modelsDir -Force -ErrorAction SilentlyContinue)
+            if ($modelsRem.Count -eq 0) {
+                Remove-Item -LiteralPath $modelsDir -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        # Clean runtime directory: remove backend runtimes
+        $runtimeDir = Join-Path $InstallDir 'runtime'
+        if (Test-Path -LiteralPath $runtimeDir) {
+            foreach ($backend in @('cpu', 'cuda', 'vulkan')) {
+                $bDir = Join-Path $runtimeDir $backend
+                if (Test-Path -LiteralPath $bDir) {
+                    Remove-Item -LiteralPath $bDir -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+            $runtimeRem = @(Get-ChildItem -LiteralPath $runtimeDir -Force -ErrorAction SilentlyContinue)
+            if ($runtimeRem.Count -eq 0) {
+                Remove-Item -LiteralPath $runtimeDir -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        # If the directory is now empty, remove it completely. Otherwise preserve remaining user files.
+        $remaining = @(Get-ChildItem -LiteralPath $InstallDir -Force -ErrorAction SilentlyContinue)
+        if ($remaining.Count -eq 0) {
+            Remove-Item -LiteralPath $InstallDir -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $InstallDir) {
+                Write-Warning "Some files in $InstallDir could not be removed (in use?). Delete the folder manually."
+            } else {
+                Say 'Clipboard Translator has been removed.'
+            }
         } else {
-            Say 'Clipboard Translator has been removed.'
+            Say "Clipboard Translator has been removed. Other files in $InstallDir were preserved."
         }
         return
     }
-
-    if (-not [Environment]::Is64BitOperatingSystem) { throw 'Clipboard Translator needs 64-bit Windows 10 or 11.' }
-    if ($InstallDir.Length -lt 4) { throw "Refusing to install into $InstallDir" }
 
     Step 'Looking up the release'
     $tag = if ($Version) { 'v' + ([string]$Version).TrimStart('v') } else { $null }
@@ -132,11 +217,14 @@ function Invoke-ClipboardTranslatorInstaller {
             Stop-App
             Step "Installing to $InstallDir"
             New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+            $installedFiles = @()
             foreach ($f in Get-ChildItem -LiteralPath $unpacked -File) {
                 $dest = Join-Path $InstallDir $f.Name
+                $installedFiles += $f.Name
                 if ($f.Name -eq 'config.json' -and (Test-Path -LiteralPath $dest)) { continue }   # keep the user's settings
                 Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
             }
+            Set-Content -LiteralPath (Join-Path $InstallDir '.installed') -Value $installedFiles -Encoding UTF8
         } finally {
             Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
