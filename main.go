@@ -106,6 +106,12 @@ func waitReady(ctx context.Context, endpoint string, stopped <-chan struct{}) er
 	}
 }
 
+// errTruncated means the model stopped at a token limit (finish_reason
+// "length"): the text is a partial translation and must not be used. That is
+// either max_tokens or, when prompt and answer outgrow it, the server's
+// context window (context_tokens), which llama-server reports the same way.
+var errTruncated = errors.New("translation cut off at the token limit (finish_reason=length)")
+
 func translate(ctx context.Context, endpoint, source string, direction translationDirection, maxTokens int) (string, error) {
 	payload := map[string]any{
 		"model":                "plamo-3-translate",
@@ -143,6 +149,8 @@ func translate(ctx context.Context, endpoint, source string, direction translati
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			// Some servers omit it or send null; only "length" is rejected.
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
@@ -150,6 +158,9 @@ func translate(ctx context.Context, endpoint, source string, direction translati
 	}
 	if len(parsed.Choices) == 0 {
 		return "", errors.New("empty choices")
+	}
+	if parsed.Choices[0].FinishReason == "length" {
+		return "", errTruncated
 	}
 	out := strings.TrimSpace(parsed.Choices[0].Message.Content)
 	if out == "" {

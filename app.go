@@ -340,7 +340,11 @@ func (a *app) handleResult(res result) {
 	if res.err != nil {
 		if !errors.Is(res.err, context.Canceled) {
 			log.Printf("translation failed: %v", res.err)
-			a.tray.Notify("Translation failed", "See translator.log for details.", true)
+			msg := "See translator.log for details."
+			if errors.Is(res.err, errTruncated) {
+				msg = "The translation was cut off at the token limit, so the clipboard was left unchanged. Select less text, or raise max_tokens / context_tokens in config.json."
+			}
+			a.tray.Notify("Translation failed", msg, true)
 		}
 		return
 	}

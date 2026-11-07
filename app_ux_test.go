@@ -97,6 +97,20 @@ func TestHandleResultAutoPaste(t *testing.T) {
 	}
 }
 
+func TestHandleResultTruncatedKeepsClipboard(t *testing.T) {
+	a, tray, cb, pastes, _ := uxApp(t)
+	a.conf.AutoPaste = true
+	cb.text = "こんにちは"
+	g := pending(a)
+	a.handleResult(result{original: "こんにちは", generation: g, window: 100, fromSelection: true, err: errTruncated})
+	if cb.text != "こんにちは" || cb.writes != 0 || *pastes != 0 || len(a.hist.Items()) != 0 {
+		t.Fatalf("clipboard=%q writes=%d pastes=%d history=%d", cb.text, cb.writes, *pastes, len(a.hist.Items()))
+	}
+	if !strings.Contains(tray.lastNote(), "max_tokens") {
+		t.Fatalf("the notification must say what to change, note=%q", tray.lastNote())
+	}
+}
+
 func TestHandleResultIgnoresStaleAndFailed(t *testing.T) {
 	a, tray, cb, _, _ := uxApp(t)
 	cb.text = "x"
