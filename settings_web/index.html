@@ -15,6 +15,11 @@
     <p class="sub">Settings</p>
   </header>
 
+  <div id="busybar" class="busybar" role="status" aria-live="polite" hidden>
+    <span class="spinner" aria-hidden="true"></span>
+    <span id="busytext"></span>
+  </div>
+  <div id="notice" class="banner error" role="alert" hidden></div>
   <div id="banner" class="banner" role="alert" hidden></div>
 
   <section class="card" aria-labelledby="hotkeys-title">
@@ -27,6 +32,19 @@
     </div>
   </section>
 
+  <section class="card" aria-labelledby="model-title">
+    <h2 id="model-title">Translation model</h2>
+    <p class="hint">Bigger models need more disk space, memory and time. A model is downloaded from Hugging Face only when you click Download, and it is checked against a fixed SHA-256 before it can be used. Switching reloads the model, which takes a moment.</p>
+    <div id="models"></div>
+    <p id="custom-model" class="hint" hidden></p>
+    <p class="hint license">Built with PLaMo. The models are used under the <a id="license-link" target="_blank" rel="noopener noreferrer">PLaMo Community License</a>; business use, including internal use, needs prior registration with PFN.</p>
+  </section>
+
+  <section class="card" id="engine-card" aria-labelledby="engine-title">
+    <h2 id="engine-title">Translation engine</h2>
+    <div id="engines"></div>
+  </section>
+
   <section class="card" aria-labelledby="general-title">
     <h2 id="general-title">General</h2>
     <label class="check">
@@ -34,6 +52,12 @@
       <span>Paste automatically after translating</span>
     </label>
     <p class="hint">Types the paste shortcut for you, but only when the text was a fresh selection and the same window is still in front.</p>
+    <div class="row field-row">
+      <label for="max-chars" class="label">Longest text</label>
+      <input type="number" id="max-chars" min="1" max="100000" step="1" inputmode="numeric">
+      <span class="plus">characters</span>
+    </div>
+    <p class="hint">Longer selections are skipped instead of translated.</p>
   </section>
 
   <footer class="bar">
@@ -42,7 +66,7 @@
     <button id="close" type="button" class="link">Close this page</button>
   </footer>
 
-  <p class="foot">This page is served by the app on this computer only, and goes away when you close it. Other settings are in <code>config.json</code> (tray menu: Open config.json).</p>
+  <p class="foot">This page is served by the app on this computer only, and goes away when you close it. The hotkeys, auto-paste and the longest text are saved with the Save button; choosing a model or engine takes effect at once. Other settings are in <code>config.json</code> (tray menu: Open config.json).</p>
 </main>
 <script src="app.js?t={{TOKEN}}"></script>
 </body>

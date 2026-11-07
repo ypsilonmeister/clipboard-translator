@@ -199,6 +199,14 @@ func validateHotkeyFor(goos, s string) error {
 	return err
 }
 
+// validateMaxChars is the one check of max_chars, for config.json and the settings page.
+func validateMaxChars(n int) error {
+	if n < 1 || n > 100000 {
+		return errors.New("max_chars out of range (1..100000)")
+	}
+	return nil
+}
+
 func loadConfig(dir string) (Config, error) {
 	c := defaultConfig()
 	b, err := os.ReadFile(filepath.Join(dir, "config.json"))
@@ -221,8 +229,8 @@ func loadConfig(dir string) (Config, error) {
 	if c.PollMS < 20 || c.PollMS > 10000 {
 		return c, errors.New("poll_ms must be 20..10000")
 	}
-	if c.MaxChars < 1 || c.MaxChars > 100000 {
-		return c, errors.New("max_chars out of range")
+	if err := validateMaxChars(c.MaxChars); err != nil {
+		return c, err
 	}
 	if c.MaxTokens < 1 || c.MaxTokens > 32768 {
 		return c, errors.New("max_tokens out of range")

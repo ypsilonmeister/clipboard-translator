@@ -103,7 +103,8 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Model 8b   # or 0.8b / 2b
 | `2b` (default) | `plamo-3-translate-2b-Q4_K_M.gguf` | 1.8 GB |
 | `8b` | `plamo-3-translate-8b-Q4_K_M.gguf` | 5.3 GB |
 
-A bigger model needs more disk space, memory and time per translation; a
+You can also choose and download models on the *Settings page* (below). A
+bigger model needs more disk space, memory and time per translation; a
 smaller one is faster. The 31B model is not offered. `-Model` downloads the file
 (checked against a pinned SHA-256) and sets `model_file` in `config.json`; the
 old model file stays in `models\` until you delete it. Setup without `-Model`
@@ -292,7 +293,7 @@ Right-click the tray icon:
 | --- | --- |
 | **Cancel translation** | Shown while a translation runs. |
 | **Recent translations** | The last 10, kept in memory only (never written to disk). Click one to copy its translation again; *Clear history* empties the list. |
-| **Settings...** | Opens a settings page in your browser: add, change and remove hotkeys (keys, a language pair or one target language each) and turn auto-paste on or off. Changes apply at once and are saved to `config.json`. |
+| **Settings...** | Opens a settings page in your browser: add, change and remove hotkeys (keys, a language pair or one target language each), auto-paste, the longest text to translate, the translation model (download a size, switch between installed ones) and the engine. Saved to `config.json`; see *Settings page*. |
 | **Paste automatically after translating** | Off by default. When on, Ctrl+V is typed for you, but only if the text was a fresh selection and the same window is still in front; otherwise the translation just waits in the clipboard. |
 | **Hotkey** | Pick another combination. If another program already owns it, the old one stays. |
 | **Languages** | The pair that is translated in both directions (default Japanese ↔ English). Takes effect at once. Other pairs: see `languages` below. |
@@ -319,6 +320,11 @@ written to `translator.log`.
   only while the page is open; it closes a few minutes after the last request or
   with *Close this page*). It is protected by a random token in its address and
   loads nothing from the internet.
+- The Settings page can download a model. That is the only thing it fetches, from
+  `huggingface.co`, only when you click *Download*, only the pinned revision of
+  that model, and the file is used only if its SHA-256 matches the pinned value.
+  A download goes on after the page is closed and can be cancelled on the page;
+  a cancelled or failed download keeps its partial file and continues next time.
 - Logs record errors but not the text you translate. Translation history lives in
   memory only and is gone when the app quits.
 
@@ -346,6 +352,23 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 > (`-Backend auto`, as Scoop does) keeps the engine and `gpu_layers` you already
 > use. It only downloads a backend that is missing or incomplete, and verifies
 > every download against a SHA-256 (the model files are pinned to one revision).
+
+## Settings page
+
+*Settings...* in the tray menu opens it in your browser (see *Privacy and network
+use* for how it is served). It edits:
+
+- the **hotkeys**, each with its keys and either a language pair or one target
+  language (as `profiles` in `config.json`), **auto-paste**, and the **longest
+  text** (`max_chars`). These are applied with *Save*.
+- the **translation model**: *Download* fetches a size you do not have yet (with
+  progress and *Cancel*; the 31B model is not offered), *Use this model* switches
+  to one that is installed. Switching restarts `llama-server`, which takes a
+  moment; if the new model cannot be loaded (for example for lack of memory) the
+  previous one is put back and the page says so.
+- the **engine** (CPU, CUDA, Vulkan), when more than one is installed.
+
+Everything else stays in `config.json`.
 
 ## Limitations
 

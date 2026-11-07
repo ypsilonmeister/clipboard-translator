@@ -35,9 +35,11 @@ type app struct {
 	extras      []extraHotkey
 	hotkeyLimit int // how many hotkeys this OS build can register, hotkeyLimit() in production
 
-	settings     *settingsServer      // the settings page, while it is open
-	settingsReqs chan settingsRequest // page -> main loop
-	openURL      func(target string)  // openTarget, replaceable in tests
+	settings       *settingsServer      // the settings page, while it is open
+	settingsReqs   chan settingsRequest // page -> main loop
+	settingsNotice string               // why the last switch started from the page did not work
+	openURL        func(target string)  // openTarget, replaceable in tests
+	dl             *downloadManager     // model downloads; they outlive the settings page
 
 	updates  chan updateResult
 	checking bool
@@ -67,6 +69,7 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 	a := &app{
 		hotkeyLimit:  hotkeyLimit(),
 		settingsReqs: make(chan settingsRequest, 8),
+		dl:           newDownloadManager(dir),
 		openURL:      openTarget,
 		dir:          dir,
 		conf:         conf,
@@ -94,6 +97,7 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 	lastSec := time.Duration(-1)
 	a.sup.ui = func(label string, elapsed time.Duration) bool {
 		pumpMessages()
+		a.serviceSettingsWhileBusy(label)
 		if sec := elapsed / time.Second; sec != lastSec {
 			lastSec = sec
 			tray.SetStatus(fmt.Sprintf("Clipboard Translator - %s... (%ds)", label, sec))
@@ -143,6 +147,7 @@ func (a *app) sleepPumping(d time.Duration) bool {
 	for time.Now().Before(end) {
 		<-t.C
 		pumpMessages()
+		a.serviceSettingsWhileBusy("restarting the translation server")
 		if a.tray.QuitRequested() {
 			return true
 		}
@@ -213,7 +218,8 @@ func (a *app) run() {
 	defer cb.Close()
 	a.registerStartupHotkey()
 	defer a.closeSettings()
-	defer func() { // a.hotkey changes when the user picks another one
+	defer a.dl.Close() // closes the partial file of a running download before the process ends
+	defer func() {     // a.hotkey changes when the user picks another one
 		_ = a.hotkey.Close()
 		for _, e := range a.extras {
 			if e.hk != nil {
@@ -391,6 +397,8 @@ func (a *app) serve(cb Clipboard) {
 			}
 		case req := <-a.settingsReqs:
 			a.handleSettingsRequest(req)
+		case st := <-a.dl.events:
+			a.onDownloadFinished(st)
 		case u := <-a.updates:
 			a.onUpdateResult(u)
 		case res := <-a.results:

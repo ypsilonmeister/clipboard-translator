@@ -18,7 +18,7 @@ const settingsIdle = 5 * time.Minute
 // page in the browser. The server closes itself when the page is gone.
 func (a *app) openSettings() {
 	if a.settings == nil || !a.settings.Running() {
-		s, err := startSettingsServer(a.askSettings, settingsIdle)
+		s, err := startSettingsServer(a.askSettings, a.dl, settingsIdle)
 		if err != nil {
 			log.Printf("settings page: %v", err)
 			a.tray.Notify("Clipboard Translator", "Could not open the settings page: "+err.Error(), true)
@@ -60,10 +60,19 @@ func (a *app) handleSettingsRequest(req settingsRequest) {
 		req.reply <- settingsReply{err: errSettingsBusy}
 		return
 	}
+	switch req.action {
+	case "use_model":
+		a.startModelSwitch(req)
+		return
+	case "engine":
+		a.startEngineSwitch(req)
+		return
+	}
 	if req.save == nil {
 		req.reply <- settingsReply{state: a.settingsState()}
 		return
 	}
+	a.settingsNotice = ""
 	warnings, err := a.applySettings(*req.save)
 	req.reply <- settingsReply{state: a.settingsState(), warnings: warnings, err: err}
 }
@@ -77,6 +86,10 @@ func (a *app) settingsState() settingsState {
 		Inactive:   a.inactiveHotkeys(),
 	}
 	st.AutoPaste = a.conf.AutoPaste
+	st.MaxChars = a.conf.MaxChars
+	st.LicenseURL = plamoLicenseURL
+	st.Notice = a.settingsNotice
+	a.fillModelsAndEngines(&st)
 	for _, p := range a.conf.Profiles {
 		f, err := formFromProfile(p, runtime.GOOS)
 		if err != nil {
@@ -155,11 +168,12 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if sameProfiles(cand.Profiles, a.conf.Profiles) && cand.AutoPaste == a.conf.AutoPaste {
+	if sameProfiles(cand.Profiles, a.conf.Profiles) && cand.AutoPaste == a.conf.AutoPaste && cand.MaxChars == a.conf.MaxChars {
 		return a.inactiveHotkeys(), nil
 	}
 	if sameProfiles(cand.Profiles, a.conf.Profiles) {
-		a.conf.AutoPaste = cand.AutoPaste // no hotkey changes: leave the registrations alone
+		// No hotkey changes: leave the registrations alone.
+		a.conf.AutoPaste, a.conf.MaxChars = cand.AutoPaste, cand.MaxChars
 	} else {
 		old := a.conf
 		a.closeHotkeys()
@@ -174,7 +188,7 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 			return nil, errors.New("None of the hotkeys could be registered (another program may be using them), so the previous settings were kept.")
 		}
 	}
-	set := map[string]any{"profiles": cand.Profiles, "hotkey": cand.Profiles[0].Hotkey, "auto_paste": cand.AutoPaste}
+	set := map[string]any{"profiles": cand.Profiles, "hotkey": cand.Profiles[0].Hotkey, "auto_paste": cand.AutoPaste, "max_chars": cand.MaxChars}
 	if cand.Profiles[0].Languages != nil {
 		set["languages"] = cand.Profiles[0].Languages
 	}

@@ -164,3 +164,45 @@ button:disabled { opacity: 0.5; cursor: default; }
 .foot { margin-top: 28px; color: var(--muted); font-size: 13px; }
 .gone { text-align: center; margin-top: 18vh; color: var(--muted); }
 .gone h1 { color: var(--text); margin-bottom: 8px; }
+
+/* Models, engine, busy bar */
+.busybar {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--accent); background: var(--accent-soft); color: var(--text);
+  border-radius: var(--radius); padding: 12px 14px; margin-bottom: 16px; font-size: 14px;
+}
+.spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite; flex: 0 0 auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+
+.model {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-top: 12px;
+}
+.model.active { border-color: var(--accent); background: var(--accent-soft); }
+.model .info { flex: 1 1 260px; min-width: 0; }
+.model .name { font-weight: 600; }
+.model .size { color: var(--muted); font-weight: 400; margin-left: 6px; font-size: 13.5px; }
+.model .note { color: var(--muted); font-size: 13.5px; margin: 2px 0 0; }
+.model .actions { display: flex; align-items: center; gap: 10px; flex: 0 1 auto; }
+.model .progress { flex: 1 1 100%; }
+.model .progress progress { width: 100%; height: 10px; accent-color: var(--accent); }
+.model .progress .ptext { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
+.model .msg { flex: 1 1 100%; margin: 0; font-size: 13.5px; color: var(--muted); }
+.model .msg.err { color: var(--err); }
+.badge.on { background: var(--accent); color: var(--accent-text); }
+.license { margin-top: 14px; }
+.license a { color: var(--accent); }
+
+.engines { margin-top: 8px; }
+.field-row input[type=number] {
+  font: inherit; color: var(--text); background: var(--field);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; width: 120px;
+}
+
+/* An author rule such as display:flex would otherwise beat the hidden attribute. */
+[hidden] { display: none !important; }

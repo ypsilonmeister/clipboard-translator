@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 // TestMain lets the test binary double as a fake llama-server: tests start it
@@ -19,6 +22,8 @@ func TestMain(m *testing.M) {
 	if runPlatformSmokeTests() {
 		return
 	}
+	// No test may download a real model: model downloads only reach loopback.
+	downloadTransport = loopbackOnly{}
 	os.Exit(m.Run())
 }
 
@@ -28,6 +33,18 @@ func runFakeServer() {
 		if a == "--port" && i+1 < len(os.Args) {
 			port = os.Args[i+1]
 		}
+	}
+	// A model path with FAIL in it makes the fake server exit at once, like a
+	// model that cannot be loaded (too little memory, a damaged file).
+	for i, a := range os.Args {
+		if a == "-m" && i+1 < len(os.Args) && strings.Contains(os.Args[i+1], "FAIL") {
+			os.Exit(1)
+		}
+	}
+	// CT_TEST_FAKE_SERVER_DELAY (milliseconds) makes the fake server slow to come up,
+	// like a big model loading, so a "busy" screen can be looked at.
+	if ms, _ := strconv.Atoi(os.Getenv("CT_TEST_FAKE_SERVER_DELAY")); ms > 0 {
+		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"status":"ok"}`) })
