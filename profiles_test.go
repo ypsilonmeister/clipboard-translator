@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -288,5 +289,56 @@ func TestLanguagesMenuWhenFirstProfileHasATarget(t *testing.T) {
 	a.changeLanguages([]string{"en", "ru"}) // must not turn the target profile into a pair
 	if a.conf.Profiles[0].Target != "ko" || a.conf.Profiles[0].Languages != nil {
 		t.Errorf("profile 0 was changed: %+v", a.conf.Profiles[0])
+	}
+}
+
+// A profile whose hotkey is not registered (over the OS limit) holds no key with
+// the OS, so registering the same key for profile 0 succeeds. Saving it would
+// write a config that loadConfig rejects at the next start (#84).
+func TestChangeHotkeyRefusesAKeyUsedByAnInactiveProfile(t *testing.T) {
+	a, tray, _ := newTestApp(t)
+	a.hotkeyLimit = 1
+	a.conf.Profiles = []Profile{
+		{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
+		{Hotkey: "Ctrl+Alt+K", Target: "ko"},
+	}
+	a.conf.explicitProfiles = true
+	a.conf.normalizeProfiles()
+	cfg := `{"port": ` + strconv.Itoa(a.conf.Port) + `, "profiles": [{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko"}]}`
+	path := filepath.Join(a.dir, "config.json")
+	if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.registerStartupHotkey()
+	registered := a.hotkey
+
+	// Same key spelled differently: the parsed combinations are compared.
+	for _, spec := range []string{"Ctrl+Alt+K", "alt+control+k"} {
+		a.changeHotkey(spec)
+		if a.hotkey != registered {
+			t.Errorf("%s: the current registration must be kept", spec)
+		}
+		if a.conf.Hotkey != "Ctrl+Alt+E" || a.conf.Profiles[0].Hotkey != "Ctrl+Alt+E" {
+			t.Errorf("%s: the hotkey in memory changed: %q", spec, a.conf.Hotkey)
+		}
+		if note := tray.lastNote(); !strings.Contains(note, "already used") {
+			t.Errorf("%s: the user must be told why, got %q", spec, note)
+		}
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != cfg {
+		t.Errorf("config.json must be left alone: %s %v", got, err)
+	}
+	if _, err := loadConfig(a.dir); err != nil {
+		t.Errorf("the saved configuration must still load: %v", err)
+	}
+
+	// A free key still works and the result loads.
+	a.changeHotkey("Ctrl+Shift+Y")
+	if a.conf.Hotkey != "Ctrl+Shift+Y" {
+		t.Fatalf("a free key was refused: %q", a.conf.Hotkey)
+	}
+	if _, err := loadConfig(a.dir); err != nil {
+		t.Errorf("config after a valid change must load: %v", err)
 	}
 }
