@@ -18,6 +18,16 @@ standard library only (no third-party modules), `go 1.21` in `go.mod`, MIT
 licensed. Linux uses cgo with system GTK 3, X11 and XTest; macOS uses cgo with
 Cocoa/Carbon/ApplicationServices (no extra Go modules).
 
+## Design philosophy (proposed)
+
+Before planning or implementing changes, read
+[`docs/DESIGN_PHILOSOPHY.md`](docs/DESIGN_PHILOSOPHY.md). Its central goal is to
+avoid interrupting the user's work just to translate. Use its principles to
+assess feature proposals, defaults, and UX tradeoffs, especially preserving
+the select → hotkey → paste workflow. The document is currently a proposal:
+do not treat unapproved principles as settled requirements. Existing explicit
+requirements, safety constraints, and maintainer decisions still apply.
+
 ## Commands
 
 ```bash
