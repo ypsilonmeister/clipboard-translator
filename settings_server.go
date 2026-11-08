@@ -73,13 +73,14 @@ type settingsState struct {
 }
 
 type modelState struct {
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Note        string `json:"note"`
-	Size        string `json:"size"`
-	Installed   bool   `json:"installed"`
-	Active      bool   `json:"active"`
-	Downloading bool   `json:"downloading"`
+	Key               string `json:"key"`
+	Name              string `json:"name"`
+	Note              string `json:"note"`
+	Size              string `json:"size"`
+	Installed         bool   `json:"installed"` // GGUF availability, separate from the shared template
+	TemplateInstalled bool   `json:"template_installed"`
+	Active            bool   `json:"active"`
+	Downloading       bool   `json:"downloading"`
 }
 
 type engineState struct {
