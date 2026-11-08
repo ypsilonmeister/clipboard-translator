@@ -51,6 +51,13 @@ func TestEnsureSetupScript(t *testing.T) {
 		t.Fatal("an existing setup script was overwritten")
 	}
 
+	// A directory at the script path must not be treated as a valid script.
+	dir2 := t.TempDir()
+	os.MkdirAll(filepath.Join(dir2, setupScriptName()), 0o755)
+	if err := ensureSetupScript(dir2); err == nil {
+		t.Fatal("a directory at the script path must not be treated as valid")
+	}
+
 	if err := ensureSetupScript(filepath.Join(dir, "no", "such", "folder")); err == nil {
 		t.Fatal("a folder that cannot be written must be reported")
 	}

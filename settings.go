@@ -34,7 +34,7 @@ var backendNames = []string{"cpu", "cuda", "vulkan", "metal"}
 func availableBackends(dir string) []string {
 	var out []string
 	for _, b := range backendNames {
-		if _, err := os.Stat(filepath.Join(dir, "runtime", b, serverBinaryName())); err == nil {
+		if err := checkFile(filepath.Join(dir, "runtime", b, serverBinaryName())); err == nil {
 			out = append(out, b)
 		}
 	}

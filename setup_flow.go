@@ -48,7 +48,7 @@ var embeddedMacSetup []byte
 // left alone.
 func ensureSetupScript(dir string) error {
 	script := filepath.Join(dir, setupScriptName())
-	if _, err := os.Stat(script); err == nil {
+	if err := checkFile(script); err == nil {
 		return nil
 	}
 	return os.WriteFile(script, setupContents(), 0o644)

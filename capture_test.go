@@ -129,3 +129,85 @@ func TestStartTranslationPassesHotkeyWindowToCapture(t *testing.T) {
 		t.Fatalf("capture window = %d, want the window in front at the hotkey press", got)
 	}
 }
+
+func TestCaptureWithPrimaryOwnerMatches(t *testing.T) {
+	cb := &testClipboard{text: "existing"}
+	ops := primaryOps{
+		selectedIn:  func(win uintptr) bool { return win == 10 },
+		readPrimary: func() string { return "fresh selection" },
+	}
+	got, fresh, err := captureWithPrimary(cb, 10, ops)
+	if err != nil || got != "fresh selection" || !fresh {
+		t.Fatalf("got=%q fresh=%v err=%v; want fresh selection", got, fresh, err)
+	}
+	if cb.text != "fresh selection" || cb.writes != 1 {
+		t.Fatalf("selection must be staged on clipboard: text=%q writes=%d", cb.text, cb.writes)
+	}
+}
+
+func TestCaptureWithPrimaryOtherWindowKeepsTextButIsNotFresh(t *testing.T) {
+	cb := &testClipboard{text: "existing clipboard"}
+	ops := primaryOps{
+		// Selection is owned by window 5, but window 10 is active. The owner check
+		// is a heuristic, so the text is still translated; it just must not auto-paste.
+		selectedIn:  func(win uintptr) bool { return false },
+		readPrimary: func() string { return "selection from window 5" },
+	}
+	got, fresh, err := captureWithPrimary(cb, 10, ops)
+	if err != nil || got != "selection from window 5" || fresh {
+		t.Fatalf("got=%q fresh=%v err=%v; want the selection text, not fresh", got, fresh, err)
+	}
+	if cb.text != "selection from window 5" || cb.writes != 1 {
+		t.Fatalf("the selection must be staged on the clipboard: text=%q writes=%d", cb.text, cb.writes)
+	}
+	if act := decidePaste(true, fresh, 10, 10); act != pasteNone {
+		t.Fatalf("a selection that is not fresh must never auto-paste, got %v", act)
+	}
+}
+
+func TestCaptureWithPrimaryOwnerMatchesEmptyText(t *testing.T) {
+	cb := &testClipboard{text: "existing clipboard"}
+	ops := primaryOps{
+		selectedIn:  func(win uintptr) bool { return true },
+		readPrimary: func() string { return "" },
+	}
+	got, fresh, err := captureWithPrimary(cb, 10, ops)
+	if err != nil || got != "existing clipboard" || fresh {
+		t.Fatalf("got=%q fresh=%v err=%v; want empty selection falling back to clipboard", got, fresh, err)
+	}
+	if cb.writes != 0 {
+		t.Fatalf("clipboard must not be written when primary is empty: writes=%d", cb.writes)
+	}
+}
+
+func TestCaptureWithPrimaryZeroWindow(t *testing.T) {
+	cb := &testClipboard{text: "existing clipboard"}
+	ops := primaryOps{
+		selectedIn:  func(win uintptr) bool { return true },
+		readPrimary: func() string { return "selection" },
+	}
+	got, fresh, err := captureWithPrimary(cb, 0, ops)
+	if err != nil || got != "selection" || fresh {
+		t.Fatalf("got=%q fresh=%v err=%v; want the selection text, not fresh, when the window is unknown", got, fresh, err)
+	}
+}
+
+type failingWriteClipboard struct {
+	testClipboard
+}
+
+func (c *failingWriteClipboard) Write(string) error {
+	return errors.New("write failed")
+}
+
+func TestCaptureWithPrimaryWriteError(t *testing.T) {
+	cb := &failingWriteClipboard{testClipboard: testClipboard{text: "existing"}}
+	ops := primaryOps{
+		selectedIn:  func(win uintptr) bool { return true },
+		readPrimary: func() string { return "selection" },
+	}
+	got, fresh, err := captureWithPrimary(cb, 10, ops)
+	if err == nil || got != "" || fresh {
+		t.Fatalf("got=%q fresh=%v err=%v; want write error", got, fresh, err)
+	}
+}

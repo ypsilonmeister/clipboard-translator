@@ -17,11 +17,15 @@ static GtkWidget *current_menu, *control_window, *status_label;
 static int menu_requested;
 static GQueue commands = G_QUEUE_INIT;
 
+static void primary_owner_change(GtkClipboard *clipboard, GdkEventOwnerChange *event, gpointer data);
+
 int ct_init(void) {
     if (display) return 1;
     if (!gtk_init_check(NULL, NULL)) return 0;
     if (!GDK_IS_X11_DISPLAY(gdk_display_get_default())) return 0;
     display = XOpenDisplay(NULL);
+    if (display)
+        g_signal_connect(gtk_clipboard_get(GDK_SELECTION_PRIMARY), "owner-change", G_CALLBACK(primary_owner_change), NULL);
     return display != NULL;
 }
 
@@ -121,6 +125,27 @@ int ct_paste(void) {
     XTestFakeKeyEvent(display, ctrl, False, 0);
     XSync(display, False);
     return 1;
+}
+
+// The window that had the focus when PRIMARY last got a new owner, or 0 when it
+// has none. GTK owns selections through a hidden window shared by all of a
+// process's windows, and other toolkits do the same, so the owner window cannot
+// tell which window the selection belongs to; where the user was when it was
+// made can.
+static unsigned long primary_window;
+
+static void primary_owner_change(GtkClipboard *clipboard, GdkEventOwnerChange *event, gpointer data) {
+    (void)clipboard;
+    (void)data;
+    primary_window = event->reason == GDK_OWNER_CHANGE_NEW_OWNER ? ct_focus() : 0;
+}
+
+// Reports whether PRIMARY was last changed while win had the focus, so it is a
+// selection made there and not one left over from another window.
+int ct_primary_selected_in(unsigned long win) {
+    if (!ct_init() || !win) return 0;
+    ct_pump(); // owner changes that arrived since the last pump
+    return primary_window == win;
 }
 
 char *ct_read(int primary) {

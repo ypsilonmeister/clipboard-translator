@@ -102,6 +102,7 @@ func TestDecidePaste(t *testing.T) {
 		{"off", false, true, 5, 5, pasteNone},
 		{"on, same window, fresh selection", true, true, 5, 5, pasteNow},
 		{"on, but only the old clipboard was translated", true, false, 5, 5, pasteNone},
+		{"on, stale selection from another window (not fresh in active window)", true, false, 6, 6, pasteNone},
 		{"on, focus moved to another window", true, true, 5, 6, pasteWindowChanged},
 		{"on, focus lost altogether", true, true, 5, 0, pasteWindowChanged},
 		{"on, window unknown at the start", true, true, 0, 0, pasteWindowChanged},

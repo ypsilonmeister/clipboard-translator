@@ -9,6 +9,7 @@ int ct_hotkey(void);
 unsigned long ct_focus(void);
 int ct_modifiers(void);
 int ct_paste(void);
+int ct_primary_selected_in(unsigned long win);
 char *ct_read(int primary);
 void ct_free(void *p);
 int ct_write(const char *text);

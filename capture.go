@@ -61,3 +61,37 @@ func captureWith(cb Clipboard, win uintptr, ops captureOps) (text string, fromSe
 	}
 	return old, false, nil
 }
+
+// primaryOps are the OS pieces of X11 PRIMARY selection capture.
+type primaryOps struct {
+	selectedIn  func(win uintptr) bool // was PRIMARY last changed while win had the focus?
+	readPrimary func() string
+}
+
+// captureWithPrimary reads the X11 PRIMARY selection and stages its text onto
+// the clipboard. The selection counts as fresh (fromSelection true, so
+// auto-paste may fire) only when it was made while win, the window the hotkey
+// was pressed in, had the focus. If PRIMARY was last changed somewhere else, or
+// that cannot be told, the text is still translated but reported as not fresh:
+// PRIMARY may be left over from a window the user is no longer in, and
+// auto-paste must never act on it.
+//
+// Translating the text regardless keeps this safe if the freshness test is
+// wrong: dropping the selection would translate the stale clipboard text
+// instead of what the user just selected. If PRIMARY is empty, the existing
+// clipboard text is used.
+func captureWithPrimary(cb Clipboard, win uintptr, ops primaryOps) (string, bool, error) {
+	text := ""
+	if ops.readPrimary != nil {
+		text = ops.readPrimary()
+	}
+	if text == "" {
+		text, err := cb.Read()
+		return text, false, err
+	}
+	if err := cb.Write(text); err != nil {
+		return "", false, err
+	}
+	fresh := win != 0 && ops.selectedIn != nil && ops.selectedIn(win)
+	return text, fresh, nil
+}

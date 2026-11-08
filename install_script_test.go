@@ -309,3 +309,35 @@ func TestUninstallLeavesOtherInstallsShortcut(t *testing.T) {
 		t.Fatalf("uninstalling a copy in a temp folder removed the real Start menu shortcut")
 	}
 }
+
+func TestInstallHotkeyLookupProfiles(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want string
+	}{
+		{"top-level hotkey", `{"hotkey": "Ctrl+Shift+E"}`, "Ctrl+Shift+E"},
+		{"profiles only", `{"profiles": [{"hotkey": "Ctrl+Alt+T"}]}`, "Ctrl+Alt+T"},
+		{"empty hotkey falls back to profiles", `{"hotkey": "", "profiles": [{"hotkey": "Ctrl+Alt+J"}]}`, "Ctrl+Alt+J"},
+		{"default fallback", `{}`, "Ctrl+Alt+E"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tc.json), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			script := `$InstallDir = '` + dir + `'; Set-StrictMode -Version Latest; $hotkey = 'Ctrl+Alt+E'; try { $cfg = Get-Content -LiteralPath (Join-Path $InstallDir 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json; $hk = $null; if ($cfg.PSObject.Properties.Name -contains 'hotkey' -and $cfg.hotkey) { $hk = [string]$cfg.hotkey } elseif ($cfg.PSObject.Properties.Name -contains 'profiles') { $p = @($cfg.profiles); if ($p.Count -gt 0 -and $p[0].PSObject.Properties.Name -contains 'hotkey' -and $p[0].hotkey) { $hk = [string]$p[0].hotkey } }; if ($hk) { $hotkey = $hk } } catch { }; Write-Output $hotkey`
+			cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("powershell failed: %v\nOutput: %s", err, out)
+			}
+			got := strings.TrimSpace(string(out))
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

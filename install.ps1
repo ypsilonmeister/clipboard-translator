@@ -266,7 +266,8 @@ function Invoke-ClipboardTranslatorInstaller {
         Copy-Item -LiteralPath $PSCommandPath -Destination $selfCopy -Force
     } else {
         try {
-            Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/$repo/main/install.ps1" -OutFile $selfCopy -Headers @{ 'User-Agent' = 'ClipboardTranslatorInstaller' }
+            $tagRef = if ($release -and $release.tag_name) { [string]$release.tag_name } else { 'main' }
+            Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/$repo/$tagRef/install.ps1" -OutFile $selfCopy -Headers @{ 'User-Agent' = 'ClipboardTranslatorInstaller' }
         } catch {
             Write-Warning "Could not save install.ps1 for uninstalling: $($_.Exception.Message)"
         }
@@ -290,7 +291,19 @@ function Invoke-ClipboardTranslatorInstaller {
     }
 
     $hotkey = 'Ctrl+Alt+E'
-    try { $hotkey = (Get-Content -LiteralPath (Join-Path $InstallDir 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json).hotkey } catch { }
+    try {
+        $cfg = Get-Content -LiteralPath (Join-Path $InstallDir 'config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $hk = $null
+        if ($cfg.PSObject.Properties.Name -contains 'hotkey' -and $cfg.hotkey) {
+            $hk = [string]$cfg.hotkey
+        } elseif ($cfg.PSObject.Properties.Name -contains 'profiles') {
+            $p = @($cfg.profiles)
+            if ($p.Count -gt 0 -and $p[0].PSObject.Properties.Name -contains 'hotkey' -and $p[0].hotkey) {
+                $hk = [string]$p[0].hotkey
+            }
+        }
+        if ($hk) { $hotkey = $hk }
+    } catch { }
 
     if (-not $NoLaunch) {
         Step 'Starting Clipboard Translator'
