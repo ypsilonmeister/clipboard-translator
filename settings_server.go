@@ -33,7 +33,8 @@ const (
 )
 
 // profileForm is one hotkey as the page edits it: the modifiers as check boxes
-// and the key as a letter, so the page does not need to know the hotkey syntax.
+// and the key as a string (A-Z, 0-9, or F1-F12), so the page does not need to
+// know the hotkey syntax.
 type profileForm struct {
 	Ctrl      bool     `json:"ctrl"`
 	Alt       bool     `json:"alt"`
@@ -474,13 +475,13 @@ func winKeyName(goos string) string {
 	return "Win"
 }
 
-// formFromProfile splits a profile's hotkey into check boxes and a letter.
+// formFromProfile splits a profile's hotkey into check boxes and a key name.
 func formFromProfile(p Profile, goos string) (profileForm, error) {
 	spec, err := parseHotkeyNames(p.Hotkey, goos != "windows", goos == "darwin")
 	if err != nil {
 		return profileForm{}, err
 	}
-	return profileForm{Ctrl: spec.ctrl, Alt: spec.alt, Shift: spec.shift, Win: spec.win, Key: string(rune(spec.key)),
+	return profileForm{Ctrl: spec.ctrl, Alt: spec.alt, Shift: spec.shift, Win: spec.win, Key: spec.key,
 		Languages: append([]string(nil), p.Languages...), Target: p.Target}, nil
 }
 

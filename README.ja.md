@@ -330,7 +330,7 @@ CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け�
 
 | キー | 内容 |
 | --- | --- |
-| `hotkey` | 修飾キー + A〜Z の 1 文字。例: `Ctrl+Alt+E`(macOS では `Cmd` / `Command` と `Option` も使えます) |
+| `hotkey` | 修飾キー + 1 キー（A〜Z の文字、0〜9 の数字、または F1〜F12 のファンクションキー）。例: `Ctrl+Alt+E`、`Ctrl+F5`（macOS では `Cmd` / `Command` と `Option` も使えます） |
 | `auto_paste` | `true` で翻訳後に Ctrl+V を自動入力(初期値は `false`) |
 | `notify_on_complete` | `true` で自動貼り付けしない翻訳の完了時に、テキストは表示せずクリップボードに準備できたことをトレイ通知(初期値は `false`) |
 | `languages` | 双方向に翻訳する 2 つの言語コード。例: `["ja", "en"]`(初期値)、`["en", "ko"]`、`["ja", "zh-hans"]`。コードはモデルのものです: `ja en ko zh-hans zh-hant ru th ar de fr es ...`(全 53 言語。[モデルカード](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)を見てください)。翻訳の向きはテキストの文字種から決めるため、2 つの言語は別の文字を使うものにしてください(en ↔ de は今のところ拒否されます)。主な用途は日本語 ↔ 英語で、ほかの言語はベストエフォートです。 |

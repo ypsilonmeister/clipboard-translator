@@ -70,16 +70,41 @@ static int letter_keycode(char letter) {
     return found;
 }
 
+static int digit_keycode(char digit) {
+    int key = letter_keycode(digit);
+    if (key >= 0) return key;
+    switch (digit) {
+    case '0': return 0x1D;
+    case '1': return 0x12;
+    case '2': return 0x13;
+    case '3': return 0x14;
+    case '4': return 0x15;
+    case '5': return 0x17;
+    case '6': return 0x16;
+    case '7': return 0x1A;
+    case '8': return 0x1C;
+    case '9': return 0x19;
+    }
+    return -1;
+}
+
 void ct_mac_ungrab(void) {
     if (binding) { UnregisterEventHotKey(binding); binding = NULL; }
     hotkey_down = hotkey_fired = 0;
 }
-int ct_mac_grab(unsigned int mods, char letter) {
+int ct_mac_grab(unsigned int mods, int vk, char letter) {
     if (!hotkey_handler) {
         EventTypeSpec types[] = {{kEventClassKeyboard, kEventHotKeyPressed}, {kEventClassKeyboard, kEventHotKeyReleased}};
         if (InstallApplicationEventHandler(handle_hotkey, 2, types, NULL, &hotkey_handler) != noErr) return 0;
     }
-    int key = letter_keycode(letter);
+    int key = vk;
+    if (key < 0) {
+        if (letter >= '0' && letter <= '9') {
+            key = digit_keycode(letter);
+        } else {
+            key = letter_keycode(letter);
+        }
+    }
     if (key < 0) return 0;
     ct_mac_ungrab();
     EventHotKeyID identity = {'ClTr', 1};

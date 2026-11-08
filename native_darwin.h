@@ -3,7 +3,7 @@
 #include <stdint.h>
 int ct_mac_init(void);
 void ct_mac_pump(void);
-int ct_mac_grab(unsigned int mods, char letter);
+int ct_mac_grab(unsigned int mods, int vk, char letter);
 void ct_mac_ungrab(void);
 int ct_mac_hotkey(void);
 int ct_mac_accessible(void);

@@ -158,7 +158,42 @@ var utf8BOM = []byte("\xEF\xBB\xBF")
 // hotkeySpec is a parsed hotkey such as "Ctrl+Alt+E".
 type hotkeySpec struct {
 	ctrl, alt, shift, win bool
-	key                   byte // upper-case 'A'..'Z'
+	key                   string // upper-case "A".."Z", "0".."9", or "F1".."F12"
+}
+
+// parseFunctionKey parses "F1" through "F12" (case-insensitive) and returns
+// the 1-based number (1..12), or false if s is not a function key.
+func parseFunctionKey(s string) (int, bool) {
+	if len(s) < 2 || len(s) > 3 || (s[0] != 'F' && s[0] != 'f') {
+		return 0, false
+	}
+	switch strings.ToUpper(s) {
+	case "F1":
+		return 1, true
+	case "F2":
+		return 2, true
+	case "F3":
+		return 3, true
+	case "F4":
+		return 4, true
+	case "F5":
+		return 5, true
+	case "F6":
+		return 6, true
+	case "F7":
+		return 7, true
+	case "F8":
+		return 8, true
+	case "F9":
+		return 9, true
+	case "F10":
+		return 10, true
+	case "F11":
+		return 11, true
+	case "F12":
+		return 12, true
+	}
+	return 0, false
 }
 
 // parseHotkeySpec is the one place that knows the hotkey syntax, so loadConfig
@@ -194,18 +229,24 @@ func parseHotkeyNames(s string, allowSuper, allowMac bool) (hotkeySpec, error) {
 			h.alt = true
 		case "SUPER":
 			if !allowSuper {
-				return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (one A-Z key)", s)
+				return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (letters A-Z, digits 0-9, or F1-F12)", s)
 			}
 			h.win = true
 		default:
-			if len(p) != 1 || p[0] < 'A' || p[0] > 'Z' || h.key != 0 {
-				return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (one A-Z key)", s)
+			if h.key != "" {
+				return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (letters A-Z, digits 0-9, or F1-F12)", s)
 			}
-			h.key = p[0]
+			if len(p) == 1 && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= '0' && p[0] <= '9')) {
+				h.key = p
+			} else if _, ok := parseFunctionKey(p); ok {
+				h.key = p
+			} else {
+				return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (letters A-Z, digits 0-9, or F1-F12)", s)
+			}
 		}
 	}
-	if !(h.ctrl || h.alt || h.shift || h.win) || h.key == 0 {
-		return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: it must include a modifier (Ctrl, Alt, Shift or Win) and one letter A-Z, like Ctrl+Alt+E", s)
+	if !(h.ctrl || h.alt || h.shift || h.win) || h.key == "" {
+		return hotkeySpec{}, fmt.Errorf("unsupported hotkey %q: it must include a modifier (Ctrl, Alt, Shift or Win) and one key (A-Z, 0-9, or F1-F12), like Ctrl+Alt+E", s)
 	}
 	return h, nil
 }

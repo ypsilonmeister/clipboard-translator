@@ -72,14 +72,22 @@ func parseX11Hotkey(spec string) (uint32, uint64, error) {
 		case "WIN", "WINDOWS", "SUPER":
 			mods |= 64
 		default:
-			if len(part) != 1 || part[0] < 'A' || part[0] > 'Z' || key != 0 {
-				return 0, 0, fmt.Errorf("unsupported hotkey %q: use modifiers and one A-Z key", spec)
+			if key != 0 {
+				return 0, 0, fmt.Errorf("unsupported hotkey %q: use modifiers and one key (A-Z, 0-9, or F1-F12)", spec)
 			}
-			key = uint64(part[0] + ('a' - 'A'))
+			if len(part) == 1 && part[0] >= 'A' && part[0] <= 'Z' {
+				key = uint64(part[0] + ('a' - 'A'))
+			} else if len(part) == 1 && part[0] >= '0' && part[0] <= '9' {
+				key = uint64(part[0])
+			} else if fn, ok := parseFunctionKey(part); ok {
+				key = uint64(0xffbe + fn - 1)
+			} else {
+				return 0, 0, fmt.Errorf("unsupported hotkey %q: use modifiers and one key (A-Z, 0-9, or F1-F12)", spec)
+			}
 		}
 	}
 	if mods == 0 || key == 0 {
-		return 0, 0, errors.New("hotkey must include a modifier and letter A-Z")
+		return 0, 0, errors.New("hotkey must include a modifier and key (A-Z, 0-9, or F1-F12)")
 	}
 	return mods, key, nil
 }
