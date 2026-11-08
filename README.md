@@ -50,7 +50,8 @@ entry, and starts the app. Read [`install.ps1`](install.ps1) first if you like;
 it is short.
 
 - **Update:** run the same command again, or use *Check for updates* in the tray
-  menu. Your `config.json`, the model and llama.cpp are kept.
+  menu. The tray's *Update* runs the installer script from the release being
+  installed. Your `config.json`, the model and llama.cpp are kept.
 - **Uninstall:** Settings > Apps > *Clipboard Translator*, or
   `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.ps1))) -Uninstall`
   (this deletes the app's own files, including the model and llama.cpp, and the

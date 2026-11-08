@@ -20,11 +20,15 @@ func recordedInstallLocation() string {
 
 // installerCommand builds the PowerShell invocation of install.ps1, aimed at
 // this app's folder and at release tag.
-func installerCommand(dir, tag string) *exec.Cmd {
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", installerPowerShell(installScriptURL))
+func installerCommand(dir, tag string) (*exec.Cmd, error) {
+	url, err := installScriptURL(tag)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", installerPowerShell(url))
 	cmd.Env = installerEnv(os.Environ(), dir, tag)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewConsole}
-	return cmd
+	return cmd, nil
 }
 
 // runInstaller starts install.ps1 in its own console window, aimed at this
@@ -33,7 +37,10 @@ func installerCommand(dir, tag string) *exec.Cmd {
 // starts it and carries on. A failure keeps that window open (see
 // installerPowerShell); the outcome is also logged.
 func runInstaller(dir, tag string) error {
-	cmd := installerCommand(dir, tag)
+	cmd, err := installerCommand(dir, tag)
+	if err != nil {
+		return err
+	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}
