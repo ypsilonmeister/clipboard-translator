@@ -133,8 +133,8 @@ func TestStartTranslationPassesHotkeyWindowToCapture(t *testing.T) {
 func TestCaptureWithPrimaryOwnerMatches(t *testing.T) {
 	cb := &testClipboard{text: "existing"}
 	ops := primaryOps{
-		ownerMatches: func(win uintptr) bool { return win == 10 },
-		readPrimary:  func() string { return "fresh selection" },
+		selectedIn:  func(win uintptr) bool { return win == 10 },
+		readPrimary: func() string { return "fresh selection" },
 	}
 	got, fresh, err := captureWithPrimary(cb, 10, ops)
 	if err != nil || got != "fresh selection" || !fresh {
@@ -150,8 +150,8 @@ func TestCaptureWithPrimaryOtherWindowKeepsTextButIsNotFresh(t *testing.T) {
 	ops := primaryOps{
 		// Selection is owned by window 5, but window 10 is active. The owner check
 		// is a heuristic, so the text is still translated; it just must not auto-paste.
-		ownerMatches: func(win uintptr) bool { return false },
-		readPrimary:  func() string { return "selection from window 5" },
+		selectedIn:  func(win uintptr) bool { return false },
+		readPrimary: func() string { return "selection from window 5" },
 	}
 	got, fresh, err := captureWithPrimary(cb, 10, ops)
 	if err != nil || got != "selection from window 5" || fresh {
@@ -168,8 +168,8 @@ func TestCaptureWithPrimaryOtherWindowKeepsTextButIsNotFresh(t *testing.T) {
 func TestCaptureWithPrimaryOwnerMatchesEmptyText(t *testing.T) {
 	cb := &testClipboard{text: "existing clipboard"}
 	ops := primaryOps{
-		ownerMatches: func(win uintptr) bool { return true },
-		readPrimary:  func() string { return "" },
+		selectedIn:  func(win uintptr) bool { return true },
+		readPrimary: func() string { return "" },
 	}
 	got, fresh, err := captureWithPrimary(cb, 10, ops)
 	if err != nil || got != "existing clipboard" || fresh {
@@ -183,8 +183,8 @@ func TestCaptureWithPrimaryOwnerMatchesEmptyText(t *testing.T) {
 func TestCaptureWithPrimaryZeroWindow(t *testing.T) {
 	cb := &testClipboard{text: "existing clipboard"}
 	ops := primaryOps{
-		ownerMatches: func(win uintptr) bool { return true },
-		readPrimary:  func() string { return "selection" },
+		selectedIn:  func(win uintptr) bool { return true },
+		readPrimary: func() string { return "selection" },
 	}
 	got, fresh, err := captureWithPrimary(cb, 0, ops)
 	if err != nil || got != "selection" || fresh {
@@ -203,8 +203,8 @@ func (c *failingWriteClipboard) Write(string) error {
 func TestCaptureWithPrimaryWriteError(t *testing.T) {
 	cb := &failingWriteClipboard{testClipboard: testClipboard{text: "existing"}}
 	ops := primaryOps{
-		ownerMatches: func(win uintptr) bool { return true },
-		readPrimary:  func() string { return "selection" },
+		selectedIn:  func(win uintptr) bool { return true },
+		readPrimary: func() string { return "selection" },
 	}
 	got, fresh, err := captureWithPrimary(cb, 10, ops)
 	if err == nil || got != "" || fresh {

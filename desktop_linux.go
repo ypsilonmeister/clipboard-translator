@@ -120,14 +120,14 @@ var linuxSelectionSequence uint32
 
 func clipboardSequence() uint32 { return linuxSelectionSequence }
 
-func primaryOwnerMatches(win uintptr) bool {
-	return C.ct_primary_owner_matches(C.ulong(win)) != 0
+func primarySelectedIn(win uintptr) bool {
+	return C.ct_primary_selected_in(C.ulong(win)) != 0
 }
 
 func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
 	text, fresh, err := captureWithPrimary(cb, win, primaryOps{
-		ownerMatches: primaryOwnerMatches,
-		readPrimary:  func() string { return readX11Text(true) },
+		selectedIn:  primarySelectedIn,
+		readPrimary: func() string { return readX11Text(true) },
 	})
 	if err == nil && fresh {
 		linuxSelectionSequence++

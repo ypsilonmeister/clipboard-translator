@@ -64,20 +64,20 @@ func captureWith(cb Clipboard, win uintptr, ops captureOps) (text string, fromSe
 
 // primaryOps are the OS pieces of X11 PRIMARY selection capture.
 type primaryOps struct {
-	ownerMatches func(win uintptr) bool
-	readPrimary  func() string
+	selectedIn  func(win uintptr) bool // was PRIMARY last changed while win had the focus?
+	readPrimary func() string
 }
 
 // captureWithPrimary reads the X11 PRIMARY selection and stages its text onto
 // the clipboard. The selection counts as fresh (fromSelection true, so
-// auto-paste may fire) only when the active window win owns it. If another
-// window owns it, or the owner cannot be told, the text is still translated but
-// reported as not fresh: PRIMARY may be left over from a window the user is no
-// longer in, and auto-paste must never act on it.
+// auto-paste may fire) only when it was made while win, the window the hotkey
+// was pressed in, had the focus. If PRIMARY was last changed somewhere else, or
+// that cannot be told, the text is still translated but reported as not fresh:
+// PRIMARY may be left over from a window the user is no longer in, and
+// auto-paste must never act on it.
 //
-// The owner check is a heuristic (it follows window ancestry, and clients that
-// own selections through a hidden helper window do not match), so a mismatch
-// must not discard the selection: that would translate the stale clipboard text
+// Translating the text regardless keeps this safe if the freshness test is
+// wrong: dropping the selection would translate the stale clipboard text
 // instead of what the user just selected. If PRIMARY is empty, the existing
 // clipboard text is used.
 func captureWithPrimary(cb Clipboard, win uintptr, ops primaryOps) (string, bool, error) {
@@ -92,6 +92,6 @@ func captureWithPrimary(cb Clipboard, win uintptr, ops primaryOps) (string, bool
 	if err := cb.Write(text); err != nil {
 		return "", false, err
 	}
-	fresh := win != 0 && ops.ownerMatches != nil && ops.ownerMatches(win)
+	fresh := win != 0 && ops.selectedIn != nil && ops.selectedIn(win)
 	return text, fresh, nil
 }

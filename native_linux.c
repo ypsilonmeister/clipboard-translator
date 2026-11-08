@@ -6,7 +6,6 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/XKBlib.h>
-#include <X11/Xatom.h>
 #include <X11/extensions/XTest.h>
 
 static Display *display;
@@ -23,6 +22,8 @@ int ct_init(void) {
     if (!gtk_init_check(NULL, NULL)) return 0;
     if (!GDK_IS_X11_DISPLAY(gdk_display_get_default())) return 0;
     display = XOpenDisplay(NULL);
+    if (display)
+        g_signal_connect(gtk_clipboard_get(GDK_SELECTION_PRIMARY), "owner-change", G_CALLBACK(primary_owner_change), NULL);
     return display != NULL;
 }
 
@@ -124,62 +125,25 @@ int ct_paste(void) {
     return 1;
 }
 
-static int ignore_x_error(Display *d, XErrorEvent *e) {
-    (void)d;
-    (void)e;
-    return 0;
+// The window that had the focus when PRIMARY last got a new owner, or 0 when it
+// has none. GTK owns selections through a hidden window shared by all of a
+// process's windows, and other toolkits do the same, so the owner window cannot
+// tell which window the selection belongs to; where the user was when it was
+// made can.
+static unsigned long primary_window;
+
+static void primary_owner_change(GtkClipboard *clipboard, GdkEventOwnerChange *event, gpointer data) {
+    (void)clipboard;
+    (void)data;
+    primary_window = event->reason == GDK_OWNER_CHANGE_NEW_OWNER ? ct_focus() : 0;
 }
 
-int ct_primary_owner_matches(unsigned long win) {
-    if (!ct_init() || !display || !win) return 0;
-    Window owner = XGetSelectionOwner(display, XA_PRIMARY);
-    if (!owner) return 0;
-    if (owner == (Window)win) return 1;
-
-    Window root = DefaultRootWindow(display);
-    if ((Window)win == root || owner == root) return 0;
-
-    int (*prev_handler)(Display *, XErrorEvent *) = XSetErrorHandler(ignore_x_error);
-
-    #define CT_MAX_ANCESTORS 64
-    Window win_ancestors[CT_MAX_ANCESTORS];
-    int count = 0;
-    Window curr = (Window)win;
-    while (curr != None && curr != root && count < CT_MAX_ANCESTORS) {
-        win_ancestors[count++] = curr;
-        Window r, parent, *children = NULL;
-        unsigned int nchildren = 0;
-        if (!XQueryTree(display, curr, &r, &parent, &children, &nchildren)) {
-            if (children) XFree(children);
-            break;
-        }
-        if (children) XFree(children);
-        curr = parent;
-    }
-
-    int matched = 0;
-    curr = owner;
-    while (curr != None && curr != root) {
-        for (int i = 0; i < count; i++) {
-            if (curr == win_ancestors[i]) {
-                matched = 1;
-                break;
-            }
-        }
-        if (matched) break;
-        Window r, parent, *children = NULL;
-        unsigned int nchildren = 0;
-        if (!XQueryTree(display, curr, &r, &parent, &children, &nchildren)) {
-            if (children) XFree(children);
-            break;
-        }
-        if (children) XFree(children);
-        curr = parent;
-    }
-
-    XSync(display, False);
-    XSetErrorHandler(prev_handler);
-    return matched;
+// Reports whether PRIMARY was last changed while win had the focus, so it is a
+// selection made there and not one left over from another window.
+int ct_primary_selected_in(unsigned long win) {
+    if (!ct_init() || !win) return 0;
+    ct_pump(); // owner changes that arrived since the last pump
+    return primary_window == win;
 }
 
 char *ct_read(int primary) {
