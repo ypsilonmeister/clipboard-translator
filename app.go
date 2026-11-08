@@ -513,6 +513,7 @@ func (a *app) startTranslation(index int) {
 	a.cancelCurrent = cancel
 	a.translating, a.translateStart, a.lastTranslSec = true, time.Now(), 0
 	g := a.generation
+	key := a.sup.apiKey // read here: the supervisor belongs to this thread
 	from := direction.Source
 	if from == "" {
 		from = "auto"
@@ -520,7 +521,7 @@ func (a *app) startTranslation(index int) {
 	log.Printf("translating %s -> %s", from, direction.Target)
 	a.tray.SetStatus("Clipboard Translator - translating... (0s)")
 	go func() {
-		translated, err := translate(ctx, a.endpoint, source, direction, a.conf.MaxTokens)
+		translated, err := translate(ctx, a.endpoint, key, source, direction, a.conf.MaxTokens)
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
 			direction: direction, window: win, fromSelection: fromSelection}:
