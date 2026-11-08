@@ -9,7 +9,36 @@
   let dirty = false;
   let saving = false;
   let acting = false; // a model / engine / download request is in flight
+  let closed = false; // the page was closed via "Close this page"
+  // The revision the unsaved edits are based on. Syncing with the app moves it only
+  // while nothing is being edited: moving it under a dirty section would hide a newer
+  // change made in the tray from the server's stale-save check.
+  let baseRevision = 0;
   let pollTimer = null;
+  let pingTimer = null;
+
+  const dirtyFields = {
+    profiles: false,
+    auto_paste: false,
+    max_chars: false,
+  };
+
+  function isDirty() {
+    return dirtyFields.profiles || dirtyFields.auto_paste || dirtyFields.max_chars;
+  }
+
+  function markDirty() {
+    dirty = isDirty();
+    setStatus(dirty ? 'Unsaved changes' : '');
+  }
+
+  function clearDirty() {
+    dirtyFields.profiles = false;
+    dirtyFields.auto_paste = false;
+    dirtyFields.max_chars = false;
+    dirty = false;
+    setStatus('');
+  }
 
   // h builds an element; text is always set as text, never as HTML.
   function h(tag, attrs, ...children) {
@@ -62,7 +91,16 @@
   }
 
   function toPayload(m) {
+    const changed = [];
+    if (dirtyFields.profiles) changed.push('profiles');
+    if (dirtyFields.auto_paste) changed.push('auto_paste');
+    if (dirtyFields.max_chars) changed.push('max_chars');
+    if (changed.length === 0) {
+      changed.push('profiles', 'auto_paste', 'max_chars');
+    }
     return {
+      base_revision: baseRevision,
+      changed,
       auto_paste: m.auto_paste,
       max_chars: m.max_chars,
       profiles: m.profiles.map((p) => {
@@ -75,17 +113,14 @@
 
   function setStatus(text, kind) {
     const el = $('status');
+    if (!el) return;
     el.textContent = text || '';
     el.className = kind || '';
   }
 
-  function markDirty() {
-    dirty = true;
-    setStatus('Unsaved changes');
-  }
-
   function showBanner(lines, kind) {
     const el = $('banner');
+    if (!el) return;
     el.replaceChildren();
     el.className = 'banner' + (kind === 'error' ? ' error' : '');
     if (!lines || lines.length === 0) { el.hidden = true; return; }
@@ -94,8 +129,49 @@
     el.append(h('p', { text: lines[0] }), h('ul', {}, lines.slice(1).map((l) => h('li', { text: l }))));
   }
 
+  function showConflictBanner(msg, newState) {
+    const el = $('banner');
+    if (!el) return;
+    el.replaceChildren();
+    el.className = 'banner error';
+    el.hidden = false;
+
+    const reloadBtn = h('button', {
+      type: 'button',
+      class: 'secondary',
+      onclick: () => {
+        state = Object.assign({}, newState);
+        baseRevision = state.revision || 0;
+        model = toModel(state);
+        clearDirty();
+        renderAll();
+        renderHotkeys();
+        const autoPasteEl = $('auto-paste');
+        if (autoPasteEl) autoPasteEl.checked = model.auto_paste;
+        const maxCharsEl = $('max-chars');
+        if (maxCharsEl) maxCharsEl.value = String(model.max_chars);
+        showBanner([]);
+        setStatus('Reloaded settings from app', 'ok');
+      },
+    }, 'Reload settings');
+
+    const overwriteBtn = h('button', {
+      type: 'button',
+      class: 'secondary',
+      onclick: () => {
+        baseRevision = newState.revision || 0;
+        showBanner([]);
+        save();
+      },
+    }, 'Overwrite');
+
+    const actions = h('div', { class: 'banner-actions' }, reloadBtn, overwriteBtn);
+    el.append(h('p', { text: msg }), actions);
+  }
+
   function showNotice(text) {
     const el = $('notice');
+    if (!el) return;
     el.textContent = text || '';
     el.hidden = !text;
   }
@@ -116,7 +192,7 @@
   // ---- hotkeys ------------------------------------------------------------------------
 
   function langSelect(value, onchange, label) {
-    const sel = h('select', { class: 'lang', 'aria-label': label, onchange: (e) => { onchange(e.target.value); markDirty(); } },
+    const sel = h('select', { class: 'lang', 'aria-label': label, onchange: (e) => { onchange(e.target.value); dirtyFields.profiles = true; markDirty(); } },
       state.language_options.map((o) => h('option', { value: o.code, text: o.name + ' (' + o.code + ')' })));
     sel.value = value;
     return sel;
@@ -128,7 +204,7 @@
 
     const remove = h('button', { type: 'button', class: 'danger', disabled: model.profiles.length <= 1,
       'aria-label': 'Remove hotkey ' + (i + 1),
-      onclick: () => { model.profiles.splice(i, 1); markDirty(); renderHotkeys(); } }, 'Remove');
+      onclick: () => { model.profiles.splice(i, 1); dirtyFields.profiles = true; markDirty(); renderHotkeys(); } }, 'Remove');
     card.append(h('div', { class: 'profile-head' },
       h('h3', { text: 'Hotkey ' + (i + 1) }),
       i === 0 ? h('span', { class: 'badge', text: 'also changeable from the tray menu' }) : null,
@@ -137,10 +213,10 @@
     const keyRow = h('div', { class: 'row' }, h('span', { class: 'label', text: 'Keys' }));
     for (const [id, name] of mods) {
       keyRow.append(h('label', { class: 'chip' },
-        h('input', { type: 'checkbox', checked: p[id], onchange: (e) => { p[id] = e.target.checked; markDirty(); } }), name));
+        h('input', { type: 'checkbox', checked: p[id], onchange: (e) => { p[id] = e.target.checked; dirtyFields.profiles = true; markDirty(); } }), name));
     }
     keyRow.append(h('span', { class: 'plus', text: '+' }));
-    const letter = h('select', { class: 'letter', 'aria-label': 'Key of hotkey ' + (i + 1), onchange: (e) => { p.key = e.target.value; markDirty(); } },
+    const letter = h('select', { class: 'letter', 'aria-label': 'Key of hotkey ' + (i + 1), onchange: (e) => { p.key = e.target.value; dirtyFields.profiles = true; markDirty(); } },
       LETTERS.map((l) => h('option', { value: l, text: l })));
     letter.value = p.key;
     keyRow.append(letter);
@@ -150,7 +226,7 @@
     const seg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'How hotkey ' + (i + 1) + ' translates' },
       [['pair', 'Between two languages'], ['target', 'Into one language']].map(([v, text]) =>
         h('label', {}, h('input', { type: 'radio', name, value: v, checked: p.mode === v,
-          onchange: () => { p.mode = v; markDirty(); renderHotkeys(); } }), text)));
+          onchange: () => { p.mode = v; dirtyFields.profiles = true; markDirty(); renderHotkeys(); } }), text)));
     card.append(h('div', { class: 'row' }, h('span', { class: 'label', text: 'Translate' }), seg));
 
     if (p.mode === 'pair') {
@@ -280,11 +356,14 @@
   }
 
   function renderBusy() {
+    if (closed) return;
     const bar = $('busybar');
-    bar.hidden = !appBusy();
-    $('busytext').textContent = appBusy() ? 'The app is busy: ' + state.busy + '. Loading a model can take a minute.' : '';
-    $('save').disabled = saving || appBusy();
-    showNotice(state.notice || '');
+    if (bar) bar.hidden = !appBusy();
+    const busyText = $('busytext');
+    if (busyText) busyText.textContent = appBusy() ? 'The app is busy: ' + state.busy + '. Loading a model can take a minute.' : '';
+    const saveBtn = $('save');
+    if (saveBtn) saveBtn.disabled = saving || appBusy();
+    showNotice(state ? (state.notice || '') : '');
   }
 
   function renderAll() {
@@ -295,13 +374,36 @@
 
   // Take new data from the app without touching what is being edited.
   function mergeState(st) {
+    if (closed) return;
     const wasBusy = appBusy();
     state = Object.assign({}, st);
+    if (!isDirty()) baseRevision = st.revision || 0;
     renderAll();
-    // The hotkey cards are not rebuilt here: this runs every second while a download
-    // or a switch is going on, and that would take the focus away from what is being typed.
-    $('add').disabled = model.profiles.length >= state.max_hotkeys || appBusy();
+    if (!dirtyFields.profiles && st.profiles) {
+      // Rebuild the cards only when the app's profiles really differ: this runs every
+      // second during a download or a switch, and a rebuild closes an open dropdown and
+      // takes the focus away from what is being typed.
+      const next = toModel(st).profiles;
+      if (JSON.stringify(next) !== JSON.stringify(model.profiles)) {
+        model.profiles = next;
+        renderHotkeys();
+      }
+    }
+    const addBtn = $('add');
+    if (addBtn) addBtn.disabled = model.profiles.length >= state.max_hotkeys || appBusy();
+    if (!dirtyFields.auto_paste && st.auto_paste !== undefined) {
+      model.auto_paste = !!st.auto_paste;
+      const autoPasteEl = $('auto-paste');
+      if (autoPasteEl) autoPasteEl.checked = model.auto_paste;
+    }
+    if (!dirtyFields.max_chars && st.max_chars !== undefined) {
+      model.max_chars = st.max_chars;
+      const maxCharsEl = $('max-chars');
+      if (maxCharsEl) maxCharsEl.value = String(model.max_chars);
+    }
+    dirty = isDirty();
     if (wasBusy && !appBusy()) setStatus(dirty ? 'Unsaved changes' : '');
+    else if (!dirty) setStatus('');
   }
 
   function needsPolling() {
@@ -309,12 +411,15 @@
   }
 
   function schedulePoll() {
+    if (closed) return;
     clearTimeout(pollTimer);
     if (needsPolling()) pollTimer = setTimeout(poll, 1000);
   }
 
   async function poll() {
+    if (closed) return;
     const r = await api('/api/state');
+    if (closed) return;
     if (r.ok && r.data.state) {
       mergeState(r.data.state);
     } else if (r.status === 503) {
@@ -353,27 +458,48 @@
     const n = Number($('max-chars').value);
     if (!Number.isInteger(n) || n < 1 || n > 100000) {
       setStatus('Not saved', 'bad');
+      showFieldError('');
       showBanner(['The longest text must be a whole number from 1 to 100000.'], 'error');
       $('max-chars').focus();
       return;
     }
-    model.max_chars = n;
+    if (model.max_chars !== n) {
+      model.max_chars = n;
+      dirtyFields.max_chars = true;
+      markDirty();
+    }
+    if (!isDirty()) {
+      // Nothing to send. Sending every field with an old revision would report a
+      // conflict, or overwrite a change made in the tray, for edits that were never made.
+      setStatus('No changes to save');
+      return;
+    }
     saving = true;
     $('save').disabled = true;
     setStatus('Saving...');
     showFieldError('');
+    showBanner([]);
     const r = await api('/api/save', toPayload(model));
     saving = false;
     renderBusy();
     if (!r.ok) {
       const msg = (r.data && r.data.error) || 'The settings could not be saved.';
       setStatus('Not saved', 'bad');
-      if (!showFieldError(msg)) showBanner([msg], 'error');
+      if (r.status === 409 && r.data && r.data.state) {
+        showConflictBanner(msg, r.data.state);
+        return;
+      }
+      if (showFieldError(msg)) {
+        showBanner([]);
+      } else {
+        showBanner([msg], 'error');
+      }
       return;
     }
     state = Object.assign({}, r.data.state);
+    baseRevision = state.revision || 0;
     model = toModel(state);
-    dirty = false;
+    clearDirty();
     renderAll();
     renderHotkeys();
     $('auto-paste').checked = model.auto_paste;
@@ -396,6 +522,7 @@
       return false;
     }
     state = Object.assign({}, r.data.state);
+    baseRevision = state.revision || 0;
     model = toModel(state);
     renderAll();
     renderHotkeys();
@@ -407,6 +534,11 @@
   }
 
   function goodbye(text) {
+    closed = true;
+    dirty = false;
+    clearDirty();
+    clearTimeout(pollTimer);
+    clearInterval(pingTimer);
     document.title = 'Clipboard Translator';
     document.body.replaceChildren(h('main', { class: 'gone' }, h('h1', { text: 'Clipboard Translator' }), h('p', { text }),
       h('p', { text: 'To change settings again, choose Settings... in the tray menu.' })));
@@ -415,22 +547,40 @@
   async function init() {
     $('add').addEventListener('click', () => {
       model.profiles.push({ ctrl: true, alt: true, shift: false, win: false, key: nextFreeKey(), mode: 'target', a: 'ja', b: 'en', target: 'en' });
+      dirtyFields.profiles = true;
       markDirty();
       renderHotkeys();
     });
-    $('auto-paste').addEventListener('change', (e) => { model.auto_paste = e.target.checked; markDirty(); });
-    $('max-chars').addEventListener('input', markDirty);
+    $('auto-paste').addEventListener('change', (e) => {
+      model.auto_paste = e.target.checked;
+      dirtyFields.auto_paste = true;
+      markDirty();
+    });
+    $('max-chars').addEventListener('input', () => {
+      dirtyFields.max_chars = true;
+      markDirty();
+    });
     $('save').addEventListener('click', save);
     $('close').addEventListener('click', async () => {
       if (dirty && !confirm('Close without saving your changes?')) return;
+      dirty = false;
       await api('/api/bye', {});
       goodbye('You can close this tab now.');
     });
     window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+    window.addEventListener('focus', async () => {
+      if (closed || saving || acting) return;
+      const r = await api('/api/state');
+      if (r.ok && r.data && r.data.state) {
+        mergeState(r.data.state);
+      }
+    });
     if (!(await load())) { $('save').disabled = true; $('add').disabled = true; return; }
     // The app closes this page's server a few minutes after the last request.
-    setInterval(async () => {
+    pingTimer = setInterval(async () => {
+      if (closed) return;
       const r = await api('/api/ping', {});
+      if (closed) return;
       if (!r.ok && r.status === 0) showNotice(r.data.error);
     }, 60000);
   }
