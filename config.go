@@ -28,6 +28,9 @@ type Config struct {
 	// AutoPaste types Ctrl+V into the window the text was selected in once the
 	// translation is ready. Off by default.
 	AutoPaste bool `json:"auto_paste"`
+	// NotifyOnComplete shows a tray notification when a translation finishes
+	// without auto-pasting. Off by default.
+	NotifyOnComplete bool `json:"notify_on_complete"`
 	// Languages is the pair translated in both directions, e.g. ["ja", "en"].
 	Languages []string `json:"languages"`
 	// Profiles are the hotkeys, each with its own language setting. When it is

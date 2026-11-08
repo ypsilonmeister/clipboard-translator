@@ -26,6 +26,9 @@ func (a *app) ensureRevisions() {
 	if a.autoPasteRev == 0 {
 		a.autoPasteRev = 1
 	}
+	if a.notifyOnCompleteRev == 0 {
+		a.notifyOnCompleteRev = 1
+	}
 	if a.maxCharsRev == 0 {
 		a.maxCharsRev = 1
 	}
@@ -106,6 +109,7 @@ func (a *app) settingsState() settingsState {
 	}
 	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste
+	st.NotifyOnComplete = a.conf.NotifyOnComplete
 	st.MaxChars = a.conf.MaxChars
 	st.LicenseURL = plamoLicenseURL
 	st.Notice = a.settingsNotice
@@ -207,6 +211,9 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 		if hasField("auto_paste") && form.BaseRevision < a.autoPasteRev {
 			return nil, ErrConflict
 		}
+		if hasField("notify_on_complete") && form.BaseRevision < a.notifyOnCompleteRev {
+			return nil, ErrConflict
+		}
 		if hasField("max_chars") && form.BaseRevision < a.maxCharsRev {
 			return nil, ErrConflict
 		}
@@ -216,12 +223,13 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if sameProfiles(cand.Profiles, a.conf.Profiles) && cand.AutoPaste == a.conf.AutoPaste && cand.MaxChars == a.conf.MaxChars {
+	if sameProfiles(cand.Profiles, a.conf.Profiles) && cand.AutoPaste == a.conf.AutoPaste && cand.NotifyOnComplete == a.conf.NotifyOnComplete && cand.MaxChars == a.conf.MaxChars {
 		return a.inactiveHotkeys(), nil
 	}
 
 	changedProfiles := hasField("profiles") && !sameProfiles(cand.Profiles, a.conf.Profiles)
 	changedAutoPaste := hasField("auto_paste") && cand.AutoPaste != a.conf.AutoPaste
+	changedNotifyOnComplete := hasField("notify_on_complete") && cand.NotifyOnComplete != a.conf.NotifyOnComplete
 	changedMaxChars := hasField("max_chars") && cand.MaxChars != a.conf.MaxChars
 
 	if !changedProfiles {
@@ -229,7 +237,7 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 		// "profiles" below even so, and loadConfig prefers that key, so the tray
 		// must from now on save "profiles" too: a legacy hotkey/languages edit
 		// would be ignored at the next start.
-		a.conf.AutoPaste, a.conf.MaxChars = cand.AutoPaste, cand.MaxChars
+		a.conf.AutoPaste, a.conf.NotifyOnComplete, a.conf.MaxChars = cand.AutoPaste, cand.NotifyOnComplete, cand.MaxChars
 		a.conf.explicitProfiles = cand.explicitProfiles
 	} else {
 		old := a.conf
@@ -253,11 +261,14 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 	if changedAutoPaste {
 		a.autoPasteRev = a.confRevision
 	}
+	if changedNotifyOnComplete {
+		a.notifyOnCompleteRev = a.confRevision
+	}
 	if changedMaxChars {
 		a.maxCharsRev = a.confRevision
 	}
 
-	set := map[string]any{"profiles": a.conf.Profiles, "hotkey": a.conf.Profiles[0].Hotkey, "auto_paste": a.conf.AutoPaste, "max_chars": a.conf.MaxChars}
+	set := map[string]any{"profiles": a.conf.Profiles, "hotkey": a.conf.Profiles[0].Hotkey, "auto_paste": a.conf.AutoPaste, "notify_on_complete": a.conf.NotifyOnComplete, "max_chars": a.conf.MaxChars}
 	if a.conf.Profiles[0].Languages != nil {
 		set["languages"] = a.conf.Profiles[0].Languages
 	}

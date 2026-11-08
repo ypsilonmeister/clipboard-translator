@@ -43,10 +43,11 @@ type app struct {
 	openURL        func(target string)  // openTarget, replaceable in tests
 	dl             *downloadManager     // model downloads; they outlive the settings page
 
-	confRevision int // bumped on every configuration change
-	profilesRev  int // bumped when profiles (languages/hotkeys) change
-	autoPasteRev int // bumped when auto_paste changes
-	maxCharsRev  int // bumped when max_chars changes
+	confRevision        int // bumped on every configuration change
+	profilesRev         int // bumped when profiles (languages/hotkeys) change
+	autoPasteRev        int // bumped when auto_paste changes
+	notifyOnCompleteRev int // bumped when notify_on_complete changes
+	maxCharsRev         int // bumped when max_chars changes
 
 	updates  chan updateResult
 	checking bool
@@ -74,21 +75,22 @@ type extraHotkey struct {
 func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Writer) *app {
 	conf.normalizeProfiles()
 	a := &app{
-		confRevision: 1,
-		profilesRev:  1,
-		autoPasteRev: 1,
-		maxCharsRev:  1,
-		hotkeyLimit:  hotkeyLimit(),
-		settingsReqs: make(chan settingsRequest, 8),
-		dl:           newDownloadManager(dir),
-		openURL:      openTarget,
-		dir:          dir,
-		conf:         conf,
-		endpoint:     fmt.Sprintf("http://127.0.0.1:%d", conf.Port),
-		paths:        paths,
-		tray:         tray,
-		limiter:      restartLimiter{max: 3, window: 10 * time.Minute},
-		readyTip:     "Clipboard Translator - ready (" + conf.Hotkey + ")",
+		confRevision:        1,
+		profilesRev:         1,
+		autoPasteRev:        1,
+		notifyOnCompleteRev: 1,
+		maxCharsRev:         1,
+		hotkeyLimit:         hotkeyLimit(),
+		settingsReqs:        make(chan settingsRequest, 8),
+		dl:                  newDownloadManager(dir),
+		openURL:             openTarget,
+		dir:                 dir,
+		conf:                conf,
+		endpoint:            fmt.Sprintf("http://127.0.0.1:%d", conf.Port),
+		paths:               paths,
+		tray:                tray,
+		limiter:             restartLimiter{max: 3, window: 10 * time.Minute},
+		readyTip:            "Clipboard Translator - ready (" + conf.Hotkey + ")",
 
 		newHotkey:  newHotkey,
 		showErr:    showError,
@@ -603,7 +605,8 @@ func (a *app) handleResult(res result) {
 		return
 	}
 	a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
-	switch decidePaste(a.conf.AutoPaste, res.fromSelection, res.window, a.foreground()) {
+	action := decidePaste(a.conf.AutoPaste, res.fromSelection, res.window, a.foreground())
+	switch action {
 	case pasteNow:
 		// decidePaste just confirmed the window is still res.window; that is the
 		// target pasteWithFocus must still find in front right before Ctrl+V.
@@ -621,6 +624,10 @@ func (a *app) handleResult(res result) {
 	default:
 		log.Print("translation ready in clipboard (", pasteShortcut(), " to paste)")
 		a.tray.SetStatus("Clipboard Translator - translation ready (" + pasteShortcut() + ")")
+	}
+	if a.conf.NotifyOnComplete && action != pasteNow {
+		title, msg := completionNotification()
+		a.tray.Notify(title, msg, false)
 	}
 }
 

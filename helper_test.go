@@ -79,6 +79,7 @@ type fakeTray struct {
 	quit   bool
 	status string
 	notes  []string
+	titles []string
 	cmds   []int
 	build  func() []MenuItem
 }
@@ -86,6 +87,7 @@ type fakeTray struct {
 func (f *fakeTray) QuitRequested() bool { return f.quit }
 func (f *fakeTray) SetStatus(s string)  { f.status = s }
 func (f *fakeTray) Notify(title, msg string, isError bool) {
+	f.titles = append(f.titles, title)
 	f.notes = append(f.notes, msg)
 }
 func (f *fakeTray) SetMenu(b func() []MenuItem) { f.build = b }
@@ -104,6 +106,13 @@ func (f *fakeTray) lastNote() string {
 		return ""
 	}
 	return f.notes[len(f.notes)-1]
+}
+
+func (f *fakeTray) lastTitle() string {
+	if len(f.titles) == 0 {
+		return ""
+	}
+	return f.titles[len(f.titles)-1]
 }
 
 // fakeHotkey is a Hotkey that reports no presses.

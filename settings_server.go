@@ -46,11 +46,12 @@ type profileForm struct {
 
 // settingsForm is everything the page edits.
 type settingsForm struct {
-	BaseRevision int           `json:"base_revision,omitempty"`
-	Profiles     []profileForm `json:"profiles,omitempty"`
-	AutoPaste    bool          `json:"auto_paste"`
-	MaxChars     int           `json:"max_chars"`
-	Changed      []string      `json:"changed,omitempty"`
+	BaseRevision     int           `json:"base_revision,omitempty"`
+	Profiles         []profileForm `json:"profiles,omitempty"`
+	AutoPaste        bool          `json:"auto_paste"`
+	NotifyOnComplete bool          `json:"notify_on_complete"`
+	MaxChars         int           `json:"max_chars"`
+	Changed          []string      `json:"changed,omitempty"`
 }
 
 type languageOption struct {
@@ -324,11 +325,12 @@ func (s *settingsServer) handleState(w http.ResponseWriter, r *http.Request) {
 
 func (s *settingsServer) handleSave(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		BaseRevision *int           `json:"base_revision"`
-		Profiles     *[]profileForm `json:"profiles"`
-		AutoPaste    *bool          `json:"auto_paste"`
-		MaxChars     *int           `json:"max_chars"`
-		Changed      []string       `json:"changed"`
+		BaseRevision     *int           `json:"base_revision"`
+		Profiles         *[]profileForm `json:"profiles"`
+		AutoPaste        *bool          `json:"auto_paste"`
+		NotifyOnComplete *bool          `json:"notify_on_complete"`
+		MaxChars         *int           `json:"max_chars"`
+		Changed          []string       `json:"changed"`
 	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -352,6 +354,12 @@ func (s *settingsServer) handleSave(w http.ResponseWriter, r *http.Request) {
 		form.AutoPaste = *payload.AutoPaste
 		if len(payload.Changed) == 0 {
 			form.Changed = append(form.Changed, "auto_paste")
+		}
+	}
+	if payload.NotifyOnComplete != nil {
+		form.NotifyOnComplete = *payload.NotifyOnComplete
+		if len(payload.Changed) == 0 {
+			form.Changed = append(form.Changed, "notify_on_complete")
 		}
 	}
 	if payload.MaxChars != nil {
@@ -524,6 +532,9 @@ func (f settingsForm) toConfig(base Config) (Config, error) {
 	}
 	if hasField("auto_paste") {
 		c.AutoPaste = f.AutoPaste
+	}
+	if hasField("notify_on_complete") {
+		c.NotifyOnComplete = f.NotifyOnComplete
 	}
 	if hasField("max_chars") {
 		if err := validateMaxChars(f.MaxChars); err != nil {
