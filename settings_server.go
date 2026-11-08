@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -157,7 +158,9 @@ func startSettingsServer(ask func(settingsRequest) settingsReply, dl *downloadMa
 	mux.HandleFunc("/api/ping", s.guard(true, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	mux.HandleFunc("/api/bye", s.guard(true, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
-		go s.Close()
+		// Shut down only after this handler has written its reply: Close would cut
+		// the connection first and the page would see EOF (seen on Linux CI).
+		go s.shutdown()
 	}))
 	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second}
 	s.timer = time.AfterFunc(idle, s.Close)
@@ -187,6 +190,15 @@ func (s *settingsServer) Close() {
 		s.mu.Unlock()
 		_ = s.srv.Close()
 	})
+}
+
+// shutdown waits (briefly) for in-flight requests to finish, so their replies are
+// written before the listener and connections go away.
+func (s *settingsServer) shutdown() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = s.srv.Shutdown(ctx)
+	s.Close()
 }
 
 func (s *settingsServer) touch() {

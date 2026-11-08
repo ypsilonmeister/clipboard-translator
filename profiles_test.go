@@ -87,7 +87,7 @@ func TestTranslateOmitsSourceLangForTargetOnly(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": "안녕"}}}})
 	}))
 	defer srv.Close()
-	if _, err := translate(context.Background(), srv.URL, "Hello", translationDirection{Target: "ko"}, 64); err != nil {
+	if _, err := translate(context.Background(), srv.URL, "", "Hello", translationDirection{Target: "ko"}, 64); err != nil {
 		t.Fatal(err)
 	}
 	if _, has := kwargs["source_lang"]; has {

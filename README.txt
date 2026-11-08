@@ -66,7 +66,10 @@ to a Windows x64 PC. Drivers must support the selected GPU backend; otherwise
 the app falls back to the CPU build.
 
 PRIVACY
-- Translation runs on this PC; the server listens on 127.0.0.1 only.
+- Translation runs on this PC; the server listens on 127.0.0.1 only and
+  refuses requests without a random key the app gives it at each start (so
+  web pages in your browser cannot use it). The app also asks it to turn off
+  its Web UI (LLAMA_ARG_UI=0, read by current llama.cpp builds).
 - The network is used only when you ask: the downloads above, and 'Check for
   updates' / 'Update'. No telemetry, no background checks.
 - 'Settings...' opens a page served by the app itself on 127.0.0.1, only while

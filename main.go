@@ -116,7 +116,9 @@ func waitReady(ctx context.Context, endpoint string, stopped <-chan struct{}) er
 // context window (context_tokens), which llama-server reports the same way.
 var errTruncated = errors.New("translation cut off at the token limit (finish_reason=length)")
 
-func translate(ctx context.Context, endpoint, source string, direction translationDirection, maxTokens int) (string, error) {
+// translate asks the server at endpoint for a translation. apiKey is the
+// server's per-start key (supervisor.apiKey); it is sent when not empty.
+func translate(ctx context.Context, endpoint, apiKey, source string, direction translationDirection, maxTokens int) (string, error) {
 	kwargs := map[string]string{"target_lang": direction.Target}
 	// The template accepts a missing source_lang (the model detects it) but
 	// rejects an empty one, so leave the key out for a target-only profile.
@@ -140,6 +142,9 @@ func translate(ctx context.Context, endpoint, source string, direction translati
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	// This is always a loopback-only llama.cpp server owned by this process.
 	client := &http.Client{Timeout: 0}
 	resp, err := client.Do(req)
