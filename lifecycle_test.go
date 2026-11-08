@@ -151,3 +151,54 @@ func TestRetryingTheConfiguredHotkeyOnceFree(t *testing.T) {
 		t.Fatal("choosing the configured hotkey again must retry the registration")
 	}
 }
+
+type quitOnNotifyTray struct {
+	*fakeTray
+}
+
+func (q *quitOnNotifyTray) Notify(title, message string, isError bool) {
+	if strings.Contains(message, "pasted") {
+		q.fakeTray.quit = true
+	}
+	q.fakeTray.Notify(title, message, isError)
+}
+
+func TestServeChecksQuitRequestedBetweenQueuedCommands(t *testing.T) {
+	a, tray, _ := newTestApp(t)
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+	a.hotkey = fakeHotkey{"Ctrl+Alt+E"}
+	a.hist.Add(historyEntry{Source: "source", Translated: "translated"})
+
+	// Wrap tray so that when cmdAutoPaste calls Notify, QuitRequested becomes true.
+	wrappedTray := &quitOnNotifyTray{fakeTray: tray}
+	a.tray = wrappedTray
+
+	// Queue two commands:
+	// 1. cmdAutoPaste (will trigger Notify and set quit = true)
+	// 2. cmdHistoryClear (must NOT be executed because Quit was requested)
+	tray.cmds = []int{cmdAutoPaste, cmdHistoryClear}
+
+	done := make(chan struct{})
+	go func() {
+		a.serve(&testClipboard{})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not exit after quit request")
+	}
+
+	if !a.conf.AutoPaste {
+		t.Error("first command (cmdAutoPaste) should have executed")
+	}
+	if len(a.hist.Items()) == 0 {
+		t.Error("second command (cmdHistoryClear) must not have executed after quit request")
+	}
+	if len(tray.cmds) != 1 || tray.cmds[0] != cmdHistoryClear {
+		t.Errorf("cmdHistoryClear should have remained in queue, remaining cmds: %v", tray.cmds)
+	}
+}

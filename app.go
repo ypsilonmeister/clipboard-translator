@@ -27,6 +27,8 @@ type app struct {
 	limiter  restartLimiter
 	readyTip string
 
+	activeBackend string // last known working backend ("cpu", "cuda", ...)
+
 	hotkey    Hotkey                            // profile 0, the one the tray menu edits
 	newHotkey func(spec string) (Hotkey, error) // newHotkey, replaceable in tests
 	showErr   func(msg string)                  // showError, replaceable in tests
@@ -121,7 +123,11 @@ func (a *app) failed(err error) {
 // again at the next start, and runningBackend tells what runs now.
 func (a *app) startServer() error {
 	err := a.sup.start(a.paths.server, a.conf.GPULayers, "loading model")
-	if err == nil || errors.Is(err, errQuit) {
+	if err == nil {
+		a.activeBackend = currentBackend(a.conf.ServerFile)
+		return nil
+	}
+	if errors.Is(err, errQuit) {
 		return err
 	}
 	log.Printf("preferred backend failed: %v; see server.log", err)
@@ -137,14 +143,18 @@ func (a *app) startServer() error {
 // server running (before the first start, while one is restarted) it is the
 // configured engine, the one that will be tried.
 func (a *app) runningBackend() string {
-	if !a.sup.Running() {
-		return currentBackend(a.conf.ServerFile)
+	if a.sup.Running() {
+		rel, err := filepath.Rel(a.dir, a.sup.cmd.Path)
+		if err == nil {
+			b := currentBackend(rel)
+			a.activeBackend = b
+			return b
+		}
 	}
-	rel, err := filepath.Rel(a.dir, a.sup.cmd.Path)
-	if err != nil {
-		return ""
+	if a.activeBackend != "" {
+		return a.activeBackend
 	}
-	return currentBackend(rel)
+	return currentBackend(a.conf.ServerFile)
 }
 
 // onFallback reports whether the server running now is the CPU fallback that
@@ -165,6 +175,7 @@ func (a *app) startFallback() error {
 		}
 		return fmt.Errorf("CPU fallback failed: %w", err)
 	}
+	a.activeBackend = "cpu"
 	return nil
 }
 
@@ -401,11 +412,17 @@ func (a *app) serve(cb Clipboard) {
 				return
 			}
 			for {
+				if tray.QuitRequested() {
+					break
+				}
 				id, ok := tray.NextCommand()
 				if !ok {
 					break
 				}
 				a.handleCommand(id)
+				if tray.QuitRequested() {
+					break
+				}
 			}
 			if tray.QuitRequested() { // e.g. Quit during an engine switch
 				log.Print("stop requested")
