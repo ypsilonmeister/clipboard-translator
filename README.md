@@ -311,7 +311,13 @@ written to `translator.log`.
 
 ## Privacy and network use
 
-- Translation happens on your PC. The server listens on `127.0.0.1` only.
+- Translation happens on your PC. The server listens on `127.0.0.1` only, so
+  other computers cannot reach it. Programs on your PC, including web pages in
+  your browser, can reach `127.0.0.1`, so the app also gives the server a random
+  key each time it starts it, and the server refuses translation and other API
+  requests without that key (its `/health` status check does not need it). The app also asks
+  llama-server to turn off its built-in Web UI (`LLAMA_ARG_UI=0`, read by
+  current llama.cpp builds).
 - The app contacts the network only when you ask: the model and llama.cpp
   download (`Setup.cmd`, `setup.ps1`, the first-run offer, the install script)
   and *Check for updates* / *Update*. There is no telemetry and no background

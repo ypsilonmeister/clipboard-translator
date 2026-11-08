@@ -55,7 +55,7 @@ func TestTranslatePayloadBothWays(t *testing.T) {
 				json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": tc.answer}}}})
 			}))
 			defer srv.Close()
-			got, err := translate(context.Background(), srv.URL, tc.source, translationDirection{tc.sourceLang, tc.targetLang}, 128)
+			got, err := translate(context.Background(), srv.URL, "", tc.source, translationDirection{tc.sourceLang, tc.targetLang}, 128)
 			if err != nil || got != tc.answer {
 				t.Fatalf("got=%q err=%v", got, err)
 			}
@@ -82,7 +82,7 @@ func TestTranslateFinishReason(t *testing.T) {
 				json.NewEncoder(w).Encode(map[string]any{"choices": []any{tc.choice}})
 			}))
 			defer srv.Close()
-			got, err := translate(context.Background(), srv.URL, "こんにちは", translationDirection{"ja", "en"}, 1)
+			got, err := translate(context.Background(), srv.URL, "", "こんにちは", translationDirection{"ja", "en"}, 1)
 			if tc.truncated {
 				if !errors.Is(err, errTruncated) || got != "" {
 					t.Fatalf("got=%q err=%v, want errTruncated", got, err)

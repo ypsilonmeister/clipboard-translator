@@ -87,7 +87,7 @@ func (a *app) buildMenu() []MenuItem {
 
 	// Only offer a choice when more than one build is installed.
 	if backends := availableBackends(a.dir); len(backends) > 1 {
-		cur := currentBackend(a.conf.ServerFile)
+		cur := a.runningBackend() // after a CPU fallback, not the configured one
 		var sub []MenuItem
 		for i, b := range backends {
 			sub = append(sub, MenuItem{ID: cmdBackendBase + i, Label: backendLabel(b), Checked: b == cur})
@@ -258,12 +258,21 @@ func (noHotkey) Pressed() (bool, error) { return false, nil }
 func (noHotkey) Close() error           { return nil }
 
 // switchBackend restarts the server with another installed llama.cpp build. If
-// that does not come up, the previous settings are restored.
+// that does not come up, the previous settings are restored. What counts as
+// "another" build is decided by the server that runs, not by config.json: after
+// a CPU fallback, choosing the configured GPU tries it again.
 func (a *app) switchBackend(name string) {
-	if name == currentBackend(a.conf.ServerFile) {
+	if name == a.runningBackend() {
+		if name != currentBackend(a.conf.ServerFile) {
+			a.keepRunningBackend(name)
+		}
 		return
 	}
 	oldConf, oldPaths := a.conf, a.paths
+	// When the CPU fallback is what runs, the preferred engine has already
+	// failed once; going back straight to the CPU saves loading the model on it
+	// again just to see it fail.
+	wasFallback := a.onFallback()
 	a.conf.ServerFile, a.conf.GPULayers = backendSettings(name)
 	paths, err := resolvePaths(a.dir, a.conf)
 	if err != nil {
@@ -289,7 +298,11 @@ func (a *app) switchBackend(name string) {
 	}
 	log.Printf("engine %s failed: %v; going back", name, err)
 	a.conf, a.paths = oldConf, oldPaths
-	if err := a.startServer(); err != nil {
+	restore := a.startServer
+	if wasFallback {
+		restore = a.startFallback
+	}
+	if err := restore(); err != nil {
 		if errors.Is(err, errQuit) {
 			return // the main loop sees the quit request
 		}
@@ -303,6 +316,23 @@ func (a *app) switchBackend(name string) {
 	}
 	a.tray.SetStatus(a.readyTip)
 	a.tray.Notify("Clipboard Translator", "Could not switch to "+backendLabel(name)+"; keeping the previous engine.", true)
+}
+
+// keepRunningBackend makes the engine that runs now, the CPU fallback, the
+// configured one, so the next start does not try the failed engine first.
+// Nothing is restarted.
+func (a *app) keepRunningBackend(name string) {
+	conf := a.conf
+	conf.ServerFile, conf.GPULayers = backendSettings(name)
+	paths, err := resolvePaths(a.dir, conf)
+	if err != nil {
+		a.tray.Notify("Clipboard Translator", "Could not switch the engine: "+err.Error(), true)
+		return
+	}
+	a.conf, a.paths = conf, paths
+	a.saveConfig(map[string]any{"server_file": a.conf.ServerFile, "gpu_layers": a.conf.GPULayers})
+	log.Printf("engine %s (already running) is now the configured one", name)
+	a.tray.Notify("Clipboard Translator", "Translation engine: "+backendLabel(name), false)
 }
 
 type updateResult struct {
