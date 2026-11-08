@@ -117,7 +117,7 @@ func TestCheckModelSwitch(t *testing.T) {
 		t.Errorf("downloading: %v", err)
 	}
 	a.dl.set(func(s *downloadState) { *s = downloadState{} })
-	// No template: refused with a pointer to setup.
+	// No custom template: refused with a pointer to its configuration.
 	os.Remove(a.paths.template)
 	if _, err := a.checkModelSwitch("a"); err == nil || !strings.Contains(err.Error(), "template") {
 		t.Errorf("template: %v", err)
@@ -331,6 +331,75 @@ func TestPageDownloadsAModelAndTheTrayIsTold(t *testing.T) {
 	}
 	if resp, _ := s.do(t, "POST", "/api/model/download", map[string]string{"key": "t1"}, nil); resp.StatusCode != 422 {
 		t.Errorf("a model that is installed cannot be downloaded again: %d", resp.StatusCode)
+	}
+}
+
+func TestPageRetriesMissingTemplate(t *testing.T) {
+	for _, kind := range []string{"http", "hash", "cancel"} {
+		t.Run(kind, func(t *testing.T) {
+			d := newDLFixture(t)
+			d.failTemplate(kind)
+			f := newSettingsFixture(t)
+			a := f.a
+			a.conf.TemplateFile = "models/chat_template.jinja"
+			a.paths.template = filepath.Join(a.dir, "models", "chat_template.jinja")
+			// Even a damaged default template must offer recovery.
+			if err := os.WriteFile(a.paths.template, []byte("broken"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			a.dl = newDownloadManager(a.dir)
+			a.dl.baseURL = d.srv.URL
+			t.Cleanup(a.dl.Close)
+			s := f.server(t)
+			if resp, body := s.do(t, "POST", "/api/model/download", map[string]string{"key": "t1"}, nil); resp.StatusCode != 200 {
+				t.Fatalf("initial download: %d %s", resp.StatusCode, body)
+			}
+			phase := "failed"
+			var resumed int64
+			if kind == "cancel" {
+				resumed = waitTemplatePartial(t, a.dl)
+				if resp, body := s.do(t, "POST", "/api/model/cancel", map[string]string{}, nil); resp.StatusCode != 204 {
+					t.Fatalf("cancel: %d %s", resp.StatusCode, body)
+				}
+				phase = "cancelled"
+			}
+			waitFor(t, "template failure on the page", func() bool {
+				_, body := s.do(t, "GET", "/api/state", nil, nil)
+				st := decodeAPI(t, body).State
+				return st != nil && st.Download != nil && st.Download.Phase == phase
+			})
+			_, body := s.do(t, "GET", "/api/state", nil, nil)
+			m := findModel(*decodeAPI(t, body).State, "t1")
+			if !m.Installed || m.TemplateInstalled || m.Downloading {
+				t.Fatalf("page must distinguish the saved model from the missing template: %+v", m)
+			}
+			if resp, body := s.do(t, "POST", "/api/model/use", map[string]string{"key": "t1"}, nil); resp.StatusCode != 422 || !strings.Contains(string(body), "retry") {
+				t.Fatalf("incomplete model switch must explain recovery: %d %s", resp.StatusCode, body)
+			}
+			d.repairTemplate()
+			if resp, body := s.do(t, "POST", "/api/model/download", map[string]string{"key": "t1"}, nil); resp.StatusCode != 200 {
+				t.Fatalf("template retry: %d %s", resp.StatusCode, body)
+			}
+			waitFor(t, "template recovery on the page", func() bool {
+				_, body := s.do(t, "GET", "/api/state", nil, nil)
+				st := decodeAPI(t, body).State
+				if st == nil || st.Download == nil || st.Download.Phase != "done" {
+					return false
+				}
+				m := findModel(*st, "t1")
+				return m.Installed && m.TemplateInstalled && !m.Downloading
+			})
+			d.checkTemplateRecovery(t, a.dir, resumed)
+			// The repaired model can now be selected through the same page.
+			if resp, body := s.do(t, "POST", "/api/model/use", map[string]string{"key": "t1"}, nil); resp.StatusCode != 200 {
+				t.Fatalf("use repaired model: %d %s", resp.StatusCode, body)
+			}
+			waitFor(t, "repaired model selection", func() bool {
+				_, body := s.do(t, "GET", "/api/state", nil, nil)
+				st := decodeAPI(t, body).State
+				return st != nil && st.Busy == "" && findModel(*st, "t1").Active
+			})
+		})
 	}
 }
 

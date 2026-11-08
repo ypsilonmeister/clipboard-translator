@@ -217,13 +217,17 @@
     const lock = appBusy() || acting;
 
     const actions = h('div', { class: 'actions' });
-    if (m.active) {
+    const ready = m.installed && m.template_installed;
+    if (running) {
+      actions.append(h('button', { type: 'button', class: 'secondary', onclick: cancelDownload }, 'Cancel'));
+    } else if (m.installed && !m.template_installed) {
+      actions.append(h('button', { type: 'button', class: 'secondary', disabled: lock || otherRunning,
+        onclick: () => act('/api/model/download', { key: m.key }) }, 'Retry chat template'));
+    } else if (m.active) {
       actions.append(h('span', { class: 'badge on', text: 'In use' }));
-    } else if (m.installed) {
+    } else if (ready) {
       actions.append(h('button', { type: 'button', class: 'secondary', disabled: lock || running,
         onclick: () => act('/api/model/use', { key: m.key }) }, 'Use this model'));
-    } else if (running) {
-      actions.append(h('button', { type: 'button', class: 'secondary', onclick: cancelDownload }, 'Cancel'));
     } else {
       actions.append(h('button', { type: 'button', class: 'secondary', disabled: lock || otherRunning,
         onclick: () => act('/api/model/download', { key: m.key }) }, 'Download (' + m.size + ')'));
@@ -246,8 +250,8 @@
       row.append(h('div', { class: 'progress' }, bar, h('p', { class: 'ptext', text: label })));
     } else if (mine && d.phase === 'failed') {
       row.append(h('p', { class: 'msg err', text: 'The download failed: ' + d.error }));
-    } else if (mine && d.phase === 'cancelled' && !m.installed) {
-      row.append(h('p', { class: 'msg', text: 'Cancelled. The part that was downloaded is kept; Download continues from there.' }));
+    } else if (mine && d.phase === 'cancelled' && !ready) {
+      row.append(h('p', { class: 'msg', text: 'Cancelled. The part that was downloaded is kept; Download or Retry continues from there.' }));
     }
     return row;
   }

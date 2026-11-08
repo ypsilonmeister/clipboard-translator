@@ -85,14 +85,14 @@ func (m *downloadManager) Downloading(key string) bool {
 	return s.Key == key && s.running()
 }
 
-// Start begins downloading a model in the background. One at a time; a model
-// that is already installed is refused.
+// Start downloads missing installation files in the background, one model at
+// a time. A model with both its GGUF and the shared template is refused.
 func (m *downloadManager) Start(key string) error {
 	e, ok := modelByKey(key)
 	if !ok {
 		return fmt.Errorf("unknown model %q", key)
 	}
-	if e.installed(m.dir) {
+	if e.installed(m.dir) && templateInstalled(m.dir) {
 		return fmt.Errorf("%s is already installed", e.Name)
 	}
 	m.mu.Lock()
@@ -159,9 +159,13 @@ func (m *downloadManager) run(ctx context.Context, e modelEntry) {
 		return
 	}
 	base := fmt.Sprintf("%s/pfnet/%s/resolve/%s/", m.baseURL, e.Repo, e.Revision)
-	if err := m.fetch(ctx, e, base+e.File, e.path(m.dir), e.Sha256, true); err != nil {
-		m.finish(e.Key, err)
-		return
+	// A previous attempt may have verified the GGUF before the template failed.
+	// Keep that file and resume only the missing part of the installation.
+	if !e.installed(m.dir) {
+		if err := m.fetch(ctx, e, base+e.File, e.path(m.dir), e.Sha256, true); err != nil {
+			m.finish(e.Key, err)
+			return
+		}
 	}
 	// The template is shared by all sizes; fetch it only when it is missing, as the scripts do.
 	if !templateInstalled(m.dir) {
@@ -278,6 +282,9 @@ func (m *downloadManager) fetch(ctx context.Context, e modelEntry, url, dest, wa
 			return ctx.Err() // cancelled: the partial file stays for the next try
 		}
 		return copyErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return m.verifyAndMove(e, partial, dest, want, h)
 }

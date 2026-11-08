@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path/filepath"
 	"time"
 )
 
@@ -20,10 +21,12 @@ func (a *app) fillModelsAndEngines(st *settingsState) {
 	// One snapshot of the download for the whole state: reading it per model
 	// could show "downloading" in one place and "done" in another.
 	d := a.dl.State()
+	template := templateInstalled(a.dir)
 	for _, e := range modelCatalog {
 		st.Models = append(st.Models, modelState{
 			Key: e.Key, Name: e.Name, Note: e.Note, Size: e.SizeLabel,
 			Installed: e.installed(a.dir), Active: known && active.Key == e.Key, Downloading: d.Key == e.Key && d.running(),
+			TemplateInstalled: template,
 		})
 	}
 	if !known {
@@ -90,8 +93,12 @@ func (a *app) checkModelSwitch(key string) (modelEntry, error) {
 	case !e.installed(a.dir):
 		return e, fmt.Errorf("%s is not installed; download it first", e.Name)
 	}
-	if err := checkFile(a.paths.template); err != nil {
-		return e, fmt.Errorf("the chat template is missing (%v); run the setup script again", err)
+	if a.paths.template == filepath.Join(a.dir, "models", "chat_template.jinja") {
+		if !templateInstalled(a.dir) {
+			return e, errors.New("the chat template is missing or incomplete; retry this model's download in Settings to fetch it")
+		}
+	} else if err := checkFile(a.paths.template); err != nil {
+		return e, fmt.Errorf("the configured chat template is missing (%v); check template_file in config.json", err)
 	}
 	return e, nil
 }

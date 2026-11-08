@@ -45,6 +45,9 @@ type dlFixture struct {
 	serveBytes  []byte        // serve these instead of model (wrong content)
 	gate        chan struct{} // when set, the model body is sent in two halves and waits on gate between them
 	status      int           // when set, answer this status for the model
+	tplStatus   int
+	tplBytes    []byte
+	tplGate     chan struct{}
 }
 
 func newDLFixture(t *testing.T) *dlFixture {
@@ -65,11 +68,13 @@ func newDLFixture(t *testing.T) *dlFixture {
 		if f.serveBytes != nil {
 			body = f.serveBytes
 		}
-		f.mu.Unlock()
 		if strings.HasSuffix(r.URL.Path, "chat_template.jinja") {
-			http.ServeContent(w, r, "t", time.Time{}, bytes.NewReader(f.tpl))
-			return
+			ignore, body, gate, status = false, f.tpl, f.tplGate, f.tplStatus
+			if f.tplBytes != nil {
+				body = f.tplBytes
+			}
 		}
+		f.mu.Unlock()
 		if status != 0 {
 			http.Error(w, "nope", status)
 			return
@@ -128,6 +133,108 @@ func (f *dlFixture) reqs() []string {
 }
 
 func (f *dlFixture) path(name string) string { return filepath.Join(f.dir, "models", name) }
+
+func (f *dlFixture) failTemplate(kind string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch kind {
+	case "http":
+		f.tplStatus = http.StatusServiceUnavailable
+	case "hash":
+		f.tplBytes = bytes.Repeat([]byte("wrong template"), 20)
+	case "cancel":
+		f.tplGate = make(chan struct{})
+	}
+}
+
+func waitTemplatePartial(t *testing.T, m *downloadManager) int64 {
+	t.Helper()
+	var size int64
+	waitFor(t, "the template partial file", func() bool {
+		info, err := os.Stat(filepath.Join(m.dir, "models", "chat_template.jinja.partial"))
+		if err == nil {
+			size = info.Size()
+		}
+		return m.State().Phase == "template" && size > 0
+	})
+	return size
+}
+
+func (f *dlFixture) repairTemplate() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tplStatus, f.tplBytes, f.tplGate = 0, nil, nil
+}
+
+func (f *dlFixture) checkTemplateRecovery(t *testing.T, dir string, resumed int64) {
+	t.Helper()
+	for name, want := range map[string][]byte{"test-model.gguf": f.model, "chat_template.jinja": f.tpl} {
+		got, err := os.ReadFile(filepath.Join(dir, "models", name))
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s: content differs or read failed: %v", name, err)
+		}
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, "models", "*.partial")); len(left) != 0 {
+		t.Errorf("partial files left: %v", left)
+	}
+	var models, templates int
+	reqs := f.reqs()
+	for _, r := range reqs {
+		if strings.Contains(r, "test-model.gguf") {
+			models++
+		} else if strings.Contains(r, "chat_template.jinja") {
+			templates++
+		}
+	}
+	if models != 1 || templates != 2 {
+		t.Fatalf("want one model request and two template requests: %v", reqs)
+	}
+	wantRange := "Range="
+	if resumed > 0 {
+		wantRange += fmt.Sprintf("bytes=%d-", resumed)
+	}
+	if !strings.HasSuffix(reqs[len(reqs)-1], wantRange) {
+		t.Errorf("template retry range: %v, want %s", reqs, wantRange)
+	}
+}
+
+func TestDownloadRetriesOnlyTemplate(t *testing.T) {
+	for _, kind := range []string{"http", "hash", "cancel"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newDLFixture(t)
+			f.failTemplate(kind)
+			if err := f.m.Start("t1"); err != nil {
+				t.Fatal(err)
+			}
+			var resumed int64
+			if kind == "cancel" {
+				resumed = waitTemplatePartial(t, f.m)
+				f.m.Cancel()
+				f.wait("cancelled")
+			} else {
+				s := f.wait("failed")
+				if (kind == "http" && !strings.Contains(s.Error, "503")) || (kind == "hash" && !strings.Contains(s.Error, "SHA-256")) {
+					t.Fatalf("unexpected failure: %+v", s)
+				}
+				if _, err := os.Stat(f.path("chat_template.jinja.partial")); !os.IsNotExist(err) {
+					t.Fatalf("failed template partial should be absent: %v", err)
+				}
+			}
+			if got, err := os.ReadFile(f.path("test-model.gguf")); err != nil || !bytes.Equal(got, f.model) {
+				t.Fatalf("verified GGUF was not kept: %v", err)
+			}
+			if templateInstalled(f.dir) {
+				t.Fatal("failed template counts as installed")
+			}
+			f.repairTemplate()
+			if err := f.m.Start("t1"); err != nil {
+				t.Fatal(err)
+			}
+			f.wait("done")
+			f.checkTemplateRecovery(t, f.dir, resumed)
+		})
+	}
+}
 
 func TestDownloadFreshModelAndTemplate(t *testing.T) {
 	f := newDLFixture(t)
