@@ -3,6 +3,7 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -14,7 +15,17 @@ import unittest
 from unittest import mock
 
 SOURCE = (Path(__file__).resolve().parents[1] / "setup.sh").read_text()
-PROGRAM = compile(SOURCE.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0], "setup.sh:python", "exec")
+
+
+# Scale only the fixture catalog's minimum sizes; NTFS truncate is not sparse.
+def fixture_program(source, filename):
+    source = source.replace('minimum=400 * 1024**2', 'minimum=400')
+    source = source.replace('minimum=1024**3', 'minimum=1024')
+    source = source.replace('minimum=4 * 1024**3', 'minimum=4096')
+    return compile(source.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0], filename, "exec")
+
+
+PROGRAM = fixture_program(SOURCE, "setup.sh:python")
 
 
 def runtime_archive(unsafe=False):
@@ -36,9 +47,9 @@ class SetupTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         (self.root / "models").mkdir()
-        # Sparse file satisfies the model-size check without downloading a model.
+        # Small fixture satisfies the patched model-size check without a download.
         with (self.root / "models/plamo-3-translate-2b-Q4_K_M.gguf").open("wb") as f:
-            f.truncate(1024 ** 3)
+            f.truncate(1024)
         (self.root / "models/chat_template.jinja").write_text("x" * 101)
         (self.root / "config.json").write_text(json.dumps({"hotkey": "Ctrl+Alt+T", "future_key": {"keep": True}}))
         self.archive = runtime_archive()
@@ -59,15 +70,19 @@ class SetupTests(unittest.TestCase):
 
     model_bytes = None  # what a Hugging Face download returns, when a test allows one
 
-    def run_setup(self, backend="cpu", *model):
-        with mock.patch("sys.argv", ["setup", str(self.root), backend, *model]), mock.patch("platform.machine", return_value="x86_64"), mock.patch("urllib.request.urlopen", side_effect=self.response), contextlib.redirect_stdout(io.StringIO()):
+    default_backend = "cpu"
+    alternate_backend = "vulkan"
+
+    def run_setup(self, backend=None, *model):
+        with mock.patch("sys.argv", ["setup", str(self.root), backend or self.default_backend, model[0] if model else "", "true" if backend else "false"]), mock.patch("platform.machine", return_value="x86_64"), mock.patch("urllib.request.urlopen", side_effect=self.response), contextlib.redirect_stdout(io.StringIO()):
             exec(PROGRAM, {"__name__": "__main__"})
 
     def test_cpu_vulkan_config_and_symlinks(self):
         self.run_setup("vulkan")
         for backend in ["cpu", "vulkan"]:
             runtime = self.root / "runtime" / backend
-            self.assertTrue((runtime / "llama-server").stat().st_mode & 0o111)
+            if os.name != "nt":
+                self.assertTrue((runtime / "llama-server").stat().st_mode & 0o111)
             self.assertTrue((runtime / "libggml.so").is_symlink())
             self.assertEqual((runtime / "libggml.so").read_bytes(), b"fixture")
         config = json.loads((self.root / "config.json").read_text())
@@ -83,8 +98,88 @@ class SetupTests(unittest.TestCase):
         with (self.root / "models" / name).open("wb") as f:
             f.truncate(size)
 
+    def read_config(self):
+        return json.loads((self.root / "config.json").read_text())
+
+    def write_config(self, config):
+        (self.root / "config.json").write_text(json.dumps(config))
+
+    def installed_engines(self):
+        self.run_setup(self.alternate_backend)
+        self.run_setup(self.default_backend)
+        self.calls.clear()
+
+    def test_plain_rerun_preserves_configured_engine(self):
+        self.installed_engines()
+        config = self.read_config()
+        config.update(server_file=f"runtime/{self.alternate_backend}/llama-server",
+                      fallback_server_file="runtime/cpu/llama-server", gpu_layers=17)
+        self.write_config(config)
+        self.run_setup()
+        self.assertEqual(self.read_config(), config)
+        self.assertEqual(self.calls, [])
+        self.put_model("plamo-3-translate-0.8b-Q4_K_M.gguf", 400)
+        self.run_setup(None, "0.8b")
+        config["model_file"] = "models/plamo-3-translate-0.8b-Q4_K_M.gguf"
+        self.assertEqual(self.read_config(), config)
+
+    def test_explicit_backend_replaces_configured_engine(self):
+        self.installed_engines()
+        config = self.read_config()
+        config.update(server_file=f"runtime/{self.alternate_backend}/llama-server", gpu_layers=17)
+        self.write_config(config)
+        self.run_setup(self.default_backend)
+        self.assertEqual(self.read_config()["server_file"], f"runtime/{self.default_backend}/llama-server")
+        self.assertEqual(self.read_config()["gpu_layers"], 0 if self.default_backend == "cpu" else 99)
+        self.assertEqual(self.read_config()["fallback_server_file"], "runtime/cpu/llama-server")
+
+    def test_fresh_install_writes_engine(self):
+        (self.root / "config.json").unlink()
+        self.run_setup()
+        self.assertEqual(self.read_config(), {
+            "server_file": f"runtime/{self.default_backend}/llama-server",
+            "fallback_server_file": "runtime/cpu/llama-server",
+            "gpu_layers": 0 if self.default_backend == "cpu" else 99,
+        })
+
+    def test_missing_or_unusable_configured_server_is_replaced(self):
+        self.installed_engines()
+        for server in ["runtime/missing/llama-server", "runtime/cpu", "../runtime/cpu/llama-server",
+                       "/runtime/cpu/llama-server", "C:\\runtime\\cpu\\llama-server", "runtime/cpu/../cpu/llama-server", None, 42]:
+            with self.subTest(server=server):
+                self.write_config({"server_file": server, "gpu_layers": 17})
+                self.run_setup()
+                self.assertEqual(self.read_config()["server_file"], f"runtime/{self.default_backend}/llama-server")
+                self.assertEqual(self.read_config()["gpu_layers"], 0 if self.default_backend == "cpu" else 99)
+
+    def test_missing_defaults_are_filled_without_switching_engine(self):
+        self.installed_engines()
+        for backend in [self.default_backend, self.alternate_backend]:
+            with self.subTest(backend=backend):
+                server = f"runtime/{backend}/llama-server".replace("/", chr(92))
+                self.write_config({"server_file": server, "gpu_layers": None, "fallback_server_file": "missing"})
+                self.run_setup()
+                self.assertEqual(self.read_config(), {
+                    "server_file": server, "gpu_layers": 0 if backend == "cpu" else 99,
+                    "fallback_server_file": "runtime/cpu/llama-server",
+                })
+
+    def test_newly_installed_default_backend_updates_engine(self):
+        custom = self.root / "custom/llama-server"
+        custom.parent.mkdir()
+        custom.write_text("fixture")
+        self.write_config({"server_file": "custom/llama-server", "gpu_layers": 17})
+        self.run_setup()
+        self.assertEqual(self.read_config()["server_file"], f"runtime/{self.default_backend}/llama-server")
+
+    def test_shipped_server_missing_at_start_updates_engine(self):
+        self.write_config({"server_file": "runtime/cpu/llama-server", "gpu_layers": 17})
+        self.run_setup()
+        self.assertEqual(self.read_config()["server_file"], f"runtime/{self.default_backend}/llama-server")
+        self.assertEqual(self.read_config()["gpu_layers"], 0 if self.default_backend == "cpu" else 99)
+
     def test_model_choice_is_written_and_kept(self):
-        self.put_model("plamo-3-translate-0.8b-Q4_K_M.gguf", 400 * 1024 ** 2)
+        self.put_model("plamo-3-translate-0.8b-Q4_K_M.gguf", 400)
         self.run_setup("cpu", "0.8b")
         config = json.loads((self.root / "config.json").read_text())
         self.assertEqual(config["model_file"], "models/plamo-3-translate-0.8b-Q4_K_M.gguf")
@@ -109,7 +204,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(list((self.root / "models").glob("*.partial")), [])
 
     def test_too_small_model_is_rejected(self):
-        self.put_model("plamo-3-translate-8b-Q4_K_M.gguf", 1024 ** 3)
+        self.put_model("plamo-3-translate-8b-Q4_K_M.gguf", 1024)
         with self.assertRaisesRegex(RuntimeError, "Incomplete file"):
             self.run_setup("cpu", "8b")
 
@@ -118,6 +213,8 @@ class SetupTests(unittest.TestCase):
         bash = shutil.which("bash")
         if not bash:
             self.skipTest("bash is not available")
+        if os.name == "nt" and Path(bash).parent.name.lower() in {"system32", "sysnative"}:
+            self.skipTest("WSL bash launcher cannot use native Windows paths")
         base = Path(__file__).resolve().parents[1]
         cases = [
             ("setup.sh", ["--model", "3b"]), ("setup.sh", ["--model"]), ("setup.sh", ["--backend"]),
@@ -125,7 +222,7 @@ class SetupTests(unittest.TestCase):
             ("setup-macos.sh", ["--model", "31b"]), ("setup-macos.sh", ["--backend", "vulkan"]),
         ]
         for script, args in cases:
-            result = subprocess.run([bash, str(base / script), *args], capture_output=True, text=True, timeout=30)
+            result = subprocess.run([bash, (base / script).as_posix(), *args], capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 2, (script, args, result.stderr))
             self.assertIn("Usage: bash setup.sh", result.stderr)
             self.assertIn("--model 0.8b|2b|8b", result.stderr)

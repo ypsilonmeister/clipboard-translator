@@ -34,7 +34,7 @@ var modelCatalog = []modelEntry{
 		Revision:       "232fbd7916519edecddfdae0beae7e76fe70453f",
 		Sha256:         "f36d0813dd95573a852ab5d76e374c543632d9e292929e922bcdbf7e53b494e0",
 		TemplateSha256: "18dcc169548d794897084a04cd150a5a633717f1eb6e62de4a0e0973b377e02a",
-		SizeLabel:      "1.8 GB", MinBytes: 1 << 30},
+		SizeLabel:      "1.8 GB", MinBytes: 1 << 30, Bytes: 1807199392},
 	{Key: "8b", Name: "PLaMo 3 Translate 8B", Note: "The largest on offer: needs more disk space, memory and time.",
 		File: "plamo-3-translate-8b-Q4_K_M.gguf", Repo: "plamo-3-translate-8b-GGUF",
 		Revision:       "407c15bc44f6968e6734bc047d92f766c163bbec",
