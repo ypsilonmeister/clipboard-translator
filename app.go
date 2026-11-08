@@ -116,6 +116,8 @@ func (a *app) failed(err error) {
 
 // startServer starts the preferred backend and falls back to CPU if that
 // fails. It returns errQuit when the user quit while the model was loading.
+// The fallback leaves conf.ServerFile alone: the preferred engine is tried
+// again at the next start, and runningBackend tells what runs now.
 func (a *app) startServer() error {
 	err := a.sup.start(a.paths.server, a.conf.GPULayers, "loading model")
 	if err == nil || errors.Is(err, errQuit) {
@@ -125,6 +127,33 @@ func (a *app) startServer() error {
 	if a.paths.server == a.paths.fallback {
 		return fmt.Errorf("The translation server failed to start: %w", err)
 	}
+	return a.startFallback()
+}
+
+// runningBackend is the engine ("cpu", "cuda", ...) of the llama-server that
+// runs now. After startServer fell back to the CPU that is not the configured
+// one, so the menu and the settings page ask this, not conf.ServerFile. With no
+// server running (before the first start, while one is restarted) it is the
+// configured engine, the one that will be tried.
+func (a *app) runningBackend() string {
+	if !a.sup.Running() {
+		return currentBackend(a.conf.ServerFile)
+	}
+	rel, err := filepath.Rel(a.dir, a.sup.cmd.Path)
+	if err != nil {
+		return ""
+	}
+	return currentBackend(rel)
+}
+
+// onFallback reports whether the server running now is the CPU fallback that
+// startServer chose because the preferred engine did not start.
+func (a *app) onFallback() bool {
+	return a.sup.Running() && a.paths.server != a.paths.fallback && a.sup.cmd.Path == a.paths.fallback
+}
+
+// startFallback starts the CPU fallback build.
+func (a *app) startFallback() error {
 	if statErr := checkFile(a.paths.fallback); statErr != nil {
 		return fmt.Errorf("CPU fallback unavailable: %w", statErr)
 	}

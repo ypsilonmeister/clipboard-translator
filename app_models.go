@@ -29,7 +29,7 @@ func (a *app) fillModelsAndEngines(st *settingsState) {
 	if !known {
 		st.CustomModel = a.conf.ModelFile
 	}
-	cur := currentBackend(a.conf.ServerFile)
+	cur := a.runningBackend() // after a CPU fallback, not the configured one
 	for _, b := range availableBackends(a.dir) {
 		st.Engines = append(st.Engines, engineState{Name: b, Label: backendLabel(b), Active: b == cur})
 	}
@@ -151,7 +151,8 @@ func (a *app) startEngineSwitch(req settingsRequest) {
 		req.reply <- settingsReply{state: a.settingsState(), err: fmt.Errorf("the %q engine is not installed", req.arg)}
 		return
 	}
-	if currentBackend(a.conf.ServerFile) == req.arg {
+	if a.runningBackend() == req.arg {
+		a.switchBackend(req.arg) // at most makes a running fallback the configured engine; nothing restarts
 		req.reply <- settingsReply{state: a.settingsState()}
 		return
 	}
@@ -160,7 +161,9 @@ func (a *app) startEngineSwitch(req settingsRequest) {
 	st.Busy = "switching to " + backendLabel(req.arg)
 	req.reply <- settingsReply{state: st}
 	a.switchBackend(req.arg)
-	if currentBackend(a.conf.ServerFile) != req.arg {
+	// Ask the server that runs: after a failed retry of the configured GPU from
+	// the CPU fallback, config.json still names that GPU.
+	if !a.sup.Running() || a.runningBackend() != req.arg {
 		a.settingsNotice = "The engine could not be switched, so the previous one is still in use. translator.log has the reason."
 	}
 }
