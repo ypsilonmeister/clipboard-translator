@@ -31,6 +31,10 @@ type supervisor struct {
 	// elapsed how long it has been going on.
 	ui func(label string, elapsed time.Duration) (quit bool)
 
+	// pidFile records the running server so a later start can stop it if the
+	// app dies without stopping it (macOS only; see recordChild). Empty: none.
+	pidFile string
+
 	cmd  *exec.Cmd
 	done chan struct{} // closed when cmd has exited
 }
@@ -49,6 +53,7 @@ func (s *supervisor) start(binary string, gpuLayers int, label string) error {
 		return err
 	}
 	bindToParentLifetime(cmd)
+	recordChild(s.pidFile, cmd)
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }() // the only Wait on this child
 
@@ -78,6 +83,7 @@ wait:
 	if err != nil {
 		_ = cmd.Process.Kill()
 		<-done
+		forgetChild(s.pidFile)
 		if quit {
 			return errQuit
 		}
@@ -106,6 +112,7 @@ func (s *supervisor) Stop() {
 	}
 	_ = s.cmd.Process.Kill()
 	<-s.done
+	forgetChild(s.pidFile)
 	s.cmd, s.done = nil, nil
 }
 

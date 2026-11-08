@@ -93,6 +93,7 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 		contextTokens: conf.ContextTokens, port: conf.Port, endpoint: a.endpoint,
 		logOut:         serverLog,
 		startupTimeout: time.Duration(conf.StartupTimeoutSec) * time.Second,
+		pidFile:        childRecordPath(dir, conf.Port),
 	}
 	lastSec := time.Duration(-1)
 	a.sup.ui = func(label string, elapsed time.Duration) bool {
