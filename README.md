@@ -346,13 +346,14 @@ written to `translator.log`.
 ## Configuration
 
 `config.json` (all paths are relative to the app folder). The tray menu edits
-`hotkey`, `languages`, `server_file`, `gpu_layers` and `auto_paste` for you; everything else is
+`hotkey`, `languages`, `server_file`, `gpu_layers`, `auto_paste` and `notify_on_complete` for you; everything else is
 edited by hand and needs a restart. The previous file is kept as `config.json.bak`.
 
 | Key | Meaning |
 | --- | --- |
 | `hotkey` | Modifier(s) + one letter A-Z, e.g. `Ctrl+Alt+E` (on macOS `Cmd` / `Command` and `Option` also work) |
 | `auto_paste` | `true` types Ctrl+V after translating (default `false`) |
+| `notify_on_complete` | `true` shows a tray notification that the translation is ready in the clipboard (without showing text) when not auto-pasted (default `false`) |
 | `languages` | Two language codes translated in both directions, e.g. `["ja", "en"]` (default), `["en", "ko"]`, `["ja", "zh-hans"]`. Codes are the model's: `ja en ko zh-hans zh-hant ru th ar de fr es ...` (53 in all, see the [model card](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)). The direction is read from the script of the text, so the two languages must use different scripts (en ↔ de is refused for now). Japanese ↔ English is the main use; other languages are best effort. |
 | `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko"}]`. A profile has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each). Takes the place of `hotkey` and `languages`; the tray menu edits the first profile. Up to 8 hotkeys on Windows; on Linux and macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
 | `port` | Local llama-server port, 1024-65534 (the app also uses `port + 1` as an instance lock) |
@@ -374,7 +375,7 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 use* for how it is served). It edits:
 
 - the **hotkeys**, each with its keys and either a language pair or one target
-  language (as `profiles` in `config.json`), **auto-paste**, and the **longest
+  language (as `profiles` in `config.json`), **auto-paste**, **notification on complete** (`notify_on_complete`), and the **longest
   text** (`max_chars`). These are applied with *Save*.
 - the **translation model**: *Download* fetches a size you do not have yet (with
   progress and *Cancel*; the 31B model is not offered), *Use this model* switches

@@ -12,18 +12,19 @@ import (
 
 // Command IDs of the app-specific tray menu items.
 const (
-	cmdCheckUpdate  = firstAppCommand + 1
-	cmdDoUpdate     = firstAppCommand + 2
-	cmdOpenConfig   = firstAppCommand + 3
-	cmdPlamoLicense = firstAppCommand + 4
-	cmdCancel       = firstAppCommand + 5
-	cmdAutoPaste    = firstAppCommand + 6
-	cmdHistoryClear = firstAppCommand + 7
-	cmdHotkeyBase   = firstAppCommand + 100 // + index into hotkeyChoices
-	cmdBackendBase  = firstAppCommand + 200 // + index into availableBackends
-	cmdHistoryBase  = firstAppCommand + 300 // + index into history (newest first)
-	cmdLanguageBase = firstAppCommand + 400 // + index into languagePairChoices
-	cmdSettings     = firstAppCommand + 8
+	cmdCheckUpdate      = firstAppCommand + 1
+	cmdDoUpdate         = firstAppCommand + 2
+	cmdOpenConfig       = firstAppCommand + 3
+	cmdPlamoLicense     = firstAppCommand + 4
+	cmdCancel           = firstAppCommand + 5
+	cmdAutoPaste        = firstAppCommand + 6
+	cmdHistoryClear     = firstAppCommand + 7
+	cmdSettings         = firstAppCommand + 8
+	cmdNotifyOnComplete = firstAppCommand + 9
+	cmdHotkeyBase       = firstAppCommand + 100 // + index into hotkeyChoices
+	cmdBackendBase      = firstAppCommand + 200 // + index into availableBackends
+	cmdHistoryBase      = firstAppCommand + 300 // + index into history (newest first)
+	cmdLanguageBase     = firstAppCommand + 400 // + index into languagePairChoices
 )
 
 func backendLabel(name string) string {
@@ -66,6 +67,7 @@ func (a *app) buildMenu() []MenuItem {
 	items = append(items, MenuItem{Label: "Recent translations (click to copy)", Sub: recent})
 	items = append(items, MenuItem{ID: cmdSettings, Label: "Settings..."})
 	items = append(items, MenuItem{ID: cmdAutoPaste, Label: "Paste automatically after translating", Checked: a.conf.AutoPaste})
+	items = append(items, MenuItem{ID: cmdNotifyOnComplete, Label: "Show notification when translation finishes", Checked: a.conf.NotifyOnComplete})
 
 	var hotkeys []MenuItem
 	none := a.hasNoHotkey()
@@ -145,6 +147,12 @@ func (a *app) handleCommand(id int) {
 		if a.conf.AutoPaste {
 			a.tray.Notify("Clipboard Translator", "The translation will be pasted into the window you selected the text in.", false)
 		}
+	case id == cmdNotifyOnComplete:
+		a.ensureRevisions()
+		a.conf.NotifyOnComplete = !a.conf.NotifyOnComplete
+		a.confRevision++
+		a.notifyOnCompleteRev = a.confRevision
+		a.saveConfig(map[string]any{"notify_on_complete": a.conf.NotifyOnComplete})
 	case id == cmdSettings:
 		a.openSettings()
 	case id == cmdHistoryClear:

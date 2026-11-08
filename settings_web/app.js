@@ -20,11 +20,12 @@
   const dirtyFields = {
     profiles: false,
     auto_paste: false,
+    notify_on_complete: false,
     max_chars: false,
   };
 
   function isDirty() {
-    return dirtyFields.profiles || dirtyFields.auto_paste || dirtyFields.max_chars;
+    return dirtyFields.profiles || dirtyFields.auto_paste || dirtyFields.notify_on_complete || dirtyFields.max_chars;
   }
 
   function markDirty() {
@@ -35,6 +36,7 @@
   function clearDirty() {
     dirtyFields.profiles = false;
     dirtyFields.auto_paste = false;
+    dirtyFields.notify_on_complete = false;
     dirtyFields.max_chars = false;
     dirty = false;
     setStatus('');
@@ -79,6 +81,7 @@
   function toModel(st) {
     return {
       auto_paste: !!st.auto_paste,
+      notify_on_complete: !!st.notify_on_complete,
       max_chars: st.max_chars || 4000,
       profiles: (st.profiles || []).map((p) => ({
         ctrl: !!p.ctrl, alt: !!p.alt, shift: !!p.shift, win: !!p.win, key: p.key || 'E',
@@ -94,14 +97,16 @@
     const changed = [];
     if (dirtyFields.profiles) changed.push('profiles');
     if (dirtyFields.auto_paste) changed.push('auto_paste');
+    if (dirtyFields.notify_on_complete) changed.push('notify_on_complete');
     if (dirtyFields.max_chars) changed.push('max_chars');
     if (changed.length === 0) {
-      changed.push('profiles', 'auto_paste', 'max_chars');
+      changed.push('profiles', 'auto_paste', 'notify_on_complete', 'max_chars');
     }
     return {
       base_revision: baseRevision,
       changed,
       auto_paste: m.auto_paste,
+      notify_on_complete: m.notify_on_complete,
       max_chars: m.max_chars,
       profiles: m.profiles.map((p) => {
         const out = { ctrl: p.ctrl, alt: p.alt, shift: p.shift, win: p.win, key: p.key };
@@ -148,6 +153,8 @@
         renderHotkeys();
         const autoPasteEl = $('auto-paste');
         if (autoPasteEl) autoPasteEl.checked = model.auto_paste;
+        const notifyOnCompleteEl = $('notify-on-complete');
+        if (notifyOnCompleteEl) notifyOnCompleteEl.checked = model.notify_on_complete;
         const maxCharsEl = $('max-chars');
         if (maxCharsEl) maxCharsEl.value = String(model.max_chars);
         showBanner([]);
@@ -396,6 +403,11 @@
       const autoPasteEl = $('auto-paste');
       if (autoPasteEl) autoPasteEl.checked = model.auto_paste;
     }
+    if (!dirtyFields.notify_on_complete && st.notify_on_complete !== undefined) {
+      model.notify_on_complete = !!st.notify_on_complete;
+      const notifyOnCompleteEl = $('notify-on-complete');
+      if (notifyOnCompleteEl) notifyOnCompleteEl.checked = model.notify_on_complete;
+    }
     if (!dirtyFields.max_chars && st.max_chars !== undefined) {
       model.max_chars = st.max_chars;
       const maxCharsEl = $('max-chars');
@@ -503,6 +515,7 @@
     renderAll();
     renderHotkeys();
     $('auto-paste').checked = model.auto_paste;
+    $('notify-on-complete').checked = model.notify_on_complete;
     $('max-chars').value = String(model.max_chars);
     const warnings = r.data.warnings || [];
     showBanner(warnings.length ? ['Saved, but note:'].concat(warnings) : []);
@@ -527,6 +540,7 @@
     renderAll();
     renderHotkeys();
     $('auto-paste').checked = model.auto_paste;
+    $('notify-on-complete').checked = model.notify_on_complete;
     $('max-chars').value = String(model.max_chars);
     inactiveBanner(state.inactive);
     schedulePoll();
@@ -554,6 +568,11 @@
     $('auto-paste').addEventListener('change', (e) => {
       model.auto_paste = e.target.checked;
       dirtyFields.auto_paste = true;
+      markDirty();
+    });
+    $('notify-on-complete').addEventListener('change', (e) => {
+      model.notify_on_complete = e.target.checked;
+      dirtyFields.notify_on_complete = true;
       markDirty();
     });
     $('max-chars').addEventListener('input', () => {

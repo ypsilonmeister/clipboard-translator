@@ -220,6 +220,156 @@ func TestAutoPasteToggleIsSaved(t *testing.T) {
 	}
 }
 
+func TestNotifyOnCompleteToggleIsSaved(t *testing.T) {
+	a, _, _, _, _ := uxApp(t)
+	a.handleCommand(cmdNotifyOnComplete)
+	if !a.conf.NotifyOnComplete {
+		t.Fatal("toggle on")
+	}
+	if c, _ := loadConfig(a.dir); !c.NotifyOnComplete {
+		t.Fatal("the setting must be saved")
+	}
+	checked := false
+	for _, it := range a.buildMenu() {
+		if it.ID == cmdNotifyOnComplete {
+			checked = it.Checked
+		}
+	}
+	if !checked {
+		t.Fatal("the menu item must be checked")
+	}
+	a.handleCommand(cmdNotifyOnComplete)
+	if a.conf.NotifyOnComplete {
+		t.Fatal("toggle off")
+	}
+	if c, _ := loadConfig(a.dir); c.NotifyOnComplete {
+		t.Fatal("off must be saved too")
+	}
+}
+
+func TestHandleResultNotifyOnComplete(t *testing.T) {
+	a, tray, cb, pastes, fg := uxApp(t)
+	a.conf.NotifyOnComplete = true
+
+	wantTitle, wantBody := completionNotification()
+	if wantTitle == "" || wantBody == "" {
+		t.Fatal("completion notification must not be empty")
+	}
+
+	assertGenericNotification := func(t *testing.T, source, translated string) {
+		t.Helper()
+		if tray.lastTitle() != wantTitle {
+			t.Fatalf("title = %q, want %q", tray.lastTitle(), wantTitle)
+		}
+		if tray.lastNote() != wantBody {
+			t.Fatalf("note = %q, want %q", tray.lastNote(), wantBody)
+		}
+		for _, s := range []string{tray.lastTitle(), tray.lastNote()} {
+			if strings.Contains(s, source) {
+				t.Fatalf("notification %q must not contain source text %q", s, source)
+			}
+			if strings.Contains(s, translated) {
+				t.Fatalf("notification %q must not contain translated text %q", s, translated)
+			}
+			if strings.Contains(s, "Japanese") || strings.Contains(s, "English") || strings.Contains(s, "→") {
+				t.Fatalf("notification %q must not leak language names or direction", s)
+			}
+		}
+	}
+
+	// 1. auto-paste off, translation finishes: generic completion notification shown.
+	cb.text = "こんにちは"
+	g := pending(a)
+	a.handleResult(result{
+		original:      "こんにちは",
+		translated:    "Hello world",
+		generation:    g,
+		direction:     translationDirection{"ja", "en"},
+		window:        100,
+		fromSelection: true,
+	})
+	if *pastes != 0 {
+		t.Fatal("auto-paste is off; must not paste")
+	}
+	assertGenericNotification(t, "こんにちは", "Hello world")
+
+	// 2. target-only profile direction (Source empty): generic completion notification shown.
+	cb.text = "Hello"
+	g = pending(a)
+	a.handleResult(result{
+		original:      "Hello",
+		translated:    "こんにちは",
+		generation:    g,
+		direction:     translationDirection{Target: "ja"},
+		window:        100,
+		fromSelection: true,
+	})
+	assertGenericNotification(t, "Hello", "こんにちは")
+
+	// 3. auto-paste on and pasted successfully (action == pasteNow): no completion notification.
+	a.conf.AutoPaste = true
+	*fg = 100
+	tray.notes = nil
+	tray.titles = nil
+	cb.text = "apple"
+	g = pending(a)
+	a.handleResult(result{
+		original:      "apple",
+		translated:    "りんご",
+		generation:    g,
+		direction:     translationDirection{"en", "ja"},
+		window:        100,
+		fromSelection: true,
+	})
+	if *pastes != 1 {
+		t.Fatalf("pastes = %d, want 1", *pastes)
+	}
+	for _, title := range tray.titles {
+		if title == wantTitle {
+			t.Fatalf("pasteNow must not show completion notification, got title %q", title)
+		}
+	}
+	for _, note := range tray.notes {
+		if strings.Contains(note, "apple") || strings.Contains(note, "りんご") {
+			t.Fatalf("notification note %q must not contain source or translated text", note)
+		}
+	}
+
+	// 4. auto-paste on but window changed (action == pasteWindowChanged): completion notification is shown.
+	*fg = 200
+	cb.text = "orange"
+	g = pending(a)
+	a.handleResult(result{
+		original:      "orange",
+		translated:    "みかん",
+		generation:    g,
+		direction:     translationDirection{"en", "ja"},
+		window:        100,
+		fromSelection: true,
+	})
+	assertGenericNotification(t, "orange", "みかん")
+
+	// 5. clipboard text changed during translation: result discarded, no completion notification.
+	tray.notes = nil
+	tray.titles = nil
+	cb.text = "user copied something else"
+	g = pending(a)
+	a.handleResult(result{
+		original:      "grape",
+		translated:    "ぶどう",
+		generation:    g,
+		direction:     translationDirection{"en", "ja"},
+		window:        100,
+		fromSelection: true,
+	})
+	if len(tray.titles) != 0 {
+		t.Fatalf("clipboard changed during translation must not notify completion, got %v", tray.titles)
+	}
+	if cb.text != "user copied something else" {
+		t.Fatalf("clipboard must be kept intact, got %q", cb.text)
+	}
+}
+
 func TestHistoryMenuCopiesAndClears(t *testing.T) {
 	a, tray, cb, _, _ := uxApp(t)
 	find := func(label string) []MenuItem {

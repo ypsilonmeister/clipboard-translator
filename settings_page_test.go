@@ -639,6 +639,52 @@ func TestTrayAutoPasteChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 	}
 }
 
+func TestTrayNotifyOnCompleteChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+
+	_, body := s.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, body).State
+	if st == nil || st.Revision == 0 {
+		t.Fatalf("expected state with revision: %s", body)
+	}
+
+	// Tray toggles notify_on_complete while settings page is open.
+	f.a.handleCommand(cmdNotifyOnComplete)
+	if !f.a.conf.NotifyOnComplete {
+		t.Fatal("tray notify_on_complete not enabled")
+	}
+
+	// Settings page saves max_chars = 3500 without touching notify_on_complete.
+	resp, body := s.do(t, "POST", "/api/save", map[string]any{
+		"base_revision": st.Revision,
+		"max_chars":     3500,
+		"changed":       []string{"max_chars"},
+	}, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 200 || r.Error != "" {
+		t.Fatalf("save failed: %d %s", resp.StatusCode, body)
+	}
+
+	if !f.a.conf.NotifyOnComplete {
+		t.Fatal("tray notify_on_complete overwritten in memory")
+	}
+	if f.a.conf.MaxChars != 3500 {
+		t.Fatalf("max_chars not saved: %d", f.a.conf.MaxChars)
+	}
+
+	c, err := loadConfig(f.a.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.NotifyOnComplete {
+		t.Fatal("tray notify_on_complete overwritten on disk")
+	}
+	if c.MaxChars != 3500 {
+		t.Fatalf("max_chars not saved to disk: %d", c.MaxChars)
+	}
+}
+
 func TestOverlappingEditsConflictHandling(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
@@ -707,6 +753,29 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 	}
 	if r2.State == nil || r2.State.AutoPaste != curAutoPaste {
 		t.Fatalf("conflict state auto_paste mismatch: %+v", r2.State)
+	}
+
+	// Case B2: Tray changes notify_on_complete, page attempts to save stale notify_on_complete.
+	_, body = s.do(t, "GET", "/api/state", nil, nil)
+	st3 := decodeAPI(t, body).State
+
+	f.a.handleCommand(cmdNotifyOnComplete) // toggles notify_on_complete
+	curNotify := f.a.conf.NotifyOnComplete
+
+	resp, body = s.do(t, "POST", "/api/save", map[string]any{
+		"base_revision":      st3.Revision,
+		"notify_on_complete": !curNotify,
+		"changed":            []string{"notify_on_complete"},
+	}, nil)
+	r3 := decodeAPI(t, body)
+	if resp.StatusCode != 409 {
+		t.Fatalf("overlapping notify_on_complete edit must return 409 Conflict, got %d %s", resp.StatusCode, body)
+	}
+	if f.a.conf.NotifyOnComplete != curNotify {
+		t.Fatal("notify_on_complete was overwritten on conflict")
+	}
+	if r3.State == nil || r3.State.NotifyOnComplete != curNotify {
+		t.Fatalf("conflict state notify_on_complete mismatch: %+v", r3.State)
 	}
 
 	// Case C: Direct applySettings call with stale BaseRevision on conflicting field.

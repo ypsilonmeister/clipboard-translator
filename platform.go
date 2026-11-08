@@ -60,3 +60,11 @@ func pasteShortcut() string {
 	}
 	return "Ctrl+V"
 }
+
+// completionNotification returns the generic title and body for the
+// completion notification. It deliberately omits the source text,
+// translation, and language names so sensitive text is not leaked on
+// a shared screen.
+func completionNotification() (string, string) {
+	return "Translation ready", "Translation ready in the clipboard. Press " + pasteShortcut() + " to paste."
+}
