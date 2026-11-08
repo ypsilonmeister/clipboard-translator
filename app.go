@@ -41,6 +41,11 @@ type app struct {
 	openURL        func(target string)  // openTarget, replaceable in tests
 	dl             *downloadManager     // model downloads; they outlive the settings page
 
+	confRevision int // bumped on every configuration change
+	profilesRev  int // bumped when profiles (languages/hotkeys) change
+	autoPasteRev int // bumped when auto_paste changes
+	maxCharsRev  int // bumped when max_chars changes
+
 	updates  chan updateResult
 	checking bool
 	latest   releaseInfo // newest release seen by "Check for updates"
@@ -67,6 +72,10 @@ type extraHotkey struct {
 func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Writer) *app {
 	conf.normalizeProfiles()
 	a := &app{
+		confRevision: 1,
+		profilesRev:  1,
+		autoPasteRev: 1,
+		maxCharsRev:  1,
 		hotkeyLimit:  hotkeyLimit(),
 		settingsReqs: make(chan settingsRequest, 8),
 		dl:           newDownloadManager(dir),

@@ -185,6 +185,12 @@ func TestSettingsServerHeadersAndAssets(t *testing.T) {
 			t.Errorf("app.js uses %s", bad)
 		}
 	}
+	// Issue #81: goodbye must clear timers and reset dirty state, and save must clear stale banner.
+	for _, want := range []string{"clearTimeout(pollTimer)", "clearInterval(pingTimer)", "showBanner([])"} {
+		if !strings.Contains(string(js), want) {
+			t.Errorf("app.js lacks %q", want)
+		}
+	}
 }
 
 func TestSettingsStateAndSave(t *testing.T) {
@@ -448,5 +454,244 @@ func TestProfileFormRoundTrip(t *testing.T) {
 	base.normalizeProfiles()
 	if _, err := validForm().toConfig(base); err != nil || len(base.Profiles) != 1 {
 		t.Errorf("toConfig changed the base or failed: %v %+v", err, base.Profiles)
+	}
+}
+
+func TestTrayLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+
+	// Settings page opened: read state.
+	_, body := s.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, body).State
+	if st == nil || st.Revision == 0 {
+		t.Fatalf("expected state with revision: %s", body)
+	}
+
+	// Tray changes languages while settings page is open.
+	f.a.changeLanguages([]string{"ja", "ko"})
+	if !samePair(f.a.conf.Languages, []string{"ja", "ko"}) {
+		t.Fatalf("tray did not change language: %v", f.a.conf.Languages)
+	}
+
+	// Settings page saves an unrelated setting (max_chars = 2000).
+	resp, body := s.do(t, "POST", "/api/save", map[string]any{
+		"base_revision": st.Revision,
+		"max_chars":     2000,
+		"changed":       []string{"max_chars"},
+	}, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 200 || r.Error != "" {
+		t.Fatalf("save failed: %d %s", resp.StatusCode, body)
+	}
+
+	// The tray's language choice must be preserved in memory and on disk.
+	if !samePair(f.a.conf.Languages, []string{"ja", "ko"}) {
+		t.Fatalf("tray languages overwritten in memory: %v", f.a.conf.Languages)
+	}
+	if !samePair(f.a.conf.Profiles[0].Languages, []string{"ja", "ko"}) {
+		t.Fatalf("profile 0 languages overwritten in memory: %v", f.a.conf.Profiles[0].Languages)
+	}
+	if f.a.conf.MaxChars != 2000 {
+		t.Fatalf("max_chars not saved: %d", f.a.conf.MaxChars)
+	}
+
+	c, err := loadConfig(f.a.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !samePair(c.Languages, []string{"ja", "ko"}) && !samePair(c.Profiles[0].Languages, []string{"ja", "ko"}) {
+		t.Fatalf("tray languages overwritten on disk: %+v", c)
+	}
+	if c.MaxChars != 2000 {
+		t.Fatalf("max_chars not saved to disk: %d", c.MaxChars)
+	}
+
+	// Also verify direct applySettings with Changed specified preserves tray languages.
+	f.a.changeLanguages([]string{"ja", "zh-hans"})
+	if _, err := f.a.applySettings(settingsForm{
+		BaseRevision: f.a.confRevision,
+		MaxChars:     3000,
+		Changed:      []string{"max_chars"},
+	}); err != nil {
+		t.Fatalf("applySettings: %v", err)
+	}
+	if !samePair(f.a.conf.Languages, []string{"ja", "zh-hans"}) {
+		t.Fatalf("direct applySettings overwrote tray languages: %v", f.a.conf.Languages)
+	}
+}
+
+func TestTrayHotkeyChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+
+	_, body := s.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, body).State
+	if st == nil || st.Revision == 0 {
+		t.Fatalf("expected state with revision: %s", body)
+	}
+
+	// Tray changes hotkey while settings page is open.
+	f.a.changeHotkey("Ctrl+Shift+Y")
+	if f.a.conf.Hotkey != "Ctrl+Shift+Y" {
+		t.Fatalf("tray hotkey not changed: %s", f.a.conf.Hotkey)
+	}
+
+	// Settings page saves an unrelated setting (max_chars = 2500).
+	resp, body := s.do(t, "POST", "/api/save", map[string]any{
+		"base_revision": st.Revision,
+		"max_chars":     2500,
+		"changed":       []string{"max_chars"},
+	}, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 200 || r.Error != "" {
+		t.Fatalf("save failed: %d %s", resp.StatusCode, body)
+	}
+
+	if f.a.conf.Hotkey != "Ctrl+Shift+Y" || f.a.conf.Profiles[0].Hotkey != "Ctrl+Shift+Y" {
+		t.Fatalf("tray hotkey overwritten in memory: %s", f.a.conf.Hotkey)
+	}
+	if f.a.conf.MaxChars != 2500 {
+		t.Fatalf("max_chars not saved: %d", f.a.conf.MaxChars)
+	}
+
+	c, err := loadConfig(f.a.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Hotkey != "Ctrl+Shift+Y" || c.Profiles[0].Hotkey != "Ctrl+Shift+Y" {
+		t.Fatalf("tray hotkey overwritten on disk: %+v", c)
+	}
+	if c.MaxChars != 2500 {
+		t.Fatalf("max_chars not saved to disk: %d", c.MaxChars)
+	}
+}
+
+func TestTrayAutoPasteChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+
+	_, body := s.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, body).State
+	if st == nil || st.Revision == 0 {
+		t.Fatalf("expected state with revision: %s", body)
+	}
+
+	// Tray toggles auto-paste while settings page is open.
+	f.a.handleCommand(cmdAutoPaste)
+	if !f.a.conf.AutoPaste {
+		t.Fatal("tray auto_paste not enabled")
+	}
+
+	// Settings page saves max_chars = 3500 without touching auto_paste.
+	resp, body := s.do(t, "POST", "/api/save", map[string]any{
+		"base_revision": st.Revision,
+		"max_chars":     3500,
+		"changed":       []string{"max_chars"},
+	}, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 200 || r.Error != "" {
+		t.Fatalf("save failed: %d %s", resp.StatusCode, body)
+	}
+
+	if !f.a.conf.AutoPaste {
+		t.Fatal("tray auto_paste overwritten in memory")
+	}
+	if f.a.conf.MaxChars != 3500 {
+		t.Fatalf("max_chars not saved: %d", f.a.conf.MaxChars)
+	}
+
+	c, err := loadConfig(f.a.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.AutoPaste {
+		t.Fatal("tray auto_paste overwritten on disk")
+	}
+	if c.MaxChars != 3500 {
+		t.Fatalf("max_chars not saved to disk: %d", c.MaxChars)
+	}
+}
+
+func TestOverlappingEditsConflictHandling(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+
+	// Case A: Tray changes languages, page attempts to save stale profiles.
+	_, body := s.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, body).State
+	if st == nil || st.Revision == 0 {
+		t.Fatalf("expected state: %s", body)
+	}
+
+	f.a.changeLanguages([]string{"ja", "ko"})
+
+	resp, body := s.do(t, "POST", "/api/save", map[string]any{
+		"base_revision": st.Revision,
+		"profiles": []profileForm{
+			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}},
+		},
+		"changed": []string{"profiles"},
+	}, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 409 {
+		t.Fatalf("overlapping edit must return 409 Conflict, got %d %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(r.Error, "settings were changed in the tray menu") {
+		t.Fatalf("conflict error message unexpected: %q", r.Error)
+	}
+	if r.State == nil || !samePair(r.State.Profiles[0].Languages, []string{"ja", "ko"}) {
+		t.Fatalf("conflict response must return current state: %+v", r.State)
+	}
+	// Tray language stayed intact.
+	if !samePair(f.a.conf.Languages, []string{"ja", "ko"}) {
+		t.Fatalf("conf.Languages was corrupted on conflict: %v", f.a.conf.Languages)
+	}
+
+	// Resaving with updated revision succeeds.
+	resp, body = s.do(t, "POST", "/api/save", map[string]any{
+		"base_revision": r.State.Revision,
+		"profiles": []profileForm{
+			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "ko"}},
+		},
+		"changed": []string{"profiles"},
+	}, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("resave with current revision failed: %d %s", resp.StatusCode, body)
+	}
+
+	// Case B: Tray changes auto-paste, page attempts to save stale auto-paste.
+	_, body = s.do(t, "GET", "/api/state", nil, nil)
+	st2 := decodeAPI(t, body).State
+
+	f.a.handleCommand(cmdAutoPaste) // toggles auto-paste
+	curAutoPaste := f.a.conf.AutoPaste
+
+	resp, body = s.do(t, "POST", "/api/save", map[string]any{
+		"base_revision": st2.Revision,
+		"auto_paste":    !curAutoPaste,
+		"changed":       []string{"auto_paste"},
+	}, nil)
+	r2 := decodeAPI(t, body)
+	if resp.StatusCode != 409 {
+		t.Fatalf("overlapping auto_paste edit must return 409 Conflict, got %d %s", resp.StatusCode, body)
+	}
+	if f.a.conf.AutoPaste != curAutoPaste {
+		t.Fatal("auto_paste was overwritten on conflict")
+	}
+	if r2.State == nil || r2.State.AutoPaste != curAutoPaste {
+		t.Fatalf("conflict state auto_paste mismatch: %+v", r2.State)
+	}
+
+	// Case C: Direct applySettings call with stale BaseRevision on conflicting field.
+	form := f.a.settingsState().settingsForm
+	f.a.changeLanguages([]string{"ja", "zh-hans"})
+	form.Changed = []string{"profiles"}
+	_, err := f.a.applySettings(form)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("applySettings with stale BaseRevision must return ErrConflict, got %v", err)
+	}
+	if !samePair(f.a.conf.Languages, []string{"ja", "zh-hans"}) {
+		t.Fatalf("tray change lost on direct applySettings conflict: %v", f.a.conf.Languages)
 	}
 }

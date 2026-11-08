@@ -46,9 +46,11 @@ type profileForm struct {
 
 // settingsForm is everything the page edits.
 type settingsForm struct {
-	Profiles  []profileForm `json:"profiles"`
-	AutoPaste bool          `json:"auto_paste"`
-	MaxChars  int           `json:"max_chars"`
+	BaseRevision int           `json:"base_revision,omitempty"`
+	Profiles     []profileForm `json:"profiles,omitempty"`
+	AutoPaste    bool          `json:"auto_paste"`
+	MaxChars     int           `json:"max_chars"`
+	Changed      []string      `json:"changed,omitempty"`
 }
 
 type languageOption struct {
@@ -59,6 +61,7 @@ type languageOption struct {
 // settingsState is what the page shows.
 type settingsState struct {
 	settingsForm
+	Revision   int              `json:"revision"`
 	Languages  []languageOption `json:"language_options"`
 	MaxHotkeys int              `json:"max_hotkeys"`
 	WinKey     string           `json:"win_key"`  // what the Win modifier is called here
@@ -320,18 +323,50 @@ func (s *settingsServer) handleState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *settingsServer) handleSave(w http.ResponseWriter, r *http.Request) {
-	var form settingsForm
+	var payload struct {
+		BaseRevision *int           `json:"base_revision"`
+		Profiles     *[]profileForm `json:"profiles"`
+		AutoPaste    *bool          `json:"auto_paste"`
+		MaxChars     *int           `json:"max_chars"`
+		Changed      []string       `json:"changed"`
+	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&form); err != nil {
+	if err := dec.Decode(&payload); err != nil {
 		writeJSON(w, http.StatusBadRequest, apiResponse{Error: "The settings could not be read: " + err.Error()})
 		return
+	}
+	form := settingsForm{
+		Changed: payload.Changed,
+	}
+	if payload.BaseRevision != nil {
+		form.BaseRevision = *payload.BaseRevision
+	}
+	if payload.Profiles != nil {
+		form.Profiles = *payload.Profiles
+		if len(payload.Changed) == 0 {
+			form.Changed = append(form.Changed, "profiles")
+		}
+	}
+	if payload.AutoPaste != nil {
+		form.AutoPaste = *payload.AutoPaste
+		if len(payload.Changed) == 0 {
+			form.Changed = append(form.Changed, "auto_paste")
+		}
+	}
+	if payload.MaxChars != nil {
+		form.MaxChars = *payload.MaxChars
+		if len(payload.Changed) == 0 {
+			form.Changed = append(form.Changed, "max_chars")
+		}
 	}
 	rep, ok := s.roundTrip(newSettingsRequest(&form, 8*time.Second))
 	if !ok {
 		status := http.StatusUnprocessableEntity
 		if errors.Is(rep.err, errSettingsBusy) {
 			status = http.StatusServiceUnavailable
+		} else if errors.Is(rep.err, ErrConflict) {
+			status = http.StatusConflict
 		}
 		writeJSON(w, status, apiResponse{State: stateOf(rep), Warnings: rep.warnings, Error: rep.err.Error()})
 		return
@@ -458,27 +493,44 @@ func (f profileForm) hotkeyString() string {
 // toConfig is base with the form's profiles and auto-paste, validated like a
 // config.json read at start-up. base is not modified.
 func (f settingsForm) toConfig(base Config) (Config, error) {
-	if len(f.Profiles) == 0 {
-		return base, errors.New("There must be at least one hotkey.")
-	}
 	c := base
-	c.Profiles = make([]Profile, len(f.Profiles))
-	for i, p := range f.Profiles {
-		if p.Target != "" && len(p.Languages) > 0 {
-			return base, fmt.Errorf("profiles[%d]: use either two languages or one target language, not both", i)
+	hasField := func(field string) bool {
+		if len(f.Changed) == 0 {
+			return true
 		}
-		c.Profiles[i] = Profile{Hotkey: p.hotkeyString()}
-		if p.Target != "" {
-			c.Profiles[i].Target = p.Target
-		} else {
-			c.Profiles[i].Languages = append([]string{}, p.Languages...)
+		for _, v := range f.Changed {
+			if v == field {
+				return true
+			}
+		}
+		return false
+	}
+	if hasField("profiles") {
+		if len(f.Profiles) == 0 {
+			return base, errors.New("There must be at least one hotkey.")
+		}
+		c.Profiles = make([]Profile, len(f.Profiles))
+		for i, p := range f.Profiles {
+			if p.Target != "" && len(p.Languages) > 0 {
+				return base, fmt.Errorf("profiles[%d]: use either two languages or one target language, not both", i)
+			}
+			c.Profiles[i] = Profile{Hotkey: p.hotkeyString()}
+			if p.Target != "" {
+				c.Profiles[i].Target = p.Target
+			} else {
+				c.Profiles[i].Languages = append([]string{}, p.Languages...)
+			}
 		}
 	}
-	c.AutoPaste = f.AutoPaste
-	if err := validateMaxChars(f.MaxChars); err != nil {
-		return base, err
+	if hasField("auto_paste") {
+		c.AutoPaste = f.AutoPaste
 	}
-	c.MaxChars = f.MaxChars
+	if hasField("max_chars") {
+		if err := validateMaxChars(f.MaxChars); err != nil {
+			return base, err
+		}
+		c.MaxChars = f.MaxChars
+	}
 	if err := c.resolveProfiles(true); err != nil {
 		return base, err
 	}

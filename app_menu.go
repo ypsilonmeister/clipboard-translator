@@ -137,7 +137,10 @@ func (a *app) handleCommand(id int) {
 			a.tray.SetStatus(a.readyTip)
 		}
 	case id == cmdAutoPaste:
+		a.ensureRevisions()
 		a.conf.AutoPaste = !a.conf.AutoPaste
+		a.confRevision++
+		a.autoPasteRev = a.confRevision
 		a.saveConfig(map[string]any{"auto_paste": a.conf.AutoPaste})
 		if a.conf.AutoPaste {
 			a.tray.Notify("Clipboard Translator", "The translation will be pasted into the window you selected the text in.", false)
@@ -187,8 +190,11 @@ func (a *app) changeLanguages(pair []string) {
 	if samePair(pair, a.conf.Languages) || a.conf.Profiles[0].Target != "" {
 		return
 	}
+	a.ensureRevisions()
 	a.conf.Languages = append([]string(nil), pair...)
 	a.conf.Profiles[0].Languages = append([]string(nil), pair...)
+	a.confRevision++
+	a.profilesRev = a.confRevision
 	if a.conf.explicitProfiles {
 		a.saveConfig(map[string]any{"profiles": a.conf.Profiles})
 	} else {
@@ -228,9 +234,12 @@ func (a *app) changeHotkey(spec string) {
 		a.tray.Notify("Clipboard Translator", fmt.Sprintf("Could not use %s (already taken?). Keeping %s.", spec, a.conf.Hotkey), true)
 		return
 	}
+	a.ensureRevisions()
 	a.hotkey = nh
 	a.conf.Hotkey = spec
 	a.conf.Profiles[0].Hotkey = spec
+	a.confRevision++
+	a.profilesRev = a.confRevision
 	a.updateReadyTip()
 	a.tray.SetStatus(a.readyTip)
 	if a.conf.explicitProfiles {

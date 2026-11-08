@@ -14,6 +14,23 @@ import (
 
 const settingsIdle = 5 * time.Minute
 
+var ErrConflict = errors.New("The settings were changed in the tray menu while this page was open. Reload the settings to see the changes.")
+
+func (a *app) ensureRevisions() {
+	if a.confRevision == 0 {
+		a.confRevision = 1
+	}
+	if a.profilesRev == 0 {
+		a.profilesRev = 1
+	}
+	if a.autoPasteRev == 0 {
+		a.autoPasteRev = 1
+	}
+	if a.maxCharsRev == 0 {
+		a.maxCharsRev = 1
+	}
+}
+
 // openSettings starts the settings server if it is not running and opens the
 // page in the browser. The server closes itself when the page is gone.
 func (a *app) openSettings() {
@@ -79,12 +96,15 @@ func (a *app) handleSettingsRequest(req settingsRequest) {
 
 // settingsState is what the page shows now.
 func (a *app) settingsState() settingsState {
+	a.ensureRevisions()
 	st := settingsState{
+		Revision:   a.confRevision,
 		Languages:  languageOptions(),
 		MaxHotkeys: a.hotkeyLimit,
 		WinKey:     winKeyName(runtime.GOOS),
 		Inactive:   a.inactiveHotkeys(),
 	}
+	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste
 	st.MaxChars = a.conf.MaxChars
 	st.LicenseURL = plamoLicenseURL
@@ -164,6 +184,34 @@ func sameProfiles(a, b []Profile) bool {
 // leaves everything as it was, when the settings are invalid or none of the new
 // hotkeys can be registered. A save that changes nothing does nothing.
 func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
+	a.ensureRevisions()
+	hasField := func(field string) bool {
+		if len(form.Changed) == 0 {
+			return true
+		}
+		for _, v := range form.Changed {
+			if v == field {
+				return true
+			}
+		}
+		return false
+	}
+
+	if form.BaseRevision > 0 {
+		if len(form.Changed) == 0 && form.BaseRevision < a.confRevision {
+			return nil, ErrConflict
+		}
+		if hasField("profiles") && form.BaseRevision < a.profilesRev {
+			return nil, ErrConflict
+		}
+		if hasField("auto_paste") && form.BaseRevision < a.autoPasteRev {
+			return nil, ErrConflict
+		}
+		if hasField("max_chars") && form.BaseRevision < a.maxCharsRev {
+			return nil, ErrConflict
+		}
+	}
+
 	cand, err := form.toConfig(a.conf)
 	if err != nil {
 		return nil, err
@@ -171,7 +219,12 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 	if sameProfiles(cand.Profiles, a.conf.Profiles) && cand.AutoPaste == a.conf.AutoPaste && cand.MaxChars == a.conf.MaxChars {
 		return a.inactiveHotkeys(), nil
 	}
-	if sameProfiles(cand.Profiles, a.conf.Profiles) {
+
+	changedProfiles := hasField("profiles") && !sameProfiles(cand.Profiles, a.conf.Profiles)
+	changedAutoPaste := hasField("auto_paste") && cand.AutoPaste != a.conf.AutoPaste
+	changedMaxChars := hasField("max_chars") && cand.MaxChars != a.conf.MaxChars
+
+	if !changedProfiles {
 		// No hotkey changes: leave the registrations alone. config.json gets
 		// "profiles" below even so, and loadConfig prefers that key, so the tray
 		// must from now on save "profiles" too: a legacy hotkey/languages edit
@@ -192,9 +245,21 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 			return nil, errors.New("None of the hotkeys could be registered (another program may be using them), so the previous settings were kept.")
 		}
 	}
-	set := map[string]any{"profiles": cand.Profiles, "hotkey": cand.Profiles[0].Hotkey, "auto_paste": cand.AutoPaste, "max_chars": cand.MaxChars}
-	if cand.Profiles[0].Languages != nil {
-		set["languages"] = cand.Profiles[0].Languages
+
+	a.confRevision++
+	if changedProfiles {
+		a.profilesRev = a.confRevision
+	}
+	if changedAutoPaste {
+		a.autoPasteRev = a.confRevision
+	}
+	if changedMaxChars {
+		a.maxCharsRev = a.confRevision
+	}
+
+	set := map[string]any{"profiles": a.conf.Profiles, "hotkey": a.conf.Profiles[0].Hotkey, "auto_paste": a.conf.AutoPaste, "max_chars": a.conf.MaxChars}
+	if a.conf.Profiles[0].Languages != nil {
+		set["languages"] = a.conf.Profiles[0].Languages
 	}
 	if err := updateConfigFile(a.dir, set); err != nil {
 		log.Printf("could not save config.json: %v", err)
@@ -202,7 +267,7 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 	}
 	a.refreshStatus()
 	warnings = append(warnings, a.inactiveHotkeys()...)
-	log.Printf("settings applied: %d hotkey(s)", len(cand.Profiles))
+	log.Printf("settings applied: %d hotkey(s)", len(a.conf.Profiles))
 	return warnings, nil
 }
 
