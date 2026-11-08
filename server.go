@@ -90,7 +90,8 @@ func (s *supervisor) start(binary string, gpuLayers int, label string) error {
 	bindToParentLifetime(cmd)
 	recordChild(s.pidFile, cmd)
 	done := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(done) }() // the only Wait on this child
+	var waitErr error                                 // read only after done is closed
+	go func() { waitErr = cmd.Wait(); close(done) }() // the only Wait on this child
 
 	begin := time.Now()
 	startupCtx, cancel := context.WithTimeout(context.Background(), s.startupTimeout)
@@ -121,10 +122,50 @@ wait:
 		if quit {
 			return errQuit
 		}
+		if isDLLNotFound(waitErr) {
+			return &dllNotFoundError{binary: filepath.Base(binary)}
+		}
 		return err
 	}
 	s.cmd, s.done, s.apiKey = cmd, done, key
 	return nil
+}
+
+// statusDLLNotFound is the exit code Windows gives a process whose imported DLL
+// cannot be found (STATUS_DLL_NOT_FOUND, 0xC0000135). llama-server gets it when
+// the Visual C++ runtime is too old or missing; it prints nothing, so
+// server.log stays empty.
+const statusDLLNotFound = 0xC0000135
+
+func exitCodeIsDLLNotFound(code int) bool { return uint32(code) == statusDLLNotFound }
+
+// isDLLNotFound reports whether err (from cmd.Wait) is that exit.
+func isDLLNotFound(err error) bool {
+	var ee *exec.ExitError
+	return errors.As(err, &ee) && exitCodeIsDLLNotFound(ee.ExitCode())
+}
+
+// dllNotFoundError means llama-server could not even start because Windows
+// could not load a DLL it needs. Another engine build will not help in the
+// common case (the shared runtime is missing), so the message tells the user
+// what to install.
+type dllNotFoundError struct{ binary string }
+
+func (e *dllNotFoundError) Error() string {
+	return dllNotFoundMessage(e.binary, vcRuntimeInstalled())
+}
+
+const vcRedistHelp = "Install the Visual C++ Redistributable (x64), then start Clipboard Translator again:\n" +
+	"  winget install --id Microsoft.VCRedist.2015+.x64 -e\n" +
+	"or download https://aka.ms/vs/17/release/vc_redist.x64.exe"
+
+func dllNotFoundMessage(binary string, vcInstalled bool) string {
+	if !vcInstalled {
+		return "The translation server (" + binary + ") cannot start because the Visual C++ runtime is missing or too old (vcruntime140_1.dll not found).\n" + vcRedistHelp
+	}
+	return "The translation server (" + binary + ") cannot start: Windows could not find a DLL it needs (exit code 0xC0000135).\n" +
+		"Most often this is an old Visual C++ runtime. " + vcRedistHelp + "\n" +
+		"If that does not help, run Setup again to reinstall the engine."
 }
 
 // Exited is closed when the running server dies. It is nil (never ready) when

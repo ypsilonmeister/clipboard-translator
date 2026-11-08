@@ -184,6 +184,10 @@ func (a *app) startFallback() error {
 		if errors.Is(err, errQuit) {
 			return err
 		}
+		var dnf *dllNotFoundError
+		if errors.As(err, &dnf) {
+			return err // the same missing runtime stops both builds; say that, not "fallback failed"
+		}
 		return fmt.Errorf("CPU fallback failed: %w", err)
 	}
 	a.activeBackend = "cpu"

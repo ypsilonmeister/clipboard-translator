@@ -41,6 +41,11 @@ func runFakeServer() {
 			os.Exit(1)
 		}
 	}
+	// CT_TEST_FAKE_EXIT_CODE makes it exit at once with that code, like a
+	// llama-server whose DLL cannot be loaded (0xC0000135 on Windows).
+	if c, err := strconv.ParseUint(os.Getenv("CT_TEST_FAKE_EXIT_CODE"), 10, 32); err == nil {
+		os.Exit(int(c))
+	}
 	// CT_TEST_FAKE_SERVER_DELAY (milliseconds) makes the fake server slow to come up,
 	// like a big model loading, so a "busy" screen can be looked at.
 	if ms, _ := strconv.Atoi(os.Getenv("CT_TEST_FAKE_SERVER_DELAY")); ms > 0 {

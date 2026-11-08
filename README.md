@@ -34,6 +34,12 @@ macOS and Linux are experimental, and no Linux arm64 build is published.
 
 ## Install (Windows 10/11 x64)
 
+The llama.cpp builds need the **Visual C++ Redistributable (x64)**, which most PCs
+already have. On a PC without it (or with a very old one) `llama-server` exits at
+once with code `0xC0000135` and prints nothing; the app then shows a message with
+the fix. Install it with `winget install --id Microsoft.VCRedist.2015+.x64 -e`
+or from <https://aka.ms/vs/17/release/vc_redist.x64.exe>.
+
 ### Install script (recommended)
 
 Open PowerShell (no administrator rights needed) and run:

@@ -1,6 +1,27 @@
 package main
 
-import "runtime"
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+)
+
+// vcRuntimeInstalled reports whether the Visual C++ runtime that llama.cpp's
+// Windows builds import (vcruntime140_1.dll, added after the first VC++ 2015
+// redistributables) is in System32. It is true on other systems. It only
+// decides which message to show: a DLL next to llama-server would also work, so
+// a missing file never blocks a start.
+func vcRuntimeInstalled() bool {
+	if runtime.GOOS != "windows" {
+		return true
+	}
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	_, err := os.Stat(filepath.Join(root, "System32", "vcruntime140_1.dll"))
+	return err == nil
+}
 
 func serverBinaryName() string {
 	if runtime.GOOS == "windows" {
