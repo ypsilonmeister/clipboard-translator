@@ -39,13 +39,13 @@ func loadConfig2(t *testing.T, content string) error {
 }
 
 func TestLoadConfigHotkeyValidation(t *testing.T) {
-	good := []string{"Ctrl+Alt+E", "ctrl+shift+y", "Control + Alt + T", "Win+Q", "Ctrl+Alt+Shift+Z"}
+	good := []string{"Ctrl+Alt+E", "ctrl+shift+y", "Control + Alt + T", "Win+Q", "Ctrl+Alt+Shift+Z", "Ctrl+Alt+1", "Ctrl+F5", "Win+9", "Ctrl+Shift+F12", "alt+control+0"}
 	for _, h := range good {
 		if err := loadConfig2(t, `{"hotkey": "`+h+`"}`); err != nil {
 			t.Errorf("hotkey %q must be accepted: %v", h, err)
 		}
 	}
-	bad := []string{"Ctrl+Alt+1", "F8", "E", "Ctrl+Alt", "Ctrl+Alt+E+R", "Ctrl++E", "Ctrl+Alt+", "Ctrl+Alt+Esc", "Hyper+E", ""}
+	bad := []string{"F8", "E", "1", "F5", "F0", "F13", "Ctrl+Alt", "Ctrl+Alt+E+R", "Ctrl+1+2", "Ctrl+F1+F2", "Ctrl++E", "Ctrl+Alt+", "Ctrl+Alt+Esc", "Ctrl+Alt+F0", "Ctrl+Alt+F13", "Ctrl+Alt+!", "Hyper+E", ""}
 	for _, h := range bad {
 		err := loadConfig2(t, `{"hotkey": "`+h+`"}`)
 		if err == nil {
@@ -78,15 +78,22 @@ func TestValidateHotkeyPerOS(t *testing.T) {
 		{"darwin", "Control+Option+E", true},
 		{"darwin", "Super+E", true},
 		{"darwin", "Win+E", true},
+		{"darwin", "Cmd+1", true},
+		{"darwin", "Cmd+F5", true},
 		{"darwin", "Cmd+Option", false},
-		{"darwin", "Cmd+1", false},
+		{"darwin", "Cmd+F13", false},
+		{"darwin", "Cmd+!", false},
 		{"windows", "Cmd+Shift+E", false},
 		{"windows", "Ctrl+Option+E", false},
 		{"windows", "Super+E", false},
 		{"windows", "Win+E", true},
+		{"windows", "Ctrl+F5", true},
+		{"windows", "Win+9", true},
 		{"linux", "Cmd+Shift+E", false},
 		{"linux", "Option+E", false},
 		{"linux", "Super+E", true},
+		{"linux", "Super+F12", true},
+		{"linux", "Ctrl+0", true},
 	}
 	for _, c := range cases {
 		err := validateHotkeyFor(c.goos, c.hotkey)
@@ -104,10 +111,19 @@ func TestValidateHotkeyPerOS(t *testing.T) {
 
 func TestParseHotkeySpec(t *testing.T) {
 	h, err := parseHotkeySpec("ctrl + ALT+e", false)
-	if err != nil || !h.ctrl || !h.alt || h.shift || h.win || h.key != 'E' {
+	if err != nil || !h.ctrl || !h.alt || h.shift || h.win || h.key != "E" {
 		t.Fatalf("parseHotkeySpec = %+v, %v", h, err)
 	}
-	if h, err = parseHotkeySpec("Windows+Shift+q", false); err != nil || !h.win || !h.shift || h.key != 'Q' {
+	if h, err = parseHotkeySpec("Windows+Shift+q", false); err != nil || !h.win || !h.shift || h.key != "Q" {
+		t.Fatalf("parseHotkeySpec = %+v, %v", h, err)
+	}
+	if h, err = parseHotkeySpec("Ctrl+1", false); err != nil || !h.ctrl || h.alt || h.shift || h.win || h.key != "1" {
+		t.Fatalf("parseHotkeySpec = %+v, %v", h, err)
+	}
+	if h, err = parseHotkeySpec("ctrl+f5", false); err != nil || !h.ctrl || h.alt || h.shift || h.win || h.key != "F5" {
+		t.Fatalf("parseHotkeySpec = %+v, %v", h, err)
+	}
+	if h, err = parseHotkeySpec("Win+F12", false); err != nil || h.ctrl || h.alt || h.shift || !h.win || h.key != "F12" {
 		t.Fatalf("parseHotkeySpec = %+v, %v", h, err)
 	}
 }
@@ -285,5 +301,36 @@ func TestMissingTreatsDirectoriesAsMissing(t *testing.T) {
 	}
 	if got := p.missing(); len(got) != 0 {
 		t.Fatalf("regular files: missing = %v", got)
+	}
+}
+
+func TestHotkeyDuplicateDetection(t *testing.T) {
+	cases := []struct {
+		a, b string
+	}{
+		{"Ctrl+Alt+E", "alt+control+e"},
+		{"ctrl+f5", "Ctrl+F5"},
+		{"Ctrl+7", "ctrl+7"},
+		{"Shift+Ctrl+F12", "ctrl+shift+f12"},
+		{"Win+Alt+0", "alt+win+0"},
+	}
+	for _, tc := range cases {
+		c := defaultConfig()
+		c.Profiles = []Profile{
+			{Hotkey: tc.a, Languages: []string{"ja", "en"}},
+			{Hotkey: tc.b, Target: "ko"},
+		}
+		if err := c.resolveProfiles(true); err == nil || !strings.Contains(err.Error(), "same key combination") {
+			t.Errorf("expected duplicate error for %q and %q, got %v", tc.a, tc.b, err)
+		}
+
+		c2 := defaultConfig()
+		c2.Profiles = []Profile{
+			{Hotkey: "Ctrl+Alt+T", Languages: []string{"ja", "en"}},
+			{Hotkey: tc.a, Target: "ko"},
+		}
+		if idx, ok := c2.otherProfileWithHotkey(tc.b); !ok || idx != 1 {
+			t.Errorf("otherProfileWithHotkey(%q) with existing %q: got idx %d, ok %v; want 1, true", tc.b, tc.a, idx, ok)
+		}
 	}
 }

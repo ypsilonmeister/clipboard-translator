@@ -351,7 +351,7 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 
 | Key | Meaning |
 | --- | --- |
-| `hotkey` | Modifier(s) + one letter A-Z, e.g. `Ctrl+Alt+E` (on macOS `Cmd` / `Command` and `Option` also work) |
+| `hotkey` | Modifier(s) + one key: a letter A-Z, a digit 0-9, or a function key F1-F12, e.g. `Ctrl+Alt+E` or `Ctrl+F5` (on macOS `Cmd` / `Command` and `Option` also work) |
 | `auto_paste` | `true` types Ctrl+V after translating (default `false`) |
 | `notify_on_complete` | `true` shows a tray notification that the translation is ready in the clipboard (without showing text) when not auto-pasted (default `false`) |
 | `languages` | Two language codes translated in both directions, e.g. `["ja", "en"]` (default), `["en", "ko"]`, `["ja", "zh-hans"]`. Codes are the model's: `ja en ko zh-hans zh-hant ru th ar de fr es ...` (53 in all, see the [model card](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)). The direction is read from the script of the text, so the two languages must use different scripts (en ↔ de is refused for now). Japanese ↔ English is the main use; other languages are best effort. |

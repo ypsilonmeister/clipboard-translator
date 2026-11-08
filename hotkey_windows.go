@@ -81,6 +81,19 @@ var (
 
 func isHotkeyID(id uintptr) bool { return id >= hotkeyID && id < hotkeyID+maxWindowsHotkeys }
 
+func windowsVK(key string) (uintptr, error) {
+	if len(key) == 1 {
+		c := key[0]
+		if (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			return uintptr(c), nil
+		}
+	}
+	if fn, ok := parseFunctionKey(key); ok {
+		return uintptr(0x70 + fn - 1), nil
+	}
+	return 0, fmt.Errorf("unsupported key %q", key)
+}
+
 func parseHotkey(s string) (uint32, uintptr, error) {
 	h, err := parseHotkeySpec(s, false) // same syntax check as loadConfig
 	if err != nil {
@@ -99,7 +112,11 @@ func parseHotkey(s string) (uint32, uintptr, error) {
 	if h.win {
 		mods |= modWin
 	}
-	return mods | modNoRepeat, uintptr(h.key), nil
+	vk, err := windowsVK(h.key)
+	if err != nil {
+		return 0, 0, err
+	}
+	return mods | modNoRepeat, vk, nil
 }
 func newHotkey(spec string) (Hotkey, error) {
 	mods, vk, err := parseHotkey(spec)

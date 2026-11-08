@@ -43,9 +43,25 @@ type Hotkey interface {
 }
 type macHotkey struct{}
 
-func parseMacHotkey(spec string) (uint32, byte, error) {
+var macFunctionKeyVK = map[int]int{
+	1:  0x7A, // kVK_F1
+	2:  0x78, // kVK_F2
+	3:  0x63, // kVK_F3
+	4:  0x76, // kVK_F4
+	5:  0x60, // kVK_F5
+	6:  0x61, // kVK_F6
+	7:  0x62, // kVK_F7
+	8:  0x64, // kVK_F8
+	9:  0x65, // kVK_F9
+	10: 0x6D, // kVK_F10
+	11: 0x67, // kVK_F11
+	12: 0x6F, // kVK_F12
+}
+
+func parseMacHotkey(spec string) (uint32, int, byte, error) {
 	var mods uint32
-	var key byte
+	vk := -1
+	var charCode byte
 	for _, part := range strings.Split(strings.ToUpper(strings.ReplaceAll(spec, " ", "")), "+") {
 		switch part {
 		case "CMD", "COMMAND", "WIN", "SUPER":
@@ -57,23 +73,31 @@ func parseMacHotkey(spec string) (uint32, byte, error) {
 		case "CTRL", "CONTROL":
 			mods |= 1 << 12
 		default:
-			if len(part) != 1 || part[0] < 'A' || part[0] > 'Z' || key != 0 {
-				return 0, 0, fmt.Errorf("unsupported hotkey %q: use modifiers and one A-Z key", spec)
+			if vk != -1 || charCode != 0 {
+				return 0, 0, 0, fmt.Errorf("unsupported hotkey %q: use modifiers and one key (A-Z, 0-9, or F1-F12)", spec)
 			}
-			key = part[0] + ('a' - 'A')
+			if len(part) == 1 && part[0] >= 'A' && part[0] <= 'Z' {
+				charCode = part[0] + ('a' - 'A')
+			} else if len(part) == 1 && part[0] >= '0' && part[0] <= '9' {
+				charCode = part[0]
+			} else if fn, ok := parseFunctionKey(part); ok {
+				vk = macFunctionKeyVK[fn]
+			} else {
+				return 0, 0, 0, fmt.Errorf("unsupported hotkey %q: use modifiers and one key (A-Z, 0-9, or F1-F12)", spec)
+			}
 		}
 	}
-	if mods == 0 || key == 0 {
-		return 0, 0, errors.New("hotkey must include a modifier and letter A-Z")
+	if mods == 0 || (vk == -1 && charCode == 0) {
+		return 0, 0, 0, errors.New("hotkey must include a modifier and key (A-Z, 0-9, or F1-F12)")
 	}
-	return mods, key, nil
+	return mods, vk, charCode, nil
 }
 func newHotkey(spec string) (Hotkey, error) {
-	mods, key, err := parseMacHotkey(spec)
+	mods, vk, charCode, err := parseMacHotkey(spec)
 	if err != nil {
 		return nil, err
 	}
-	if C.ct_mac_grab(C.uint(mods), C.char(key)) == 0 {
+	if C.ct_mac_grab(C.uint(mods), C.int(vk), C.char(charCode)) == 0 {
 		return nil, fmt.Errorf("could not register %s (already used, or unsupported keyboard layout?)", spec)
 	}
 	return &macHotkey{}, nil

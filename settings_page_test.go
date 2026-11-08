@@ -295,7 +295,7 @@ func TestSettingsSaveRejectsInvalidAndChangesNothing(t *testing.T) {
 	bad := map[string]settingsForm{
 		"no profiles":    {},
 		"no modifier":    {MaxChars: 4000, Profiles: []profileForm{{Key: "E", Languages: []string{"ja", "en"}}}},
-		"not a letter":   {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "1", Languages: []string{"ja", "en"}}}},
+		"invalid key":    {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "!", Languages: []string{"ja", "en"}}}},
 		"same script":    {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Languages: []string{"en", "de"}}}},
 		"unknown target": {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Target: "xx"}}},
 		"duplicate key": {MaxChars: 4000, Profiles: []profileForm{
@@ -459,13 +459,37 @@ func TestSettingsMenuItemOpensThePageAndReusesIt(t *testing.T) {
 }
 
 func TestProfileFormRoundTrip(t *testing.T) {
-	for _, hk := range []string{"Ctrl+Alt+E", "Ctrl+Shift+Y", "Alt+K", "Ctrl+Alt+Shift+Win+Q"} {
+	for _, hk := range []string{"Ctrl+Alt+E", "Ctrl+Shift+Y", "Alt+K", "Ctrl+Alt+Shift+Win+Q", "Ctrl+7", "Alt+F5", "Ctrl+Shift+F12"} {
 		f, err := formFromProfile(Profile{Hotkey: hk, Languages: []string{"ja", "en"}}, "windows")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if got := f.hotkeyString(); got != hk {
 			t.Errorf("%q -> %+v -> %q", hk, f, got)
+		}
+	}
+	for _, tc := range []struct {
+		hotkey  string
+		wantKey string
+	}{
+		{"Ctrl+7", "7"},
+		{"Ctrl+Alt+F5", "F5"},
+	} {
+		p := Profile{Hotkey: tc.hotkey, Languages: []string{"ja", "en"}}
+		form, err := formFromProfile(p, "windows")
+		if err != nil {
+			t.Fatalf("formFromProfile(%q): %v", tc.hotkey, err)
+		}
+		if form.Key != tc.wantKey {
+			t.Errorf("formFromProfile(%q).Key = %q, want %q", tc.hotkey, form.Key, tc.wantKey)
+		}
+		sf := settingsForm{MaxChars: 4000, Profiles: []profileForm{form}}
+		cfg, err := sf.toConfig(defaultConfig())
+		if err != nil {
+			t.Fatalf("toConfig for %q: %v", tc.hotkey, err)
+		}
+		if cfg.Profiles[0].Hotkey != tc.hotkey {
+			t.Errorf("toConfig hotkey = %q, want %q", cfg.Profiles[0].Hotkey, tc.hotkey)
 		}
 	}
 	f, _ := formFromProfile(Profile{Hotkey: "cmd+option+e", Target: "ko"}, "darwin")

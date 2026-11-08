@@ -27,7 +27,19 @@ func TestParseX11Hotkey(t *testing.T) {
 	if err != nil || mods != 65 || key != 'y' {
 		t.Fatalf("%d %d %v", mods, key, err)
 	}
-	for _, bad := range []string{"", "E", "Ctrl", "Ctrl+F1", "Ctrl+E+T", "Ctrl++E"} {
+	mods, key, err = parseX11Hotkey("Ctrl+5")
+	if err != nil || mods != 4 || key != '5' {
+		t.Fatalf("%d %d %v", mods, key, err)
+	}
+	mods, key, err = parseX11Hotkey("Alt+F1")
+	if err != nil || mods != 8 || key != 0xffbe {
+		t.Fatalf("%d %d %v", mods, key, err)
+	}
+	mods, key, err = parseX11Hotkey("Super+F12")
+	if err != nil || mods != 64 || key != 0xffc9 {
+		t.Fatalf("%d %d %v", mods, key, err)
+	}
+	for _, bad := range []string{"", "E", "Ctrl", "Ctrl+F13", "Ctrl+F0", "Ctrl+!", "Ctrl+E+T", "Ctrl++E"} {
 		if _, _, err := parseX11Hotkey(bad); err == nil {
 			t.Errorf("accepted %q", bad)
 		}

@@ -1,7 +1,11 @@
 (() => {
   'use strict';
   const token = new URLSearchParams(location.search).get('t') || '';
-  const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  const HOTKEY_KEYS = [
+    ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split(''),
+    ...'0123456789'.split(''),
+    'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12',
+  ];
   const $ = (id) => document.getElementById(id);
 
   let state = null;   // what the app last told us
@@ -224,7 +228,7 @@
     }
     keyRow.append(h('span', { class: 'plus', text: '+' }));
     const letter = h('select', { class: 'letter', 'aria-label': 'Key of hotkey ' + (i + 1), onchange: (e) => { p.key = e.target.value; dirtyFields.profiles = true; markDirty(); } },
-      LETTERS.map((l) => h('option', { value: l, text: l })));
+      HOTKEY_KEYS.map((l) => h('option', { value: l, text: l })));
     letter.value = p.key;
     keyRow.append(letter);
     card.append(keyRow);
