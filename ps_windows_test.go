@@ -88,7 +88,10 @@ func TestInstallerCommandReachesFailurePrompt(t *testing.T) {
 }
 
 func TestInstallerCommandEnvironment(t *testing.T) {
-	cmd := installerCommand(`C:\Apps\CT`, "v0.7.0")
+	cmd, err := installerCommand(`C:\Apps\CT`, "v0.7.0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	last := map[string]string{}
 	for _, e := range cmd.Env {
 		k, v, _ := strings.Cut(e, "=")
@@ -101,7 +104,19 @@ func TestInstallerCommandEnvironment(t *testing.T) {
 		t.Fatal("the installer needs its own console window")
 	}
 	joined := strings.Join(cmd.Args, " ")
-	if !strings.Contains(joined, "catch {") || !strings.Contains(joined, installScriptURL) {
+	if !strings.Contains(joined, "catch {") || !strings.Contains(joined, "irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/v0.7.0/install.ps1 | iex") {
 		t.Fatalf("unexpected command: %s", joined)
+	}
+}
+
+func TestInstallerCommandRejectsMalformedTags(t *testing.T) {
+	for _, tag := range malformedInstallerTags {
+		cmd, err := installerCommand(`C:\Apps\CT`, tag)
+		if err == nil || cmd != nil {
+			t.Errorf("installerCommand tag %q = %v, %v; want no command and an error", tag, cmd, err)
+		}
+		if err := runInstaller(`C:\Apps\CT`, tag); err == nil {
+			t.Errorf("runInstaller tag %q: expected an error", tag)
+		}
 	}
 }

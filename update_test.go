@@ -4,9 +4,34 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+var malformedInstallerTags = []string{
+	"", "v", "0.7.0", " v0.7.0", "v0.7.0 ", "v0.7.0 extra",
+	"v0.7.0'", "v0.7.0\"", "v0.7.0;", "v0..7.0", "..",
+	"v.0", "v0.", "v0.7.0/extra", "v0.7.0\n", "v0.7.0-rc1",
+}
+
+func TestInstallScriptURL(t *testing.T) {
+	for _, tag := range []string{"v0.7.0", "v1", "v1.2", "v10.20.30.40"} {
+		got, err := installScriptURL(tag)
+		want := "https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/" + tag + "/install.ps1"
+		if err != nil || got != want {
+			t.Errorf("installScriptURL(%q) = %q, %v; want %q", tag, got, err, want)
+		}
+	}
+	for _, tag := range malformedInstallerTags {
+		got, err := installScriptURL(tag)
+		if got != "" || err == nil {
+			t.Errorf("installScriptURL(%q) = %q, %v; want no URL and an error", tag, got, err)
+		} else if !strings.Contains(err.Error(), "invalid release tag") {
+			t.Errorf("unclear error for tag %q: %v", tag, err)
+		}
+	}
+}
 
 func TestCompareVersions(t *testing.T) {
 	cases := []struct {

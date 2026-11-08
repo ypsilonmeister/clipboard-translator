@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -17,11 +18,20 @@ const (
 	repoSlug         = "ypsilonmeister/clipboard-translator"
 	latestReleaseAPI = "https://api.github.com/repos/" + repoSlug + "/releases/latest"
 	releasesPage     = "https://github.com/" + repoSlug + "/releases"
-	installScriptURL = "https://raw.githubusercontent.com/" + repoSlug + "/main/install.ps1"
 	plamoLicenseURL  = "https://plamo.preferredai.jp/info/plamo-community-license-ja"
 )
 
 type releaseInfo struct{ Tag, URL string }
+
+var releaseTagPattern = regexp.MustCompile(`^v[0-9]+(\.[0-9]+)*$`)
+
+// installScriptURL pins the updater itself to the release the user confirmed.
+func installScriptURL(tag string) (string, error) {
+	if !releaseTagPattern.MatchString(tag) {
+		return "", fmt.Errorf("invalid release tag %q: expected v followed by dot-separated numbers (for example v0.7.0)", tag)
+	}
+	return "https://raw.githubusercontent.com/" + repoSlug + "/" + tag + "/install.ps1", nil
+}
 
 // fetchLatest asks the GitHub API for the newest published release. It is only
 // called when the user picks "Check for updates"; the app never phones home on

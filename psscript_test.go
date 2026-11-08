@@ -31,9 +31,13 @@ func TestSetupPowerShellShape(t *testing.T) {
 }
 
 func TestInstallerPowerShellShape(t *testing.T) {
-	ps := installerPowerShell("https://example.test/install.ps1")
+	url, err := installScriptURL("v0.7.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := installerPowerShell(url)
 	for _, want := range []string{
-		"irm https://example.test/install.ps1 | iex",
+		"irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/v0.7.0/install.ps1 | iex",
 		"$ErrorActionPreference = 'Stop'",
 		"try {", "catch {",
 		"Update failed. Press Enter to close",

@@ -49,6 +49,7 @@ irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/i
 短いスクリプトなので、実行前に [`install.ps1`](install.ps1) を読んでもかまいません。
 
 - **更新:** 同じコマンドをもう一度実行するか、トレイメニューの「Check for updates」を使います。
+  トレイの「Update」は、インストールするリリースのインストーラースクリプトを実行します。
   `config.json`、モデル、llama.cpp はそのまま残ります。
 - **アンインストール:** 「設定 > アプリ」の *Clipboard Translator* から、または
   `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.ps1))) -Uninstall`
