@@ -246,10 +246,11 @@ The runtime archive's system requirements also apply; older distributions may ne
 locally built compatible llama.cpp runtime at `runtime/cpu/llama-server`.
 
 Select text and press the hotkey. Linux reads the X11 **PRIMARY** selection directly,
-without simulating Ctrl+C, and stages it on CLIPBOARD before translation. PRIMARY may
-retain the last selection in some applications. If PRIMARY has no text, the existing
-CLIPBOARD text is used. X11 has no atomic clipboard compare-and-set: the app compares
-text before writing, but unlike Windows it cannot eliminate races with other clients.
+without simulating Ctrl+C, and stages it on CLIPBOARD before translation. Only a selection
+owned by the active window is treated as a fresh selection eligible for auto-paste; if
+PRIMARY belongs to another window or has no text, the existing CLIPBOARD text is used instead.
+X11 has no atomic clipboard compare-and-set: the app compares text before writing, but unlike
+Windows it cannot eliminate races with other clients.
 Clipboard content may disappear on exit unless a clipboard manager retains it.
 
 GTK 3 supplies the tray icon/menu. If the desktop has no compatible tray host, a small

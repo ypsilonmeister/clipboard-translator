@@ -45,6 +45,9 @@ func TestBackendHelpers(t *testing.T) {
 		os.MkdirAll(p, 0o755)
 		os.WriteFile(filepath.Join(p, serverBinaryName()), []byte("x"), 0o644)
 	}
+	// A directory at the binary path must not be treated as an available backend.
+	cudaDir := filepath.Join(dir, "runtime", "cuda", serverBinaryName())
+	os.MkdirAll(cudaDir, 0o755)
 	if got := availableBackends(dir); !reflect.DeepEqual(got, []string{"cpu", "vulkan"}) {
 		t.Errorf("availableBackends = %v", got)
 	}

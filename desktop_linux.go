@@ -119,17 +119,20 @@ func sendPaste() error {
 var linuxSelectionSequence uint32
 
 func clipboardSequence() uint32 { return linuxSelectionSequence }
+
+func primaryOwnerMatches(win uintptr) bool {
+	return C.ct_primary_owner_matches(C.ulong(win)) != 0
+}
+
 func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
-	text := readX11Text(true)
-	if text == "" {
-		text, err := cb.Read()
-		return text, false, err
+	text, fresh, err := captureWithPrimary(cb, win, primaryOps{
+		ownerMatches: primaryOwnerMatches,
+		readPrimary:  func() string { return readX11Text(true) },
+	})
+	if err == nil && fresh {
+		linuxSelectionSequence++
 	}
-	if err := cb.Write(text); err != nil {
-		return "", false, err
-	}
-	linuxSelectionSequence++
-	return text, true, nil
+	return text, fresh, err
 }
 func readX11Text(primary bool) string {
 	p := C.ct_read(C.int(boolInt(primary)))

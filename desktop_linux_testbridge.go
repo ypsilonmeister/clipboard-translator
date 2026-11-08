@@ -30,6 +30,46 @@ static void test_select(const char *text) {
     ct_pump();
 }
 static const char *test_text(void) { return gtk_entry_get_text(GTK_ENTRY(test_entry)); }
+
+static GtkWidget *test_window_b, *test_entry_b;
+static void test_create_b(void) {
+    test_window_b = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    test_entry_b = gtk_entry_new();
+    gtk_container_add(GTK_CONTAINER(test_window_b), test_entry_b);
+    gtk_widget_show_all(test_window_b);
+    gtk_widget_grab_focus(test_entry_b);
+    ct_pump();
+    Display *d = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
+    XSetInputFocus(d, GDK_WINDOW_XID(gtk_widget_get_window(test_window_b)), RevertToParent, CurrentTime);
+    XSync(d, False);
+    ct_pump();
+}
+static void test_destroy_b(void) {
+    if (test_window_b) {
+        gtk_widget_destroy(test_window_b);
+        test_window_b = test_entry_b = NULL;
+        ct_pump();
+    }
+}
+static void test_focus_b(void) {
+    if (!test_window_b) return;
+    gtk_widget_grab_focus(test_entry_b);
+    ct_pump();
+    Display *d = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
+    XSetInputFocus(d, GDK_WINDOW_XID(gtk_widget_get_window(test_window_b)), RevertToParent, CurrentTime);
+    XSync(d, False);
+    ct_pump();
+}
+static void test_select_b(const char *text) {
+    if (!test_entry_b) return;
+    gtk_entry_set_text(GTK_ENTRY(test_entry_b), text);
+    gtk_editable_select_region(GTK_EDITABLE(test_entry_b), 0, -1);
+    ct_pump();
+}
+static const char *test_text_b(void) {
+    return test_entry_b ? gtk_entry_get_text(GTK_ENTRY(test_entry_b)) : "";
+}
+
 static void test_key(unsigned long sym, int down) {
     Display *d = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
     XTestFakeKeyEvent(d, XKeysymToKeycode(d, sym), down, 0);
@@ -63,6 +103,11 @@ func x11TestCreate()                   { C.test_create() }
 func x11TestDestroy()                  { C.test_destroy() }
 func x11TestSelect(s string)           { withCString(s, func(p *C.char) { C.test_select(p) }) }
 func x11TestText() string              { return C.GoString(C.test_text()) }
+func x11TestCreateB()                  { C.test_create_b() }
+func x11TestDestroyB()                 { C.test_destroy_b() }
+func x11TestFocusB()                   { C.test_focus_b() }
+func x11TestSelectB(s string)          { withCString(s, func(p *C.char) { C.test_select_b(p) }) }
+func x11TestTextB() string             { return C.GoString(C.test_text_b()) }
 func x11TestKey(key uint64, down bool) { C.test_key(C.ulong(key), C.int(boolInt(down))) }
 func x11TestMenuClick(id int)          { C.test_menu_click(C.int(id)) }
 func x11TestConflict(enable bool)      { C.test_conflict(C.int(boolInt(enable))) }

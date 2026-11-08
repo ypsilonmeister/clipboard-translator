@@ -55,6 +55,46 @@ func TestX11Desktop(t *testing.T) {
 		t.Fatalf("pasted = %q", got)
 	}
 
+	// Issue #83: A stale PRIMARY selection from Window A must not be treated as a
+	// selection in Window B (which would wrongly auto-paste into Window B).
+	x11TestCreateB()
+	defer x11TestDestroyB()
+
+	// Window A retains the selection. Switch focus to Window B with nothing selected.
+	x11TestSelect("Stale Window A selection")
+	x11TestFocusB()
+	winB := foregroundWindow()
+	if winB == 0 {
+		t.Fatal("Window B has no focus")
+	}
+	if err := cb.Write("unrelated clipboard text"); err != nil {
+		t.Fatal(err)
+	}
+	gotStale, freshStale, err := captureSelectedText(cb, winB)
+	if err != nil {
+		t.Fatalf("capture in Window B failed: %v", err)
+	}
+	if freshStale {
+		t.Fatalf("stale selection from Window A must not be treated as fresh in Window B (fresh=%v, got=%q)", freshStale, gotStale)
+	}
+	if gotStale != "unrelated clipboard text" {
+		t.Fatalf("expected fallback to clipboard, got %q", gotStale)
+	}
+	if act := decidePaste(true, freshStale, winB, foregroundWindow()); act != pasteNone {
+		t.Fatalf("decidePaste on stale selection must be pasteNone, got %v", act)
+	}
+
+	// But selecting text in Window B itself must be detected as a fresh selection in Window B.
+	const bSource = "Window B text"
+	x11TestSelectB(bSource)
+	gotB, freshB, err := captureSelectedText(cb, foregroundWindow())
+	if err != nil || gotB != bSource || !freshB {
+		t.Fatalf("same-window capture in Window B failed: got=%q fresh=%v err=%v", gotB, freshB, err)
+	}
+	if act := decidePaste(true, freshB, winB, foregroundWindow()); act != pasteNow {
+		t.Fatalf("decidePaste for fresh selection in Window B must be pasteNow, got %v", act)
+	}
+
 	hk, err := newHotkey("Ctrl+Alt+E")
 	if err != nil {
 		t.Fatal(err)

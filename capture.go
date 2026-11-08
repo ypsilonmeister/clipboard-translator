@@ -61,3 +61,32 @@ func captureWith(cb Clipboard, win uintptr, ops captureOps) (text string, fromSe
 	}
 	return old, false, nil
 }
+
+// primaryOps are the OS pieces of X11 PRIMARY selection capture.
+type primaryOps struct {
+	ownerMatches func(win uintptr) bool
+	readPrimary  func() string
+}
+
+// captureWithPrimary reads the X11 PRIMARY selection only if it is owned by the
+// active window win. If win owns PRIMARY and text was selected, that text is
+// staged onto the clipboard and reported with fromSelection true. If win does
+// not own PRIMARY (or if PRIMARY is empty), it falls back to the existing
+// clipboard text with fromSelection false, preventing stale selections from
+// other windows from triggering auto-paste.
+func captureWithPrimary(cb Clipboard, win uintptr, ops primaryOps) (string, bool, error) {
+	if win != 0 && ops.ownerMatches != nil && ops.ownerMatches(win) {
+		text := ""
+		if ops.readPrimary != nil {
+			text = ops.readPrimary()
+		}
+		if text != "" {
+			if err := cb.Write(text); err != nil {
+				return "", false, err
+			}
+			return text, true, nil
+		}
+	}
+	text, err := cb.Read()
+	return text, false, err
+}
