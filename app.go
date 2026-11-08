@@ -140,8 +140,10 @@ func (a *app) startServer() error {
 // runningBackend is the engine ("cpu", "cuda", ...) of the llama-server that
 // runs now. After startServer fell back to the CPU that is not the configured
 // one, so the menu and the settings page ask this, not conf.ServerFile. With no
-// server running (before the first start, while one is restarted) it is the
-// configured engine, the one that will be tried.
+// server running (while one is restarted or switched) it is the last engine
+// seen working, so the page does not show an engine that has not come up yet;
+// before the first start it is the configured engine, the one that will be
+// tried. It remembers what it sees in activeBackend.
 func (a *app) runningBackend() string {
 	if a.sup.Running() {
 		rel, err := filepath.Rel(a.dir, a.sup.cmd.Path)
