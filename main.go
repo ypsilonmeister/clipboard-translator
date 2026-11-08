@@ -247,6 +247,9 @@ func main() {
 	// We are the only instance, so a STOP file is left over from an earlier run
 	// (e.g. Stop.cmd after a crash). Without this the app would quit immediately.
 	_ = os.Remove(filepath.Join(dir, "STOP"))
+	// Likewise a recorded llama-server still running was left by a run that died
+	// (macOS only; Windows and Linux stop it with the app).
+	stopLeftoverServer(childRecordPath(dir, conf.Port))
 
 	conf, ok := ensureInstalled(dir, conf)
 	if !ok {
@@ -256,10 +259,8 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", conf.Port), 250*time.Millisecond)
-	if err == nil {
-		conn.Close()
-		fatal("server port is already occupied: ", conf.Port)
+	if err := checkServerPort(conf.Port); err != nil {
+		fatal(err)
 	}
 
 	serverLog, err := os.OpenFile(filepath.Join(dir, "server.log"), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
