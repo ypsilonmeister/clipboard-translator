@@ -34,6 +34,12 @@ macOS と Linux は実験的対応です。Linux arm64 用のビルドは配布�
 
 ## インストール(Windows 10/11 x64)
 
+llama.cpp のビルドには **Visual C++ 再頒布可能パッケージ(x64)** が必要です。ほとんどの PC には
+すでに入っています。入っていない PC(または非常に古い PC)では、`llama-server` が何も出力せず
+終了コード `0xC0000135` ですぐに終了します。その場合、アプリが対処方法を表示します。
+`winget install --id Microsoft.VCRedist.2015+.x64 -e` か
+<https://aka.ms/vs/17/release/vc_redist.x64.exe> で入れてください。
+
 ### インストールスクリプト(おすすめ)
 
 PowerShell を開き(管理者権限は不要です)、次を実行します。

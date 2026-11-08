@@ -24,6 +24,8 @@ func TestMain(m *testing.M) {
 	}
 	// No test may download a real model: model downloads only reach loopback.
 	downloadTransport = loopbackOnly{}
+	// The fake server is a Go program: it does not need the VC++ runtime, whether or not the machine has it.
+	vcRuntimeAvailable = func(string) bool { return true }
 	os.Exit(m.Run())
 }
 
@@ -40,6 +42,11 @@ func runFakeServer() {
 		if a == "-m" && i+1 < len(os.Args) && strings.Contains(os.Args[i+1], "FAIL") {
 			os.Exit(1)
 		}
+	}
+	// CT_TEST_FAKE_EXIT_CODE makes it exit at once with that code, like a
+	// llama-server whose DLL cannot be loaded (0xC0000135 on Windows).
+	if c, err := strconv.ParseUint(os.Getenv("CT_TEST_FAKE_EXIT_CODE"), 10, 32); err == nil {
+		os.Exit(int(c))
 	}
 	// CT_TEST_FAKE_SERVER_DELAY (milliseconds) makes the fake server slow to come up,
 	// like a big model loading, so a "busy" screen can be looked at.

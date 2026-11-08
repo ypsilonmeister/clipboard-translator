@@ -1,6 +1,31 @@
 package main
 
-import "runtime"
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+)
+
+// vcRuntimeAvailable reports whether the Visual C++ runtime that llama.cpp's
+// Windows builds import (vcruntime140_1.dll, added after the first VC++ 2015
+// redistributables) can be loaded by the llama-server in serverDir: Windows
+// looks next to the exe first, then in System32. It is true on other systems.
+// It is a variable so tests do not depend on the machine they run on.
+var vcRuntimeAvailable = func(serverDir string) bool {
+	if runtime.GOOS != "windows" {
+		return true
+	}
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		root = `C:\Windows`
+	}
+	for _, dir := range []string{serverDir, filepath.Join(root, "System32")} {
+		if _, err := os.Stat(filepath.Join(dir, "vcruntime140_1.dll")); err == nil {
+			return true
+		}
+	}
+	return false
+}
 
 func serverBinaryName() string {
 	if runtime.GOOS == "windows" {

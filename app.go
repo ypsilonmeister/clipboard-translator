@@ -139,6 +139,10 @@ func (a *app) startServer() error {
 	if errors.Is(err, errQuit) {
 		return err
 	}
+	var dnf *dllNotFoundError
+	if errors.As(err, &dnf) && dnf.vcMissing {
+		return err // every build needs the runtime; the CPU build cannot help
+	}
 	log.Printf("preferred backend failed: %v; see server.log", err)
 	if a.paths.server == a.paths.fallback {
 		return fmt.Errorf("The translation server failed to start: %w", err)
@@ -183,6 +187,10 @@ func (a *app) startFallback() error {
 	if err := a.sup.start(a.paths.fallback, 0, "loading model (CPU)"); err != nil {
 		if errors.Is(err, errQuit) {
 			return err
+		}
+		var dnf *dllNotFoundError
+		if errors.As(err, &dnf) {
+			return err // the same missing runtime stops both builds; say that, not "fallback failed"
 		}
 		return fmt.Errorf("CPU fallback failed: %w", err)
 	}

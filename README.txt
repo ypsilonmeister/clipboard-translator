@@ -92,6 +92,11 @@ LIMITATIONS
   downloaded in a browser.
 - The backend may fail because of insufficient VRAM, old GPU drivers, or DLL
   incompatibilities. See server.log and translator.log for details.
+- llama.cpp needs the Visual C++ Redistributable (x64). Without it (or with a
+  very old one) llama-server exits at once with code 0xC0000135 and the app
+  says so. Install it with:
+    winget install --id Microsoft.VCRedist.2015+.x64 -e
+  or from https://aka.ms/vs/17/release/vc_redist.x64.exe
 
 LICENSES
 - This program: MIT License (see LICENSE).
