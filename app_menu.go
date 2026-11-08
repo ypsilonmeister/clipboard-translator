@@ -281,26 +281,26 @@ func (a *app) switchBackend(name string) {
 		}
 		return
 	}
-	oldConf, oldPaths := a.conf, a.paths
 	// When the CPU fallback is what runs, the preferred engine has already
 	// failed once; going back straight to the CPU saves loading the model on it
 	// again just to see it fail.
 	wasFallback := a.onFallback()
-	a.conf.ServerFile, a.conf.GPULayers = backendSettings(name)
-	paths, err := resolvePaths(a.dir, a.conf)
+	newConf := a.conf
+	newConf.ServerFile, newConf.GPULayers = backendSettings(name)
+	paths, err := resolvePaths(a.dir, newConf)
 	if err != nil {
-		a.conf = oldConf
 		a.tray.Notify("Clipboard Translator", "Could not switch the engine: "+err.Error(), true)
 		return
 	}
-	a.paths = paths
 	log.Printf("switching engine to %s", name)
 	a.abortTranslation() // the server it was talking to is about to go away
 	a.sup.Stop()
 	// Start the chosen build itself, without the CPU fallback of startServer:
 	// silently running on the CPU would make the menu check mark a lie.
-	err = a.sup.start(a.paths.server, a.conf.GPULayers, "switching engine")
+	err = a.sup.start(paths.server, newConf.GPULayers, "switching engine")
 	if err == nil {
+		a.conf, a.paths = newConf, paths
+		a.activeBackend = name
 		a.tray.SetStatus(a.readyTip)
 		a.saveConfig(map[string]any{"server_file": a.conf.ServerFile, "gpu_layers": a.conf.GPULayers})
 		a.tray.Notify("Clipboard Translator", "Translation engine: "+backendLabel(name), false)
@@ -310,7 +310,6 @@ func (a *app) switchBackend(name string) {
 		return // the main loop sees the quit request
 	}
 	log.Printf("engine %s failed: %v; going back", name, err)
-	a.conf, a.paths = oldConf, oldPaths
 	restore := a.startServer
 	if wasFallback {
 		restore = a.startFallback
@@ -343,6 +342,7 @@ func (a *app) keepRunningBackend(name string) {
 		return
 	}
 	a.conf, a.paths = conf, paths
+	a.activeBackend = name
 	a.saveConfig(map[string]any{"server_file": a.conf.ServerFile, "gpu_layers": a.conf.GPULayers})
 	log.Printf("engine %s (already running) is now the configured one", name)
 	a.tray.Notify("Clipboard Translator", "Translation engine: "+backendLabel(name), false)

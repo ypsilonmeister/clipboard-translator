@@ -108,7 +108,8 @@ func (a *app) checkModelSwitch(key string) (modelEntry, error) {
 // again, because the main loop's recovery reads the model from the supervisor.
 // config.json changes only once the new model works.
 func (a *app) switchModel(e modelEntry) error {
-	oldConf, oldPaths, oldModel := a.conf, a.paths, a.sup.model
+	oldModel := a.sup.model
+	wasFallback := a.onFallback()
 	newConf := a.conf
 	newConf.ModelFile = "models/" + e.File
 	paths, err := resolvePaths(a.dir, newConf)
@@ -118,11 +119,20 @@ func (a *app) switchModel(e modelEntry) error {
 	log.Printf("switching model to %s", e.Name)
 	a.abortTranslation() // the server it was talking to is about to go away
 	a.sup.Stop()
-	a.conf, a.paths, a.sup.model = newConf, paths, paths.model
+	a.sup.model = paths.model
+	bin := a.paths.server
+	layers := a.conf.GPULayers
+	label := "loading " + e.Name
+	if wasFallback {
+		bin = a.paths.fallback
+		layers = 0
+		label = "loading " + e.Name + " (CPU)"
+	}
 	// The chosen engine itself, without the CPU fallback of startServer: silently
 	// running on the CPU would hide that the model does not fit on the GPU.
-	err = a.sup.start(a.paths.server, a.conf.GPULayers, "loading "+e.Name)
+	err = a.sup.start(bin, layers, label)
 	if err == nil {
+		a.conf, a.paths = newConf, paths
 		a.saveConfig(map[string]any{"model_file": newConf.ModelFile})
 		a.refreshStatus()
 		a.tray.Notify("Clipboard Translator", "Model: "+e.Name, false)
@@ -132,8 +142,12 @@ func (a *app) switchModel(e modelEntry) error {
 		return err // the main loop sees the quit request
 	}
 	log.Printf("model %s failed: %v; going back", e.Name, err)
-	a.conf, a.paths, a.sup.model = oldConf, oldPaths, oldModel
-	if rerr := a.startServer(); rerr != nil {
+	a.sup.model = oldModel
+	restore := a.startServer
+	if wasFallback {
+		restore = a.startFallback
+	}
+	if rerr := restore(); rerr != nil {
 		if errors.Is(rerr, errQuit) {
 			return rerr
 		}

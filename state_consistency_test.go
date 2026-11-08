@@ -240,3 +240,166 @@ func TestChoosingTheRunningFallbackKeepsItWithoutRestart(t *testing.T) {
 		t.Error("choosing the configured, running engine must be a no-op")
 	}
 }
+
+// Issue #80: switching models while on CPU fallback must use the fallback build
+// with gpuLayers=0, and restore via startFallback if the new model fails.
+func TestSwitchModelOnCPUFallbackUsesFallbackAndKeepsFallbackState(t *testing.T) {
+	withModels(t, testEntry("a", "a.gguf"), testEntry("b", "b.gguf"))
+	a := startOnFallback(t)
+	putModel(t, a.dir, modelCatalog[1])
+	oldPid := a.sup.cmd.Process.Pid
+
+	if err := a.switchModel(modelCatalog[1]); err != nil {
+		t.Fatalf("switching model on CPU fallback failed: %v", err)
+	}
+	if !healthy(a) || a.sup.cmd.Process.Pid == oldPid {
+		t.Fatal("server must be restarted with the new model")
+	}
+	if a.sup.cmd.Path != a.paths.fallback {
+		t.Fatalf("server should be running fallback %q, got %q", a.paths.fallback, a.sup.cmd.Path)
+	}
+	if !a.onFallback() {
+		t.Fatal("a.onFallback() must still be true after switching models on CPU fallback")
+	}
+	if got := a.runningBackend(); got != "cpu" {
+		t.Fatalf("running backend must still be cpu, got %q", got)
+	}
+	if currentBackend(a.conf.ServerFile) != "vulkan" {
+		t.Fatalf("preferred engine in config must stay vulkan, got %q", a.conf.ServerFile)
+	}
+	if a.conf.ModelFile != "models/b.gguf" {
+		t.Fatalf("model file should be updated to models/b.gguf, got %q", a.conf.ModelFile)
+	}
+	c, err := loadConfig(a.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ModelFile != "models/b.gguf" || currentBackend(c.ServerFile) != "vulkan" {
+		t.Errorf("saved config: model=%q server=%q", c.ModelFile, c.ServerFile)
+	}
+}
+
+func TestSwitchModelOnCPUFallbackFailureRestoresFallbackWithoutTouchingGPU(t *testing.T) {
+	withModels(t, testEntry("a", "a.gguf"), testEntry("bad", "bad-FAIL.gguf"))
+	a := startOnFallback(t)
+	putModel(t, a.dir, modelCatalog[1])
+	oldModel := a.sup.model
+
+	err := a.switchModel(modelCatalog[1])
+	if err == nil || !strings.Contains(err.Error(), "previous model is back") {
+		t.Fatalf("expected error indicating previous model is back, got: %v", err)
+	}
+	if !healthy(a) {
+		t.Fatal("server must be restored and healthy")
+	}
+	if a.sup.cmd.Path != a.paths.fallback {
+		t.Fatalf("server should be restored to fallback %q, got %q", a.paths.fallback, a.sup.cmd.Path)
+	}
+	if !a.onFallback() {
+		t.Fatal("a.onFallback() must still be true after failed model switch on CPU fallback")
+	}
+	if got := a.runningBackend(); got != "cpu" {
+		t.Fatalf("running backend must still be cpu, got %q", got)
+	}
+	if a.sup.model != oldModel {
+		t.Fatalf("supervisor model must be restored to %q, got %q", oldModel, a.sup.model)
+	}
+}
+
+// Issue #80: settingsState must not report the unverified target model/engine as active while switching.
+func TestSettingsStateDoesNotReportTargetModelAsActiveWhileSwitching(t *testing.T) {
+	t.Setenv("CT_TEST_FAKE_SERVER_DELAY", "200")
+	withModels(t, testEntry("a", "a.gguf"), testEntry("b", "b.gguf"))
+	a, _, _ := newTestApp(t)
+	putModel(t, a.dir, modelCatalog[0])
+	putModel(t, a.dir, modelCatalog[1])
+	a.conf.ModelFile = "models/a.gguf"
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+
+	checked := 0
+	origUI := a.sup.ui
+	a.sup.ui = func(label string, elapsed time.Duration) bool {
+		st := a.settingsState()
+		mA := findModel(st, "a")
+		mB := findModel(st, "b")
+		if !mA.Active {
+			t.Errorf("old model a must be active while switching, got %+v", mA)
+		}
+		if mB.Active {
+			t.Errorf("target model b must NOT be active while switching, got %+v", mB)
+		}
+		checked++
+		return origUI(label, elapsed)
+	}
+
+	if err := a.switchModel(modelCatalog[1]); err != nil {
+		t.Fatalf("switchModel failed: %v", err)
+	}
+	if checked == 0 {
+		t.Fatal("ui callback must have checked settingsState while server was loading")
+	}
+	st := a.settingsState()
+	if !findModel(st, "b").Active || findModel(st, "a").Active {
+		t.Fatalf("after switch: b must be active, got %+v", st.Models)
+	}
+}
+
+func TestSettingsStateDoesNotReportTargetEngineAsActiveWhileSwitching(t *testing.T) {
+	t.Setenv("CT_TEST_FAKE_SERVER_DELAY", "200")
+	a, _, _ := newTestApp(t)
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+	if a.runningBackend() != "cpu" {
+		t.Fatalf("precondition: running backend should be cpu, got %q", a.runningBackend())
+	}
+
+	checked := 0
+	origUI := a.sup.ui
+	a.sup.ui = func(label string, elapsed time.Duration) bool {
+		page, _ := engineChecks(t, a)
+		if len(page) != 1 || page[0] != "cpu" {
+			t.Errorf("cpu must remain active while switching engine, got %v", page)
+		}
+		checked++
+		return origUI(label, elapsed)
+	}
+
+	a.switchBackend("cuda")
+	if checked == 0 {
+		t.Fatal("ui callback must have checked settingsState while server was loading")
+	}
+	if a.runningBackend() != "cuda" {
+		t.Fatalf("after switch: running backend must be cuda, got %q", a.runningBackend())
+	}
+	page, _ := engineChecks(t, a)
+	if len(page) != 1 || page[0] != "cuda" {
+		t.Fatalf("after switch: cuda must be active, got %v", page)
+	}
+}
+
+func TestSettingsStateDoesNotReportConfiguredGPUAsActiveWhileRetryingFromFallback(t *testing.T) {
+	t.Setenv("CT_TEST_FAKE_SERVER_DELAY", "200")
+	a := startOnFallback(t)
+	checked := 0
+	origUI := a.sup.ui
+	a.sup.ui = func(label string, elapsed time.Duration) bool {
+		page, _ := engineChecks(t, a)
+		if len(page) != 1 || page[0] != "cpu" {
+			t.Errorf("cpu must remain active while retrying broken vulkan GPU, got %v", page)
+		}
+		checked++
+		return origUI(label, elapsed)
+	}
+
+	a.switchBackend("vulkan")
+	if checked == 0 {
+		t.Fatal("ui callback must have checked settingsState while server was loading")
+	}
+	page, _ := engineChecks(t, a)
+	if len(page) != 1 || page[0] != "cpu" {
+		t.Fatalf("after failed retry: cpu must remain active, got %v", page)
+	}
+}
