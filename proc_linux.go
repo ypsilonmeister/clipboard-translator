@@ -13,7 +13,12 @@ func hideConsole(cmd *exec.Cmd) {
 	if old := os.Getenv("LD_LIBRARY_PATH"); old != "" {
 		libs += ":" + old
 	}
-	cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+libs)
+	// Keep what the caller already put in cmd.Env (the server's API key).
+	base := cmd.Env
+	if base == nil {
+		base = os.Environ()
+	}
+	cmd.Env = append(base, "LD_LIBRARY_PATH="+libs)
 }
 
 // bindToParentLifetime is only needed on Windows (job objects).
