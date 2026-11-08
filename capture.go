@@ -68,25 +68,30 @@ type primaryOps struct {
 	readPrimary  func() string
 }
 
-// captureWithPrimary reads the X11 PRIMARY selection only if it is owned by the
-// active window win. If win owns PRIMARY and text was selected, that text is
-// staged onto the clipboard and reported with fromSelection true. If win does
-// not own PRIMARY (or if PRIMARY is empty), it falls back to the existing
-// clipboard text with fromSelection false, preventing stale selections from
-// other windows from triggering auto-paste.
+// captureWithPrimary reads the X11 PRIMARY selection and stages its text onto
+// the clipboard. The selection counts as fresh (fromSelection true, so
+// auto-paste may fire) only when the active window win owns it. If another
+// window owns it, or the owner cannot be told, the text is still translated but
+// reported as not fresh: PRIMARY may be left over from a window the user is no
+// longer in, and auto-paste must never act on it.
+//
+// The owner check is a heuristic (it follows window ancestry, and clients that
+// own selections through a hidden helper window do not match), so a mismatch
+// must not discard the selection: that would translate the stale clipboard text
+// instead of what the user just selected. If PRIMARY is empty, the existing
+// clipboard text is used.
 func captureWithPrimary(cb Clipboard, win uintptr, ops primaryOps) (string, bool, error) {
-	if win != 0 && ops.ownerMatches != nil && ops.ownerMatches(win) {
-		text := ""
-		if ops.readPrimary != nil {
-			text = ops.readPrimary()
-		}
-		if text != "" {
-			if err := cb.Write(text); err != nil {
-				return "", false, err
-			}
-			return text, true, nil
-		}
+	text := ""
+	if ops.readPrimary != nil {
+		text = ops.readPrimary()
 	}
-	text, err := cb.Read()
-	return text, false, err
+	if text == "" {
+		text, err := cb.Read()
+		return text, false, err
+	}
+	if err := cb.Write(text); err != nil {
+		return "", false, err
+	}
+	fresh := win != 0 && ops.ownerMatches != nil && ops.ownerMatches(win)
+	return text, fresh, nil
 }

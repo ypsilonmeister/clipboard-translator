@@ -145,19 +145,23 @@ func TestCaptureWithPrimaryOwnerMatches(t *testing.T) {
 	}
 }
 
-func TestCaptureWithPrimaryStaleFromOtherWindow(t *testing.T) {
+func TestCaptureWithPrimaryOtherWindowKeepsTextButIsNotFresh(t *testing.T) {
 	cb := &testClipboard{text: "existing clipboard"}
 	ops := primaryOps{
-		// Selection is owned by window 5, but window 10 is active
+		// Selection is owned by window 5, but window 10 is active. The owner check
+		// is a heuristic, so the text is still translated; it just must not auto-paste.
 		ownerMatches: func(win uintptr) bool { return false },
-		readPrimary:  func() string { return "stale selection from window 5" },
+		readPrimary:  func() string { return "selection from window 5" },
 	}
 	got, fresh, err := captureWithPrimary(cb, 10, ops)
-	if err != nil || got != "existing clipboard" || fresh {
-		t.Fatalf("got=%q fresh=%v err=%v; want stale selection rejected and existing clipboard returned", got, fresh, err)
+	if err != nil || got != "selection from window 5" || fresh {
+		t.Fatalf("got=%q fresh=%v err=%v; want the selection text, not fresh", got, fresh, err)
 	}
-	if cb.writes != 0 {
-		t.Fatalf("stale selection must not be written to clipboard: writes=%d", cb.writes)
+	if cb.text != "selection from window 5" || cb.writes != 1 {
+		t.Fatalf("the selection must be staged on the clipboard: text=%q writes=%d", cb.text, cb.writes)
+	}
+	if act := decidePaste(true, fresh, 10, 10); act != pasteNone {
+		t.Fatalf("a selection that is not fresh must never auto-paste, got %v", act)
 	}
 }
 
@@ -183,8 +187,8 @@ func TestCaptureWithPrimaryZeroWindow(t *testing.T) {
 		readPrimary:  func() string { return "selection" },
 	}
 	got, fresh, err := captureWithPrimary(cb, 0, ops)
-	if err != nil || got != "existing clipboard" || fresh {
-		t.Fatalf("got=%q fresh=%v err=%v; want zero window falling back to clipboard", got, fresh, err)
+	if err != nil || got != "selection" || fresh {
+		t.Fatalf("got=%q fresh=%v err=%v; want the selection text, not fresh, when the window is unknown", got, fresh, err)
 	}
 }
 

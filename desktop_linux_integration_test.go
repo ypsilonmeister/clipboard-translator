@@ -77,8 +77,10 @@ func TestX11Desktop(t *testing.T) {
 	if freshStale {
 		t.Fatalf("stale selection from Window A must not be treated as fresh in Window B (fresh=%v, got=%q)", freshStale, gotStale)
 	}
-	if gotStale != "unrelated clipboard text" {
-		t.Fatalf("expected fallback to clipboard, got %q", gotStale)
+	// The text is still captured (the owner check is a heuristic, see
+	// captureWithPrimary); it just must not count as fresh.
+	if gotStale != "Stale Window A selection" {
+		t.Fatalf("expected the PRIMARY text, got %q", gotStale)
 	}
 	if act := decidePaste(true, freshStale, winB, foregroundWindow()); act != pasteNone {
 		t.Fatalf("decidePaste on stale selection must be pasteNone, got %v", act)
