@@ -205,6 +205,19 @@ func (a *app) changeHotkey(spec string) {
 	if !none && strings.EqualFold(spec, a.conf.Hotkey) {
 		return // with no hotkey registered, picking the configured one is a retry
 	}
+	// A profile whose hotkey is not registered (over the OS limit, or taken when
+	// the app started) does not hold its key with the OS, so registering succeeds
+	// but the saved file would fail loadConfig at the next start. Check before
+	// anything is closed or written.
+	if i, dup := a.conf.otherProfileWithHotkey(spec); dup {
+		log.Printf("hotkey %s: already used by profiles[%d]", spec, i)
+		msg := fmt.Sprintf("%s is already used by another hotkey (%s). Keeping %s.", spec, a.conf.Profiles[i].Hotkey, a.conf.Hotkey)
+		if none {
+			msg = fmt.Sprintf("%s is already used by another hotkey (%s). Pick a different one.", spec, a.conf.Profiles[i].Hotkey)
+		}
+		a.tray.Notify("Clipboard Translator", msg, true)
+		return
+	}
 	_ = a.hotkey.Close()
 	nh, err := a.newHotkey(spec)
 	if err != nil {
