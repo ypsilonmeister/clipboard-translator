@@ -3,10 +3,11 @@
 set -euo pipefail
 backend=metal
 model=''
+explicit_backend=false
 usage() { echo 'Usage: bash setup.sh [--backend cpu|metal] [--model 0.8b|2b|8b]' >&2; exit 2; }
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --backend) [[ $# -ge 2 && $2 =~ ^(cpu|metal)$ ]] || usage; backend=$2; shift 2 ;;
+        --backend) [[ $# -ge 2 && $2 =~ ^(cpu|metal)$ ]] || usage; backend=$2; explicit_backend=true; shift 2 ;;
         --model) [[ $# -ge 2 && $2 =~ ^(0\.8b|2b|8b)$ ]] || usage; model=$2; shift 2 ;;
         *) usage ;;
     esac
@@ -14,10 +15,10 @@ done
 if [[ $(uname -s) != Darwin ]]; then echo 'This script supports macOS only.' >&2; exit 1; fi
 command -v python3 >/dev/null || { echo 'Install Python 3.12+ to run setup (for example, brew install python).' >&2; exit 1; }
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-python3 - "$root" "$backend" "$model" <<'PY'
+python3 - "$root" "$backend" "$model" "$explicit_backend" <<'PY'
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import platform
 import re
 import shutil
@@ -28,6 +29,7 @@ import urllib.request
 
 root, backend = Path(sys.argv[1]), sys.argv[2]
 model_arg = sys.argv[3] if len(sys.argv) > 3 else ''
+explicit_backend = len(sys.argv) > 4 and sys.argv[4] == 'true'
 if not hasattr(tarfile, 'data_filter'):
     sys.exit('Setup needs Python with tarfile.data_filter (Python 3.12+, or a security-patched Python 3.10/3.11).')
 arch = {'x86_64': 'x64', 'arm64': 'arm64', 'aarch64': 'arm64'}.get(platform.machine())
@@ -73,6 +75,20 @@ def download(url, dest, expected=None):
 config_path = root / 'config.json'
 # Read config.json before the big download: a damaged file should fail now.
 config = json.loads(config_path.read_text(encoding='utf-8')) if config_path.exists() else {}
+def configured_server(key):
+    value = config.get(key)
+    if not isinstance(value, str) or not value.strip():
+        return False
+    value = value.replace(chr(92), '/')
+    path = Path(value)
+    if path.is_absolute() or PureWindowsPath(value).drive or '..' in path.parts:
+        return False
+    return (root / path).is_file()
+
+# Capture this before installing: a fresh install must replace the shipped defaults.
+server_present_at_start = configured_server('server_file')
+backend_complete_at_start = (root / 'runtime' / backend / 'llama-server').is_file()
+
 # Without --model, keep the model config.json names (so an update never swaps a chosen model); else 2b.
 configured = Path(str(config.get('model_file') or '').replace(chr(92), '/')).name.lower()
 model_key = model_arg or next((k for k, m in MODELS.items() if m['file'].lower() == configured), '2b')
@@ -128,7 +144,15 @@ if not (metal / 'llama-server').is_file():
     raise RuntimeError('Metal runtime alias is incomplete; move runtime/metal aside and retry.')
 if model_arg:
     config['model_file'] = 'models/' + model['file']
-config.update(server_file=f'runtime/{backend}/llama-server', fallback_server_file='runtime/cpu/llama-server', gpu_layers=0 if backend == 'cpu' else 99)
+# Match Update-BackendConfig in setup.ps1: preserve a working user engine on re-runs.
+if explicit_backend or not server_present_at_start or not configured_server('server_file') or not backend_complete_at_start:
+    config.update(server_file=f'runtime/{backend}/llama-server', fallback_server_file='runtime/cpu/llama-server', gpu_layers=0 if backend == 'cpu' else 99)
+else:
+    if not configured_server('fallback_server_file'):
+        config['fallback_server_file'] = 'runtime/cpu/llama-server'
+    if config.get('gpu_layers') is None:
+        is_cpu = re.match(r'^runtime[\\/]cpu[\\/]', config['server_file'], re.IGNORECASE)
+        config['gpu_layers'] = 0 if is_cpu else 99
 if config_path.exists():
     shutil.copyfile(config_path, root / 'config.json.bak')
 config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')

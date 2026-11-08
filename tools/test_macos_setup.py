@@ -2,13 +2,14 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 from unittest import mock
 import unittest
 import test_linux_setup as linux
 
 SOURCE = (Path(__file__).resolve().parents[1] / 'setup-macos.sh').read_text()
-PROGRAM = compile(SOURCE.split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0], 'setup-macos.sh:python', 'exec')
+PROGRAM = linux.fixture_program(SOURCE, 'setup-macos.sh:python')
 
 
 class MacSetupTests(linux.SetupTests):
@@ -28,13 +29,17 @@ class MacSetupTests(linux.SetupTests):
             return io.BytesIO(self.model_bytes)
         raise AssertionError('Unexpected request: ' + url)
 
-    def run_setup(self, backend='metal', *model):
-        with mock.patch('sys.argv', ['setup', str(self.root), backend, *model]), mock.patch('platform.machine', return_value=self.machine), mock.patch('urllib.request.urlopen', side_effect=self.response), contextlib.redirect_stdout(io.StringIO()):
+    default_backend = 'metal'
+    alternate_backend = 'cpu'
+
+    def run_setup(self, backend=None, *model):
+        with mock.patch('sys.argv', ['setup', str(self.root), backend or self.default_backend, model[0] if model else '', 'true' if backend else 'false']), mock.patch('platform.machine', return_value=self.machine), mock.patch('urllib.request.urlopen', side_effect=self.response), contextlib.redirect_stdout(io.StringIO()):
             exec(PROGRAM, {'__name__': '__main__'})
 
     def test_cpu_vulkan_config_and_symlinks(self):
         self.run_setup()
-        self.assertTrue((self.root / 'runtime/cpu/llama-server').stat().st_mode & 0o111)
+        if os.name != 'nt':
+            self.assertTrue((self.root / 'runtime/cpu/llama-server').stat().st_mode & 0o111)
         self.assertTrue((self.root / 'runtime/metal').is_symlink())
         self.assertTrue((self.root / 'runtime/metal/llama-server').is_file())
         config = json.loads((self.root / 'config.json').read_text())
