@@ -10,6 +10,10 @@
   let saving = false;
   let acting = false; // a model / engine / download request is in flight
   let closed = false; // the page was closed via "Close this page"
+  // The revision the unsaved edits are based on. Syncing with the app moves it only
+  // while nothing is being edited: moving it under a dirty section would hide a newer
+  // change made in the tray from the server's stale-save check.
+  let baseRevision = 0;
   let pollTimer = null;
   let pingTimer = null;
 
@@ -95,7 +99,7 @@
       changed.push('profiles', 'auto_paste', 'max_chars');
     }
     return {
-      base_revision: (state && state.revision) || 0,
+      base_revision: baseRevision,
       changed,
       auto_paste: m.auto_paste,
       max_chars: m.max_chars,
@@ -137,6 +141,7 @@
       class: 'secondary',
       onclick: () => {
         state = Object.assign({}, newState);
+        baseRevision = state.revision || 0;
         model = toModel(state);
         clearDirty();
         renderAll();
@@ -154,7 +159,7 @@
       type: 'button',
       class: 'secondary',
       onclick: () => {
-        state.revision = newState.revision;
+        baseRevision = newState.revision || 0;
         showBanner([]);
         save();
       },
@@ -372,14 +377,20 @@
     if (closed) return;
     const wasBusy = appBusy();
     state = Object.assign({}, st);
+    if (!isDirty()) baseRevision = st.revision || 0;
     renderAll();
     if (!dirtyFields.profiles && st.profiles) {
-      model.profiles = toModel(st).profiles;
-      renderHotkeys();
-    } else {
-      const addBtn = $('add');
-      if (addBtn) addBtn.disabled = model.profiles.length >= state.max_hotkeys || appBusy();
+      // Rebuild the cards only when the app's profiles really differ: this runs every
+      // second during a download or a switch, and a rebuild closes an open dropdown and
+      // takes the focus away from what is being typed.
+      const next = toModel(st).profiles;
+      if (JSON.stringify(next) !== JSON.stringify(model.profiles)) {
+        model.profiles = next;
+        renderHotkeys();
+      }
     }
+    const addBtn = $('add');
+    if (addBtn) addBtn.disabled = model.profiles.length >= state.max_hotkeys || appBusy();
     if (!dirtyFields.auto_paste && st.auto_paste !== undefined) {
       model.auto_paste = !!st.auto_paste;
       const autoPasteEl = $('auto-paste');
@@ -457,6 +468,12 @@
       dirtyFields.max_chars = true;
       markDirty();
     }
+    if (!isDirty()) {
+      // Nothing to send. Sending every field with an old revision would report a
+      // conflict, or overwrite a change made in the tray, for edits that were never made.
+      setStatus('No changes to save');
+      return;
+    }
     saving = true;
     $('save').disabled = true;
     setStatus('Saving...');
@@ -480,6 +497,7 @@
       return;
     }
     state = Object.assign({}, r.data.state);
+    baseRevision = state.revision || 0;
     model = toModel(state);
     clearDirty();
     renderAll();
@@ -504,6 +522,7 @@
       return false;
     }
     state = Object.assign({}, r.data.state);
+    baseRevision = state.revision || 0;
     model = toModel(state);
     renderAll();
     renderHotkeys();

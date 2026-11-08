@@ -193,6 +193,32 @@ func TestSettingsServerHeadersAndAssets(t *testing.T) {
 	}
 }
 
+// The page logic is not run by go test, so these pin the three rules that keep a
+// stale save from slipping through (found in review of #85).
+func TestSettingsPageKeepsStaleSaveGuards(t *testing.T) {
+	b, err := os.ReadFile("settings_web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := strings.ReplaceAll(string(b), "\r\n", "\n")
+	// The revision sent with a save is the one the edits are based on, not whatever
+	// the last sync saw; a sync moves it only while nothing is dirty.
+	if !strings.Contains(js, "base_revision: baseRevision,") || strings.Contains(js, "base_revision: (state") {
+		t.Error("toPayload must send baseRevision, not the revision of the last sync")
+	}
+	if !strings.Contains(js, "if (!isDirty()) baseRevision = st.revision") {
+		t.Error("mergeState must move baseRevision only while nothing is being edited")
+	}
+	// The poll must not rebuild the hotkey cards when nothing changed.
+	if !strings.Contains(js, "JSON.stringify(next) !== JSON.stringify(model.profiles)") {
+		t.Error("mergeState must rebuild the hotkey cards only when the profiles differ")
+	}
+	// Save with nothing edited sends nothing.
+	if !strings.Contains(js, "setStatus('No changes to save')") {
+		t.Error("save must do nothing when no section is dirty")
+	}
+}
+
 func TestSettingsStateAndSave(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
