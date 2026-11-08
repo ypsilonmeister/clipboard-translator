@@ -17,6 +17,8 @@ static GtkWidget *current_menu, *control_window, *status_label;
 static int menu_requested;
 static GQueue commands = G_QUEUE_INIT;
 
+static void primary_owner_change(GtkClipboard *clipboard, GdkEventOwnerChange *event, gpointer data);
+
 int ct_init(void) {
     if (display) return 1;
     if (!gtk_init_check(NULL, NULL)) return 0;

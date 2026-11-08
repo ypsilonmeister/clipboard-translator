@@ -57,11 +57,11 @@ func TestX11Desktop(t *testing.T) {
 
 	// Issue #83: A stale PRIMARY selection from Window A must not be treated as a
 	// selection in Window B (which would wrongly auto-paste into Window B).
+	// Window A makes the selection while it has the focus; then Window B appears
+	// and takes the focus with nothing selected in it.
+	x11TestSelect("Stale Window A selection")
 	x11TestCreateB()
 	defer x11TestDestroyB()
-
-	// Window A retains the selection. Switch focus to Window B with nothing selected.
-	x11TestSelect("Stale Window A selection")
 	x11TestFocusB()
 	winB := foregroundWindow()
 	if winB == 0 {

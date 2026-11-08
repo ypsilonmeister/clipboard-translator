@@ -11,6 +11,10 @@ package main
 #include "native_linux.h"
 
 static GtkWidget *test_window, *test_entry;
+// A selection change reaches the app as an event; once the server has answered
+// a round trip, that event is queued and the next pump handles it while the
+// focus is still where the selection was made.
+static void test_sync(void) { XSync(GDK_DISPLAY_XDISPLAY(gdk_display_get_default()), False); }
 static void test_create(void) {
     test_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     test_entry = gtk_entry_new();
@@ -27,6 +31,7 @@ static void test_destroy(void) { gtk_widget_destroy(test_window); ct_pump(); }
 static void test_select(const char *text) {
     gtk_entry_set_text(GTK_ENTRY(test_entry), text);
     gtk_editable_select_region(GTK_EDITABLE(test_entry), 0, -1);
+    test_sync();
     ct_pump();
 }
 static const char *test_text(void) { return gtk_entry_get_text(GTK_ENTRY(test_entry)); }
@@ -64,6 +69,7 @@ static void test_select_b(const char *text) {
     if (!test_entry_b) return;
     gtk_entry_set_text(GTK_ENTRY(test_entry_b), text);
     gtk_editable_select_region(GTK_EDITABLE(test_entry_b), 0, -1);
+    test_sync();
     ct_pump();
 }
 static const char *test_text_b(void) {
