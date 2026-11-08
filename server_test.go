@@ -135,3 +135,23 @@ func TestStartServerReportsMissingDLL(t *testing.T) {
 		t.Error("no server may be left running")
 	}
 }
+
+// Without the VC++ runtime no llama.cpp build can start, so the app must say so
+// without launching a process and without trying the CPU build.
+func TestStartServerWithoutVCRuntime(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	old := vcRuntimeAvailable
+	vcRuntimeAvailable = func(string) bool { return false }
+	t.Cleanup(func() { vcRuntimeAvailable = old })
+	err := a.startServer()
+	var dnf *dllNotFoundError
+	if !errors.As(err, &dnf) || !dnf.vcMissing {
+		t.Fatalf("startServer error = %v, want a dllNotFoundError with vcMissing", err)
+	}
+	if !strings.Contains(err.Error(), "winget install") || strings.Contains(err.Error(), "CPU fallback") {
+		t.Errorf("unexpected message:\n%v", err)
+	}
+	if a.sup.Running() {
+		t.Error("no server may be started")
+	}
+}

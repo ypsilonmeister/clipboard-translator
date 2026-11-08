@@ -309,6 +309,12 @@ if ($changed -or -not (Test-Path -LiteralPath $configFile)) {
 } else {
     Write-Host 'Kept your existing engine settings (server_file, gpu_layers) in config.json.'
 }
+# llama.cpp's Windows builds import vcruntime140_1.dll. Without the Visual C++ runtime llama-server
+# exits at once (0xC0000135) and prints nothing, so say so now, while the user is looking at this window.
+if (-not (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('System')) 'vcruntime140_1.dll'))) {
+    Write-Warning 'The Visual C++ Redistributable (x64) looks missing or too old; llama-server will not start without it.'
+    Write-Warning 'Install it with:  winget install --id Microsoft.VCRedist.2015+.x64 -e   (or https://aka.ms/vs/17/release/vc_redist.x64.exe)'
+}
 Write-Host ''
 Write-Host "Setup finished. Engine in config.json: $(Get-ConfigValue $config 'server_file'); CPU fallback installed."
 Write-Host "Now start ClipboardTranslator.exe (or Start.cmd). The full folder can be copied to another Windows x64 PC."

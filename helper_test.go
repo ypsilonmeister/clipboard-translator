@@ -24,6 +24,8 @@ func TestMain(m *testing.M) {
 	}
 	// No test may download a real model: model downloads only reach loopback.
 	downloadTransport = loopbackOnly{}
+	// The fake server is a Go program: it does not need the VC++ runtime, whether or not the machine has it.
+	vcRuntimeAvailable = func(string) bool { return true }
 	os.Exit(m.Run())
 }
 

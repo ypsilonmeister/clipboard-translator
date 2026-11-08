@@ -71,6 +71,12 @@ func serverEnv(base []string, key string) []string {
 
 // start launches binary and blocks until the server answers /health.
 func (s *supervisor) start(binary string, gpuLayers int, label string) error {
+	// Without the VC++ runtime every llama.cpp build dies at once with no output,
+	// so say so instead of starting a process that cannot work.
+	if !vcRuntimeAvailable(filepath.Dir(binary)) {
+		log.Printf("not starting %s: vcruntime140_1.dll was not found", binary)
+		return &dllNotFoundError{binary: filepath.Base(binary), vcMissing: true}
+	}
 	key, err := newAPIKey()
 	if err != nil {
 		return fmt.Errorf("could not create a key for the translation server: %w", err)
@@ -123,7 +129,7 @@ wait:
 			return errQuit
 		}
 		if isDLLNotFound(waitErr) {
-			return &dllNotFoundError{binary: filepath.Base(binary)}
+			return &dllNotFoundError{binary: filepath.Base(binary), vcMissing: !vcRuntimeAvailable(filepath.Dir(binary))}
 		}
 		return err
 	}
@@ -149,10 +155,13 @@ func isDLLNotFound(err error) bool {
 // could not load a DLL it needs. Another engine build will not help in the
 // common case (the shared runtime is missing), so the message tells the user
 // what to install.
-type dllNotFoundError struct{ binary string }
+type dllNotFoundError struct {
+	binary    string
+	vcMissing bool // vcruntime140_1.dll is neither next to the exe nor in System32
+}
 
 func (e *dllNotFoundError) Error() string {
-	return dllNotFoundMessage(e.binary, vcRuntimeInstalled())
+	return dllNotFoundMessage(e.binary, !e.vcMissing)
 }
 
 const vcRedistHelp = "Install the Visual C++ Redistributable (x64), then start Clipboard Translator again:\n" +
