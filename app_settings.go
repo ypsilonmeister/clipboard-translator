@@ -172,8 +172,12 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 		return a.inactiveHotkeys(), nil
 	}
 	if sameProfiles(cand.Profiles, a.conf.Profiles) {
-		// No hotkey changes: leave the registrations alone.
+		// No hotkey changes: leave the registrations alone. config.json gets
+		// "profiles" below even so, and loadConfig prefers that key, so the tray
+		// must from now on save "profiles" too: a legacy hotkey/languages edit
+		// would be ignored at the next start.
 		a.conf.AutoPaste, a.conf.MaxChars = cand.AutoPaste, cand.MaxChars
+		a.conf.explicitProfiles = cand.explicitProfiles
 	} else {
 		old := a.conf
 		a.closeHotkeys()

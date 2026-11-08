@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -35,17 +38,49 @@ type supervisor struct {
 	// app dies without stopping it (macOS only; see recordChild). Empty: none.
 	pidFile string
 
+	// apiKey is the key the running server requires (see serverEnv). start makes
+	// a new one each time; it is never logged.
+	apiKey string
+
 	cmd  *exec.Cmd
 	done chan struct{} // closed when cmd has exited
 }
 
+// newAPIKey returns 32 random bytes as hex.
+func newAPIKey() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// serverEnv is the environment for llama-server. Without an API key any web
+// page in the user's browser could use the loopback server (llama-server's
+// CORS default allows every origin), so it requires a per-start key.
+//
+// Both settings go in the environment, not on the command line: an unknown
+// flag makes an older llama-server exit, while an unknown variable is ignored,
+// and the key stays out of the command line. LLAMA_API_KEY is the variable for
+// --api-key; LLAMA_ARG_UI=0 turns off the Web UI (--no-ui) on builds that
+// read it. They are appended last so they win over the user's own values.
+func serverEnv(base []string, key string) []string {
+	env := append([]string(nil), base...)
+	return append(env, "LLAMA_API_KEY="+key, "LLAMA_ARG_UI=0")
+}
+
 // start launches binary and blocks until the server answers /health.
 func (s *supervisor) start(binary string, gpuLayers int, label string) error {
+	key, err := newAPIKey()
+	if err != nil {
+		return fmt.Errorf("could not create a key for the translation server: %w", err)
+	}
 	args := []string{"-m", s.model, "-c", fmt.Sprint(s.contextTokens),
 		"--host", "127.0.0.1", "--port", fmt.Sprint(s.port), "--alias", "plamo-3-translate",
 		"--chat-template-file", s.template, "--no-prefill-assistant", "-ngl", fmt.Sprint(gpuLayers)}
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = filepath.Dir(binary)
+	cmd.Env = serverEnv(os.Environ(), key)
 	cmd.Stdout, cmd.Stderr = s.logOut, s.logOut
 	hideConsole(cmd)
 	log.Printf("starting %s (gpu_layers=%d)", binary, gpuLayers)
@@ -67,7 +102,6 @@ func (s *supervisor) start(binary string, gpuLayers int, label string) error {
 	pump := time.NewTicker(50 * time.Millisecond)
 	defer pump.Stop()
 	quit := false
-	var err error
 wait:
 	for {
 		select {
@@ -89,7 +123,7 @@ wait:
 		}
 		return err
 	}
-	s.cmd, s.done = cmd, done
+	s.cmd, s.done, s.apiKey = cmd, done, key
 	return nil
 }
 
@@ -113,7 +147,7 @@ func (s *supervisor) Stop() {
 	_ = s.cmd.Process.Kill()
 	<-s.done
 	forgetChild(s.pidFile)
-	s.cmd, s.done = nil, nil
+	s.cmd, s.done, s.apiKey = nil, nil, ""
 }
 
 // restartLimiter allows at most max restarts within a sliding window, so a

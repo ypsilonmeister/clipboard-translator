@@ -46,10 +46,26 @@ func runFakeServer() {
 	if ms, _ := strconv.Atoi(os.Getenv("CT_TEST_FAKE_SERVER_DELAY")); ms > 0 {
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
+	// Like llama-server: with LLAMA_API_KEY set, every endpoint but /health
+	// needs "Authorization: Bearer <key>"; without it, nothing is checked.
+	key := os.Getenv("LLAMA_API_KEY")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"status":"ok"}`) })
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		if key != "" && r.Header.Get("Authorization") != "Bearer "+key {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":{"code":401,"message":"Invalid API Key","type":"authentication_error"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"`+fakeTranslation+`"},"finish_reason":"stop"}]}`)
+	})
 	_ = http.ListenAndServe("127.0.0.1:"+port, mux)
 }
+
+// fakeTranslation is what the fake server answers to every chat request.
+const fakeTranslation = "fake translation"
 
 // fakeTray records what the app tells the tray.
 type fakeTray struct {
