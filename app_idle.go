@@ -17,8 +17,12 @@ func (a *app) serverStarted() {
 	a.resetIdleTimer()
 }
 
+func (a *app) busy() bool {
+	return a.translating || a.serverWork > 0 || (a.sup != nil && a.sup.starting) || a.settingsServing
+}
+
 func (a *app) canUnloadModel() bool {
-	return a.sup != nil && a.sup.Running() && !a.sup.starting && !a.translating && a.serverWork == 0 && !a.settingsServing
+	return a.sup != nil && a.sup.Running() && !a.busy()
 }
 
 func (a *app) unloadModel() {

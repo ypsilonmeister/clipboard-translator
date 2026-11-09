@@ -18,6 +18,7 @@ const (
 	cmdHistoryClear = firstAppCommand + 7
 	cmdSettings     = firstAppCommand + 8
 	cmdUnloadModel  = firstAppCommand + 10
+	cmdModelBase    = firstAppCommand + 100 // + index into modelCatalog
 	cmdHistoryBase  = firstAppCommand + 300 // + index into history (newest first)
 )
 
@@ -50,6 +51,22 @@ func (a *app) buildMenu() []MenuItem {
 		items = append(items, MenuItem{ID: cmdCancel, Label: "Cancel translation"}, MenuItem{Separator: true})
 	}
 	items = append(items, MenuItem{ID: cmdUnloadModel, Label: "Unload model", Disabled: !a.canUnloadModel()})
+	var modelSub []MenuItem
+	modelBusy := a.busy()
+	for i, m := range modelCatalog {
+		if !m.installed(a.dir) {
+			continue
+		}
+		modelSub = append(modelSub, MenuItem{
+			ID:       cmdModelBase + i,
+			Label:    m.Name + " (" + m.SizeLabel + ")",
+			Checked:  a.isModelActive(m),
+			Disabled: modelBusy,
+		})
+	}
+	if len(modelSub) >= 2 {
+		items = append(items, MenuItem{Label: "Translation model", Sub: modelSub})
+	}
 	var recent []MenuItem
 	for i, e := range a.hist.Items() {
 		recent = append(recent, MenuItem{ID: cmdHistoryBase + i, Label: historyLabel(e)})
@@ -84,6 +101,8 @@ func (a *app) handleCommand(id int) {
 	switch {
 	case id >= cmdHistoryBase:
 		a.copyFromHistory(id - cmdHistoryBase)
+	case id >= cmdModelBase && id < cmdModelBase+len(modelCatalog):
+		a.switchModelFromMenu(id - cmdModelBase)
 	case id == cmdUnloadModel:
 		a.unloadModel()
 	case id == cmdCancel:
@@ -126,6 +145,27 @@ func (a *app) openConfigFile() {
 		log.Printf("could not open config.json: %v", err)
 		a.tray.Notify("Clipboard Translator", "Could not open config.json ("+path+"). You can open it manually in any text editor, edit the hotkey, and restart the app.", true)
 	}
+}
+
+// switchModelFromMenu switches to modelCatalog[idx] from the tray menu.
+func (a *app) switchModelFromMenu(idx int) {
+	if a.busy() {
+		return
+	}
+	if idx < 0 || idx >= len(modelCatalog) {
+		return
+	}
+	target := modelCatalog[idx]
+	if a.isModelActive(target) {
+		return
+	}
+	e, err := a.checkModelSwitch(target.Key)
+	if err != nil {
+		log.Printf("could not switch model: %v", err)
+		a.tray.Notify("Clipboard Translator", err.Error(), true)
+		return
+	}
+	_ = a.switchModel(e)
 }
 
 // copyFromHistory puts the translation of history entry i (newest first) on the
