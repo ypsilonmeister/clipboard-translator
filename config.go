@@ -182,7 +182,7 @@ func defaultConfig() Config {
 		GPULayers: 0, TranslationTimeoutSec: 180, StartupTimeoutSec: 120,
 		Languages:          append([]string(nil), defaultLanguages...),
 		ModelFile:          "models/plamo-3-translate-2b-Q4_K_M.gguf",
-		TemplateFile:       "models/chat_template.jinja",
+		TemplateFile:       "models/chat_template.2b.jinja",
 		ServerFile:         "runtime/cpu/" + serverBinaryName(),
 		FallbackServerFile: "runtime/cpu/" + serverBinaryName(),
 	}

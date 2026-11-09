@@ -134,7 +134,7 @@ func (m *downloadManager) Start(key string) error {
 	if !ok {
 		return fmt.Errorf("unknown model %q", key)
 	}
-	if e.installed(m.dir) && templateInstalled(m.dir) {
+	if e.installed(m.dir) && e.templateInstalled(m.dir) {
 		return fmt.Errorf("%s is already installed", e.Name)
 	}
 	m.mu.Lock()
@@ -212,10 +212,9 @@ func (m *downloadManager) run(ctx context.Context, e modelEntry) {
 			return
 		}
 	}
-	// The template is shared by all sizes; fetch it only when it is missing, as the scripts do.
-	if !templateInstalled(m.dir) {
+	if !e.templateInstalled(m.dir) {
 		m.set(func(s *downloadState) { s.Phase = "template" })
-		tpl := filepath.Join(m.dir, "models", "chat_template.jinja")
+		tpl := e.templatePath(m.dir)
 		if err := m.fetch(ctx, e, base+"chat_template.jinja", tpl, e.TemplateSha256, false); err != nil {
 			m.finish(e.Key, err)
 			return
@@ -287,6 +286,9 @@ func (m *downloadManager) fetch(ctx context.Context, e modelEntry, url, dest, wa
 		}
 		return m.verifyAndMove(e, partial, dest, want, h)
 	default:
+		if !track {
+			_ = os.Remove(partial)
+		}
 		return fmt.Errorf("the model host answered HTTP %d", resp.StatusCode)
 	}
 	if track {
@@ -295,6 +297,9 @@ func (m *downloadManager) fetch(ctx context.Context, e modelEntry, url, dest, wa
 
 	f, err := os.OpenFile(partial, flags, 0o644)
 	if err != nil {
+		if !track {
+			_ = os.Remove(partial)
+		}
 		return fmt.Errorf("could not write %s: %w", partial, err)
 	}
 	buf := make([]byte, 256<<10)
@@ -325,6 +330,9 @@ func (m *downloadManager) fetch(ctx context.Context, e modelEntry, url, dest, wa
 	if copyErr != nil {
 		if ctx.Err() != nil {
 			return ctx.Err() // cancelled: the partial file stays for the next try
+		}
+		if !track {
+			_ = os.Remove(partial)
 		}
 		return copyErr
 	}

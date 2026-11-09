@@ -62,7 +62,6 @@ func (a *app) fillModelsAndEngines(st *settingsState) {
 	// One snapshot of the download for the whole state: reading it per model
 	// could show "downloading" in one place and "done" in another.
 	d := a.dl.State()
-	template := templateInstalled(a.dir)
 	for _, e := range modelCatalog {
 		installed := e.installed(a.dir)
 		hasFile, fileBytes := e.fileInfo(a.dir)
@@ -85,7 +84,7 @@ func (a *app) fillModelsAndEngines(st *settingsState) {
 			Note:              e.Note,
 			Size:              e.SizeLabel,
 			Installed:         installed,
-			TemplateInstalled: template,
+			TemplateInstalled: e.templateInstalled(a.dir),
 			Active:            isActive,
 			Downloading:       isDownloading,
 			Partial:           partial,
@@ -164,12 +163,12 @@ func (a *app) checkModelSwitch(key string) (modelEntry, error) {
 	case !e.installed(a.dir):
 		return e, fmt.Errorf("%s is not installed; download it first", e.Name)
 	}
-	if a.paths.template == filepath.Join(a.dir, "models", "chat_template.jinja") {
-		if !templateInstalled(a.dir) {
-			return e, errors.New("the chat template is missing or incomplete; retry this model's download in Settings to fetch it")
+	if isCustomTemplate(a.conf.TemplateFile) {
+		if err := checkFile(a.paths.template); err != nil {
+			return e, fmt.Errorf("the configured chat template is missing (%v); check template_file in config.json", err)
 		}
-	} else if err := checkFile(a.paths.template); err != nil {
-		return e, fmt.Errorf("the configured chat template is missing (%v); check template_file in config.json", err)
+	} else if !e.templateInstalled(a.dir) {
+		return e, errors.New("the chat template is missing or incomplete; retry this model's download in Settings to fetch it")
 	}
 	return e, nil
 }
@@ -181,9 +180,20 @@ func (a *app) checkModelSwitch(key string) (modelEntry, error) {
 func (a *app) switchModel(e modelEntry) error {
 	defer a.beginServerWork()()
 	oldModel := a.sup.model
+	oldTemplate := a.sup.template
 	wasFallback := a.onFallback()
 	newConf := a.conf
 	newConf.ModelFile = "models/" + e.File
+	saveMap := map[string]any{"model_file": newConf.ModelFile}
+	if !isCustomTemplate(a.conf.TemplateFile) {
+		tplPath, ok := e.installedTemplatePath(a.dir)
+		if ok && tplPath == filepath.Join(a.dir, "models", "chat_template.jinja") {
+			newConf.TemplateFile = "models/chat_template.jinja"
+		} else {
+			newConf.TemplateFile = "models/" + e.templateFile()
+		}
+		saveMap["template_file"] = newConf.TemplateFile
+	}
 	paths, err := resolvePaths(a.dir, newConf)
 	if err != nil {
 		return err
@@ -194,6 +204,7 @@ func (a *app) switchModel(e modelEntry) error {
 	a.updateReadyTip()
 	a.sup.Stop()
 	a.sup.model = paths.model
+	a.sup.template = paths.template
 	bin := a.paths.server
 	layers := a.conf.GPULayers
 	label := "loading " + e.Name
@@ -207,7 +218,7 @@ func (a *app) switchModel(e modelEntry) error {
 	err = a.sup.start(bin, layers, label)
 	if err == nil {
 		a.conf, a.paths = newConf, paths
-		a.saveConfig(map[string]any{"model_file": newConf.ModelFile})
+		a.saveConfig(saveMap)
 		a.refreshStatus()
 		a.tray.Notify("Clipboard Translator", "Model: "+e.Name, false)
 		return nil
@@ -217,6 +228,7 @@ func (a *app) switchModel(e modelEntry) error {
 	}
 	log.Printf("model %s failed: %v; going back", e.Name, err)
 	a.sup.model = oldModel
+	a.sup.template = oldTemplate
 	restore := a.startServer
 	if wasFallback {
 		restore = a.startFallback

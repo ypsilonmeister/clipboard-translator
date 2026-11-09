@@ -367,7 +367,11 @@ func TestSetupWholeScriptWhenInstalled(t *testing.T) {
 		}
 	}
 	write("setup.ps1", string(script))
-	write("models/chat_template.jinja", strings.Repeat("x", 200))
+	tpl2b, err := os.ReadFile("testdata/chat_template.2b.jinja")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("models/chat_template.2b.jinja", string(tpl2b))
 	for _, b := range []string{"cpu", "cuda", "vulkan"} {
 		write("runtime/"+b+"/llama-server.exe", "exe")
 	}
@@ -440,6 +444,11 @@ func TestSetupWholeScriptWhenInstalled(t *testing.T) {
 		t.Fatal(err)
 	}
 	f08.Close()
+	tpl08, err := os.ReadFile("testdata/chat_template.0.8b.jinja")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("models/chat_template.0.8b.jinja", string(tpl08))
 	out := run("auto", "-Model", "0.8b")
 	if !strings.Contains(out, "PLaMo 3 Translate 0.8B") {
 		t.Errorf("setup does not say which model it uses:\n%s", out)
@@ -449,7 +458,7 @@ func TestSetupWholeScriptWhenInstalled(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("config.json is not valid JSON after -Model: %v\n%s", err, raw)
 	}
-	if got["model_file"] != "models/plamo-3-translate-0.8b-Q4_K_M.gguf" || got["custom_key"] != "keep me" || got["server_file"] != "runtime/cuda/llama-server.exe" {
+	if got["model_file"] != "models/plamo-3-translate-0.8b-Q4_K_M.gguf" || got["custom_key"] != "keep me" || got["server_file"] != "runtime/cuda/llama-server.exe" || got["template_file"] != "models/chat_template.0.8b.jinja" {
 		t.Errorf("config after -Model 0.8b is wrong:\n%s", raw)
 	}
 

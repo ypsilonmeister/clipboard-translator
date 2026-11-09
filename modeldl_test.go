@@ -151,7 +151,7 @@ func waitTemplatePartial(t *testing.T, m *downloadManager) int64 {
 	t.Helper()
 	var size int64
 	waitFor(t, "the template partial file", func() bool {
-		info, err := os.Stat(filepath.Join(m.dir, "models", "chat_template.jinja.partial"))
+		info, err := os.Stat(filepath.Join(m.dir, "models", "chat_template.t1.jinja.partial"))
 		if err == nil {
 			size = info.Size()
 		}
@@ -168,7 +168,7 @@ func (f *dlFixture) repairTemplate() {
 
 func (f *dlFixture) checkTemplateRecovery(t *testing.T, dir string, resumed int64) {
 	t.Helper()
-	for name, want := range map[string][]byte{"test-model.gguf": f.model, "chat_template.jinja": f.tpl} {
+	for name, want := range map[string][]byte{"test-model.gguf": f.model, "chat_template.t1.jinja": f.tpl} {
 		got, err := os.ReadFile(filepath.Join(dir, "models", name))
 		if err != nil || !bytes.Equal(got, want) {
 			t.Fatalf("%s: content differs or read failed: %v", name, err)
@@ -216,7 +216,7 @@ func TestDownloadRetriesOnlyTemplate(t *testing.T) {
 				if (kind == "http" && !strings.Contains(s.Error, "503")) || (kind == "hash" && !strings.Contains(s.Error, "SHA-256")) {
 					t.Fatalf("unexpected failure: %+v", s)
 				}
-				if _, err := os.Stat(f.path("chat_template.jinja.partial")); !os.IsNotExist(err) {
+				if _, err := os.Stat(f.path("chat_template.t1.jinja.partial")); !os.IsNotExist(err) {
 					t.Fatalf("failed template partial should be absent: %v", err)
 				}
 			}
@@ -249,7 +249,7 @@ func TestDownloadFreshModelAndTemplate(t *testing.T) {
 	if err != nil || !bytes.Equal(got, f.model) {
 		t.Fatalf("model file: %v", err)
 	}
-	if tpl, err := os.ReadFile(f.path("chat_template.jinja")); err != nil || !bytes.Equal(tpl, f.tpl) {
+	if tpl, err := os.ReadFile(f.path("chat_template.t1.jinja")); err != nil || !bytes.Equal(tpl, f.tpl) {
 		t.Errorf("template: %v", err)
 	}
 	if left, _ := filepath.Glob(f.path("*.partial")); len(left) != 0 {
@@ -281,7 +281,7 @@ func TestDownloadFreshModelAndTemplate(t *testing.T) {
 func TestDownloadKeepsExistingTemplate(t *testing.T) {
 	f := newDLFixture(t)
 	os.MkdirAll(f.path(""), 0o755)
-	os.WriteFile(f.path("chat_template.jinja"), bytes.Repeat([]byte("x"), 200), 0o644)
+	os.WriteFile(f.path("chat_template.jinja"), f.tpl, 0o644)
 	f.m.Start("t1")
 	f.wait("done")
 	for _, r := range f.reqs() {
@@ -289,7 +289,7 @@ func TestDownloadKeepsExistingTemplate(t *testing.T) {
 			t.Errorf("a template that is already there was fetched again: %s", r)
 		}
 	}
-	if b, _ := os.ReadFile(f.path("chat_template.jinja")); len(b) != 200 {
+	if b, _ := os.ReadFile(f.path("chat_template.jinja")); !bytes.Equal(b, f.tpl) {
 		t.Error("the existing template was replaced")
 	}
 }

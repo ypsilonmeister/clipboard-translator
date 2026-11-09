@@ -74,6 +74,13 @@ func resolvePaths(dir string, c Config) (appPaths, error) {
 	if p.template, err = resolve("template_file", c.TemplateFile); err != nil {
 		return p, err
 	}
+	if !isCustomTemplate(c.TemplateFile) {
+		if m, ok := modelForFile(c.ModelFile); ok {
+			if tplPath, ok := m.installedTemplatePath(dir); ok {
+				p.template = tplPath
+			}
+		}
+	}
 	if p.server, err = resolve("server_file", c.ServerFile); err != nil {
 		return p, err
 	}
@@ -108,6 +115,27 @@ func (p appPaths) missing() []string {
 	return out
 }
 
+func (p appPaths) missingFor(c Config, dir string) []string {
+	var out []string
+	if checkFile(p.model) != nil {
+		out = append(out, p.model)
+	}
+	if isCustomTemplate(c.TemplateFile) {
+		if checkFile(p.template) != nil {
+			out = append(out, p.template)
+		}
+	} else {
+		m, known := modelForFile(c.ModelFile)
+		if !known || !m.templateInstalled(dir) {
+			out = append(out, p.template)
+		}
+	}
+	if checkFile(p.server) != nil {
+		out = append(out, p.server)
+	}
+	return out
+}
+
 // ensureInstalled makes sure the model and llama-server exist. When they do
 // not, it offers to run setup.ps1 (the one next to the exe, or the copy carried
 // inside the exe) in a visible window instead of just failing. It returns the config again
@@ -118,7 +146,7 @@ func ensureInstalled(dir string, conf Config) (Config, bool) {
 		if err != nil {
 			fatal(err)
 		}
-		missing := p.missing()
+		missing := p.missingFor(conf, dir)
 		if len(missing) == 0 {
 			return conf, true
 		}

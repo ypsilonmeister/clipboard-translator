@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,7 +102,80 @@ func (m modelEntry) fileInfo(dir string) (bool, int64) {
 	return false, 0
 }
 
+func (m modelEntry) templateFile() string { return "chat_template." + m.Key + ".jinja" }
+
+func (m modelEntry) templatePath(dir string) string {
+	return filepath.Join(dir, "models", m.templateFile())
+}
+
+// verifyFileSha256 checks whether path is a regular file whose SHA-256 digest
+// matches expected (case-insensitive).
+func verifyFileSha256(path, expected string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return false
+	}
+	return strings.EqualFold(hex.EncodeToString(h.Sum(nil)), expected)
+}
+
+// installedTemplatePath returns the path to the template for m if one exists and
+// matches m.TemplateSha256. It checks m.templatePath(dir) first, and falls back to
+// models/chat_template.jinja for existing installs.
+func (m modelEntry) installedTemplatePath(dir string) (string, bool) {
+	primary := m.templatePath(dir)
+	if verifyFileSha256(primary, m.TemplateSha256) {
+		return primary, true
+	}
+	legacy := filepath.Join(dir, "models", "chat_template.jinja")
+	if verifyFileSha256(legacy, m.TemplateSha256) {
+		return legacy, true
+	}
+	return "", false
+}
+
+// templateInstalled reports whether a template matching m.TemplateSha256 is present
+// in dir\models (either chat_template.<key>.jinja or the legacy chat_template.jinja).
+func (m modelEntry) templateInstalled(dir string) bool {
+	_, ok := m.installedTemplatePath(dir)
+	return ok
+}
+
+// isCustomTemplate reports whether templateFile is a custom template path set by
+// the user rather than a standard or legacy managed template file. Custom templates
+// are left alone and not hashed against catalog pins.
+func isCustomTemplate(templateFile string) bool {
+	t := filepath.ToSlash(strings.TrimSpace(templateFile))
+	if t == "" {
+		return false
+	}
+	base := strings.ToLower(filepath.Base(t))
+	dir := filepath.ToSlash(filepath.Dir(t))
+	if dir != "." && dir != "models" {
+		return true
+	}
+	if base == "chat_template.jinja" {
+		return false
+	}
+	for _, m := range modelCatalog {
+		if base == strings.ToLower(m.templateFile()) {
+			return false
+		}
+	}
+	return true
+}
+
 func templateInstalled(dir string) bool {
-	info, err := os.Stat(filepath.Join(dir, "models", "chat_template.jinja"))
-	return err == nil && info.Mode().IsRegular() && info.Size() >= 100
+	if len(modelCatalog) > 0 {
+		return modelCatalog[0].templateInstalled(dir)
+	}
+	return false
 }

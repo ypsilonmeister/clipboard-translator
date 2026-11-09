@@ -53,10 +53,38 @@ function Resolve-ModelKey($catalog, $config, [bool]$explicit, [string]$requested
     return '2b'
 }
 
+function Test-CustomTemplate([string]$path) {
+    if ([string]::IsNullOrWhiteSpace($path)) { return $false }
+    $norm = $path -replace '\\', '/'
+    $leaf = Split-Path -Leaf $norm
+    $dir = Split-Path -Parent $norm
+    if ($dir -ne '' -and $dir -ne 'models' -and $dir -ne '.') { return $true }
+    if ($leaf -ieq 'chat_template.jinja') { return $false }
+    if ($leaf -match '^chat_template\.(0\.8b|2b|8b)\.jinja$') { return $false }
+    return $true
+}
+
+function Get-ModelKeyFromEntry($entry) {
+    if ($entry -is [System.Collections.IDictionary]) {
+        if ($entry.Contains('Key')) { return $entry['Key'] }
+        if ($entry.Contains('File') -and $entry['File'] -match 'plamo-3-translate-(0\.8b|2b|8b)-') { return $Matches[1] }
+    } elseif ($null -ne $entry.PSObject.Properties['File']) {
+        if ($entry.File -match 'plamo-3-translate-(0\.8b|2b|8b)-') { return $Matches[1] }
+    }
+    return '2b'
+}
+
 # Only an explicit -Model rewrites model_file. Returns $true when the config changed.
 function Update-ModelConfig($config, $entry, [bool]$explicit) {
     if (-not $explicit) { return $false }
-    return (Set-ConfigValue $config 'model_file' ('models/' + $entry.File))
+    $changed = Set-ConfigValue $config 'model_file' ('models/' + $entry['File'])
+    $key = Get-ModelKeyFromEntry $entry
+    $curTpl = Get-ConfigValue $config 'template_file'
+    if (-not (Test-CustomTemplate $curTpl)) {
+        $wantTpl = 'models/chat_template.' + $key + '.jinja'
+        if (Set-ConfigValue $config 'template_file' $wantTpl) { $changed = $true }
+    }
+    return $changed
 }
 
 function Download-File([string]$url, [string]$dest, [string]$sha256 = '') {
@@ -266,13 +294,25 @@ $modelKey = Resolve-ModelKey $catalog $config $explicitModel $Model
 $modelInfo = $catalog[$modelKey]
 Write-Host "Model: PLaMo 3 Translate $($modelKey.ToUpperInvariant()) ($($modelInfo.Size))"
 $modelFile = Join-Path $models $modelInfo.File
-$templateFile = Join-Path $models 'chat_template.jinja'
+$templateFile = Join-Path $models "chat_template.$modelKey.jinja"
+$legacyTemplate = Join-Path $models 'chat_template.jinja'
 $hf = "https://huggingface.co/pfnet/$($modelInfo.Repo)/resolve/$($modelInfo.Revision)/"
 if (-not (Test-Path $modelFile)) { Download-File ($hf + $modelInfo.File) $modelFile $modelInfo.Sha256 }
 if ((Get-Item $modelFile).Length -lt $modelInfo.MinBytes) { throw "Model appears incomplete (smaller than expected for the $modelKey model). Remove the damaged GGUF and run Setup.cmd again." }
-# The template is shared by all sizes (the app only passes source_lang / target_lang, which
-# every revision handles alike), so one that is already in models\ is kept.
-if (-not (Test-Path $templateFile)) { Download-File ($hf + 'chat_template.jinja') $templateFile $modelInfo.TemplateSha256 }
+$needTemplate = $true
+if (Test-Path $templateFile) {
+    if ((Get-FileSha256 $templateFile) -eq $modelInfo.TemplateSha256) {
+        $needTemplate = $false
+    }
+} elseif (Test-Path $legacyTemplate) {
+    if ((Get-FileSha256 $legacyTemplate) -eq $modelInfo.TemplateSha256) {
+        Copy-Item -LiteralPath $legacyTemplate -Destination $templateFile
+        $needTemplate = $false
+    }
+}
+if ($needTemplate) {
+    Download-File ($hf + 'chat_template.jinja') $templateFile $modelInfo.TemplateSha256
+}
 if ((Get-Item $templateFile).Length -lt 100) { throw 'Chat template download appears incomplete.' }
 
 if ($Backend -eq 'auto') {
@@ -324,6 +364,10 @@ if (-not $needCpu -and -not $needGpu) {
 # Modify only relevant properties; retain user's other settings/hotkey.
 $changed = Update-BackendConfig $config $root $installedBackend $explicitBackend $serverPresentAtStart $completeAtStart[$installedBackend]
 if (Update-ModelConfig $config $modelInfo $explicitModel) { $changed = $true }
+if (-not (Test-Path -LiteralPath $configFile)) {
+    if ($null -eq (Get-ConfigValue $config 'model_file')) { [void](Set-ConfigValue $config 'model_file' ('models/' + $modelInfo['File'])) }
+    if ($null -eq (Get-ConfigValue $config 'template_file')) { [void](Set-ConfigValue $config 'template_file' ('models/chat_template.' + $modelKey + '.jinja')) }
+}
 if ($changed -or -not (Test-Path -LiteralPath $configFile)) {
     $json = $config | ConvertTo-Json -Depth 8
     [System.IO.File]::WriteAllText($configFile, $json, (New-Object System.Text.UTF8Encoding($false)))

@@ -204,6 +204,13 @@ func (a *app) failed(err error) {
 // again at the next start, and runningBackend tells what runs now.
 func (a *app) startServer() error {
 	defer a.beginServerWork()()
+	if !isCustomTemplate(a.conf.TemplateFile) {
+		if m, known := modelForFile(a.conf.ModelFile); known {
+			if !verifyFileSha256(a.sup.template, m.TemplateSha256) {
+				return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(a.sup.template), m.Name)
+			}
+		}
+	}
 	err := a.sup.start(a.paths.server, a.conf.GPULayers, "loading model")
 	if err == nil {
 		a.activeBackend = currentBackend(a.conf.ServerFile)
