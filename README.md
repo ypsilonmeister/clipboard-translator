@@ -304,6 +304,7 @@ Right-click the tray icon:
 | **Settings...** | Opens a settings page in your browser: add, change and remove hotkeys (keys, a language pair or one target language each), auto-paste, completion notifications, the longest text to translate, idle model unloading, the translation model (download a size, switch between installed ones) and the engine. Saved to `config.json`; see *Settings page*. |
 | **Cancel translation** | Shown while a translation runs. |
 | **Unload model** | Stops the server and unloads the model when no translation or server switch is in progress. |
+| **Translation model** | Shown when two or more models are installed to quickly switch between a fast and an accurate model. |
 | **Recent translations** | The last 10, kept in memory only (never written to disk). Click one to copy its translation again; *Clear history* empties the list. |
 | **Check for updates** | Asks GitHub for the latest release when you click. The app never checks by itself. |
 | **Open config.json** | For everything else, see [Configuration](#configuration). |
@@ -315,7 +316,7 @@ Right-click the tray icon:
 
 | Place | Actions and settings |
 | --- | --- |
-| Tray | Settings, cancel translation, unload model, recent translations, updates, open config.json, start at login, license, quit (plus logs and version information) |
+| Tray | Settings, cancel translation, unload model, translation model (when two or more are installed, to quickly switch between a fast and an accurate model), recent translations, updates, open config.json, start at login, license, quit (plus logs and version information) |
 | Settings | Hotkeys, languages, and output format (replace / bilingual) per profile; auto-paste, notifications, model and engine selection, text limits, idle unload |
 
 Auto-paste is off by default. When enabled, it pastes only for a fresh selection while the same window is still in front; otherwise the translation waits in the clipboard.

@@ -870,3 +870,432 @@ func TestModelDeleteRefusesNonRegularFile(t *testing.T) {
 		_ = os.Remove(dirPath)
 	}
 }
+
+func findMenuItem(items []MenuItem, label string) *MenuItem {
+	for i := range items {
+		if items[i].Label == label || strings.HasPrefix(items[i].Label, label) {
+			return &items[i]
+		}
+	}
+	return nil
+}
+
+func TestTranslationModelMenuInstalledCounts(t *testing.T) {
+	for n := 0; n <= 3; n++ {
+		t.Run(fmt.Sprintf("%d installed models", n), func(t *testing.T) {
+			a, _, _ := newTestApp(t)
+			for i := 0; i < n && i < len(modelCatalog); i++ {
+				putModel(t, a.dir, modelCatalog[i])
+			}
+			if n > 0 {
+				a.conf.ModelFile = "models/" + modelCatalog[0].File
+				paths, err := resolvePaths(a.dir, a.conf)
+				if err != nil {
+					t.Fatal(err)
+				}
+				a.paths = paths
+			}
+
+			items := a.buildMenu()
+			var topLabels []string
+			unloadIdx, modelSubIdx, recentIdx := -1, -1, -1
+			for idx, it := range items {
+				if !it.Separator {
+					topLabels = append(topLabels, it.Label)
+				}
+				switch it.Label {
+				case "Unload model":
+					unloadIdx = idx
+				case "Translation model":
+					modelSubIdx = idx
+				case "Recent translations (click to copy)":
+					recentIdx = idx
+				}
+			}
+
+			if n < 2 {
+				if modelSubIdx != -1 {
+					t.Fatalf("Translation model must not appear for %d installed models: %v", n, topLabels)
+				}
+				if findMenuItem(items, "Translation model") != nil {
+					t.Fatalf("findMenuItem found Translation model for %d installed models", n)
+				}
+				return
+			}
+
+			// For n >= 2:
+			if modelSubIdx == -1 {
+				t.Fatalf("Translation model missing for %d installed models: %v", n, topLabels)
+			}
+			if modelSubIdx != unloadIdx+1 || recentIdx != modelSubIdx+1 {
+				t.Fatalf("Translation model must be immediately after Unload model and before Recent translations: unload=%d sub=%d recent=%d", unloadIdx, modelSubIdx, recentIdx)
+			}
+
+			sub := items[modelSubIdx].Sub
+			if len(sub) != n {
+				t.Fatalf("expected %d submenu entries, got %d", n, len(sub))
+			}
+			for j := 0; j < n; j++ {
+				wantLabel := modelCatalog[j].Name + " (" + modelCatalog[j].SizeLabel + ")"
+				if sub[j].Label != wantLabel {
+					t.Errorf("entry %d: got label %q, want %q", j, sub[j].Label, wantLabel)
+				}
+				if sub[j].ID != cmdModelBase+j {
+					t.Errorf("entry %d: got ID %d, want %d", j, sub[j].ID, cmdModelBase+j)
+				}
+				wantChecked := j == 0 // we configured modelCatalog[0]
+				if sub[j].Checked != wantChecked {
+					t.Errorf("entry %d: got checked %v, want %v", j, sub[j].Checked, wantChecked)
+				}
+				if sub[j].Disabled {
+					t.Errorf("entry %d: unexpectedly disabled while idle", j)
+				}
+			}
+		})
+	}
+}
+
+func TestTranslationModelMenuCustomModelActive(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	for _, m := range modelCatalog {
+		putModel(t, a.dir, m)
+	}
+	a.conf.ModelFile = "models/custom-translate.gguf"
+	items := a.buildMenu()
+	tm := findMenuItem(items, "Translation model")
+	if tm == nil {
+		t.Fatal("Translation model submenu missing")
+	}
+	if len(tm.Sub) != len(modelCatalog) {
+		t.Fatalf("expected %d entries, got %d", len(modelCatalog), len(tm.Sub))
+	}
+	for i, sub := range tm.Sub {
+		if sub.Checked {
+			t.Errorf("entry %d (%q) should not be checked when a custom model is in use", i, sub.Label)
+		}
+	}
+}
+
+func TestTranslationModelMenuDisabledWhileBusy(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	putModel(t, a.dir, modelCatalog[0])
+	putModel(t, a.dir, modelCatalog[1])
+	a.conf.ModelFile = "models/" + modelCatalog[1].File
+	paths, err := resolvePaths(a.dir, a.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.paths = paths
+	a.sup.model = paths.model
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name         string
+		busy         bool
+		translating  bool
+		serverWork   int
+		starting     bool
+		settingsServ bool
+		unloaded     bool
+	}{
+		{name: "idle", busy: false},
+		{name: "translating", busy: true, translating: true},
+		{name: "switch", busy: true, serverWork: 1},
+		{name: "startup", busy: true, starting: true},
+		{name: "settings", busy: true, settingsServ: true},
+		{name: "unloaded", busy: false, unloaded: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a.translating = tc.translating
+			a.serverWork = tc.serverWork
+			a.sup.starting = tc.starting
+			a.settingsServing = tc.settingsServ
+			a.modelUnloaded = tc.unloaded
+
+			items := a.buildMenu()
+			tm := findMenuItem(items, "Translation model")
+			if tm == nil {
+				t.Fatal("Translation model submenu missing")
+			}
+			for i, sub := range tm.Sub {
+				if sub.Disabled != tc.busy {
+					t.Errorf("entry %d (%s) disabled=%v, want %v", i, sub.Label, sub.Disabled, tc.busy)
+				}
+			}
+
+			if tc.busy {
+				// While busy, handleCommand must be a no-op.
+				oldConf := a.conf.ModelFile
+				a.handleCommand(cmdModelBase + 0)
+				if a.conf.ModelFile != oldConf {
+					t.Errorf("handleCommand while busy changed model from %s to %s", oldConf, a.conf.ModelFile)
+				}
+			}
+		})
+	}
+}
+
+func TestTranslationModelMenuSwitching(t *testing.T) {
+	a, tray, _ := newTestApp(t)
+	putModel(t, a.dir, modelCatalog[0])
+	putModel(t, a.dir, modelCatalog[1])
+	a.conf.ModelFile = "models/" + modelCatalog[1].File
+	paths, err := resolvePaths(a.dir, a.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.paths = paths
+	a.sup.model = paths.model
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify initial menu has 2B checked.
+	items := a.buildMenu()
+	tm := findMenuItem(items, "Translation model")
+	if tm == nil || len(tm.Sub) != 2 || !tm.Sub[1].Checked || tm.Sub[0].Checked {
+		t.Fatalf("unexpected initial menu state: %+v", tm)
+	}
+
+	// Select 0.8B (cmdModelBase + 0).
+	a.handleCommand(cmdModelBase + 0)
+
+	// Verify model switched.
+	wantModelRel := "models/" + modelCatalog[0].File
+	if a.conf.ModelFile != wantModelRel {
+		t.Fatalf("conf.ModelFile = %q, want %q", a.conf.ModelFile, wantModelRel)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(a.paths.model), wantModelRel) {
+		t.Fatalf("paths.model = %q, want suffix %q", a.paths.model, wantModelRel)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(a.sup.model), wantModelRel) {
+		t.Fatalf("sup.model = %q, want suffix %q", a.sup.model, wantModelRel)
+	}
+	if !healthy(a) {
+		t.Fatal("server is not healthy after model switch")
+	}
+
+	// Verify config.json on disk.
+	raw, err := os.ReadFile(filepath.Join(a.dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"model_file": "`+wantModelRel+`"`) {
+		t.Fatalf("config.json does not contain switched model: %s", raw)
+	}
+
+	// Verify tooltip.
+	if !strings.Contains(a.readyTip, "ready") || tray.status != a.readyTip {
+		t.Fatalf("tooltip status=%q readyTip=%q", tray.status, a.readyTip)
+	}
+
+	// Verify notifications: success notification sent, no error notification.
+	for i, isErr := range tray.errs {
+		if isErr {
+			t.Fatalf("unexpected error notification %d: %q", i, tray.notes[i])
+		}
+	}
+	if !strings.Contains(tray.lastNote(), modelCatalog[0].Name) {
+		t.Fatalf("last note %q does not contain model name %q", tray.lastNote(), modelCatalog[0].Name)
+	}
+
+	// Verify menu checkmark moved to 0.8B.
+	items = a.buildMenu()
+	tm = findMenuItem(items, "Translation model")
+	if tm == nil || len(tm.Sub) != 2 || !tm.Sub[0].Checked || tm.Sub[1].Checked {
+		t.Fatalf("after switch menu state invalid: %+v", tm)
+	}
+}
+
+func TestTranslationModelMenuSelectActiveDoesNothing(t *testing.T) {
+	a, tray, _ := newTestApp(t)
+	putModel(t, a.dir, modelCatalog[0])
+	putModel(t, a.dir, modelCatalog[1])
+	a.conf.ModelFile = "models/" + modelCatalog[0].File
+	paths, err := resolvePaths(a.dir, a.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.paths = paths
+	a.sup.model = paths.model
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+
+	noteCount := len(tray.notes)
+	oldPID := a.sup.cmd.Process.Pid
+
+	// Select 0.8B again.
+	a.handleCommand(cmdModelBase + 0)
+
+	if len(tray.notes) != noteCount {
+		t.Fatalf("selecting active model produced notifications: %v", tray.notes[noteCount:])
+	}
+	if a.sup.cmd.Process.Pid != oldPID {
+		t.Fatalf("server restarted when active model was selected: pid %d != %d", a.sup.cmd.Process.Pid, oldPID)
+	}
+	if a.conf.ModelFile != "models/"+modelCatalog[0].File {
+		t.Fatalf("conf.ModelFile changed: %q", a.conf.ModelFile)
+	}
+}
+
+func TestTranslationModelMenuFailureKeepsOldModel(t *testing.T) {
+	t.Run("truncated file at switch time", func(t *testing.T) {
+		a, tray, _ := newTestApp(t)
+		putModel(t, a.dir, modelCatalog[0])
+		putModel(t, a.dir, modelCatalog[1])
+		a.conf.ModelFile = "models/" + modelCatalog[1].File
+		paths, err := resolvePaths(a.dir, a.conf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.paths = paths
+		a.sup.model = paths.model
+		if err := a.startServer(); err != nil {
+			t.Fatal(err)
+		}
+
+		// Truncate 0.8B so checkModelSwitch fails.
+		if err := os.Truncate(modelCatalog[0].path(a.dir), 10); err != nil {
+			t.Fatal(err)
+		}
+
+		a.handleCommand(cmdModelBase + 0)
+
+		// Old model kept.
+		if a.conf.ModelFile != "models/"+modelCatalog[1].File {
+			t.Fatalf("model changed on failed switch: %q", a.conf.ModelFile)
+		}
+		if !healthy(a) {
+			t.Fatal("server should still be healthy with old model")
+		}
+
+		// Error notification delivered with actionable message.
+		if len(tray.errs) == 0 || !tray.errs[len(tray.errs)-1] {
+			t.Fatalf("expected error notification on failed switch: errs=%v", tray.errs)
+		}
+		lastNote := tray.lastNote()
+		if !strings.Contains(lastNote, "not installed") && !strings.Contains(lastNote, "download it first") {
+			t.Fatalf("notification %q is not actionable", lastNote)
+		}
+	})
+
+	t.Run("server startup failure restores old model", func(t *testing.T) {
+		withModels(t, testEntry("ok", "ok.gguf"), testEntry("bad", "bad-FAIL.gguf"))
+		a, tray, _ := newTestApp(t)
+		putModel(t, a.dir, modelCatalog[0])
+		putModel(t, a.dir, modelCatalog[1])
+		a.conf.ModelFile = "models/" + modelCatalog[0].File
+		paths, err := resolvePaths(a.dir, a.conf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.paths = paths
+		a.sup.model = paths.model
+		if err := a.startServer(); err != nil {
+			t.Fatal(err)
+		}
+
+		a.handleCommand(cmdModelBase + 1)
+
+		// Old model restored.
+		if a.conf.ModelFile != "models/"+modelCatalog[0].File {
+			t.Fatalf("old model not kept: conf=%q", a.conf.ModelFile)
+		}
+		if !healthy(a) {
+			t.Fatal("server should be restored and healthy with old model")
+		}
+		if len(tray.errs) == 0 || !tray.errs[len(tray.errs)-1] {
+			t.Fatalf("expected error notification: errs=%v", tray.errs)
+		}
+		if !strings.Contains(tray.lastNote(), "Could not load") || !strings.Contains(tray.lastNote(), "smaller one may work") {
+			t.Fatalf("unexpected failure message: %q", tray.lastNote())
+		}
+	})
+}
+
+func TestTranslationModelMenuUnloadedState(t *testing.T) {
+	a, tray, _ := newTestApp(t)
+	putModel(t, a.dir, modelCatalog[0])
+	putModel(t, a.dir, modelCatalog[1])
+	a.conf.ModelFile = "models/" + modelCatalog[1].File
+	paths, err := resolvePaths(a.dir, a.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.paths = paths
+	a.sup.model = paths.model
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unload the model.
+	a.unloadModel()
+	if !a.modelUnloaded || a.sup.Running() {
+		t.Fatal("model should be unloaded")
+	}
+
+	// Verify menu in unloaded state.
+	items := a.buildMenu()
+	unloadItem := findMenuItem(items, "Unload model")
+	if unloadItem == nil || !unloadItem.Disabled {
+		t.Fatalf("Unload model should be disabled when unloaded: %+v", unloadItem)
+	}
+	tm := findMenuItem(items, "Translation model")
+	if tm == nil || len(tm.Sub) != 2 {
+		t.Fatalf("Translation model submenu missing or wrong length: %+v", tm)
+	}
+	for i, sub := range tm.Sub {
+		if sub.Disabled {
+			t.Errorf("submenu entry %d (%s) must not be disabled when unloaded", i, sub.Label)
+		}
+	}
+	if !tm.Sub[1].Checked || tm.Sub[0].Checked {
+		t.Fatalf("2B must still be checked when unloaded: %+v", tm.Sub)
+	}
+
+	// Case A: Selecting already-active model (2B) while unloaded does nothing harmful.
+	a.handleCommand(cmdModelBase + 1)
+	if !a.modelUnloaded || a.sup.Running() {
+		t.Fatal("selecting already-active entry while unloaded must not change unloaded state")
+	}
+
+	// Case B: Switch to 0.8B while unloaded.
+	a.handleCommand(cmdModelBase + 0)
+	if a.modelUnloaded {
+		t.Fatal("modelUnloaded must be false after successful model switch")
+	}
+	if !a.sup.Running() || !healthy(a) {
+		t.Fatal("server must be running and healthy with new model")
+	}
+	if a.conf.ModelFile != "models/"+modelCatalog[0].File {
+		t.Fatalf("conf.ModelFile = %q, want 0.8b", a.conf.ModelFile)
+	}
+	if !strings.Contains(a.readyTip, "ready") || tray.status != a.readyTip {
+		t.Fatalf("status not updated to ready: status=%q readyTip=%q", tray.status, a.readyTip)
+	}
+
+	// Case C: Switch while unloaded to a damaged file.
+	if err := os.Truncate(modelCatalog[1].path(a.dir), 10); err != nil {
+		t.Fatal(err)
+	}
+	a.unloadModel()
+	if !a.modelUnloaded {
+		t.Fatal("model should be unloaded")
+	}
+	a.handleCommand(cmdModelBase + 1) // 2B is truncated
+	if !a.modelUnloaded {
+		t.Fatal("modelUnloaded must remain true after failed switch attempt")
+	}
+	if a.conf.ModelFile != "models/"+modelCatalog[0].File {
+		t.Fatalf("conf.ModelFile must remain 0.8b: got %q", a.conf.ModelFile)
+	}
+	if !strings.Contains(tray.status, "model unloaded") {
+		t.Fatalf("tooltip status=%q, want model unloaded", tray.status)
+	}
+	if len(tray.errs) == 0 || !tray.errs[len(tray.errs)-1] {
+		t.Fatal("expected error notification on failed switch while unloaded")
+	}
+}

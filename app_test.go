@@ -247,6 +247,11 @@ func TestBuildMenu(t *testing.T) {
 		}
 	}
 	walk(items)
+	for _, m := range modelCatalog {
+		putModel(t, a.dir, m)
+	}
+	seen = map[int]bool{}
+	walk(a.buildMenu())
 }
 
 func TestOnUpdateResult(t *testing.T) {
@@ -281,64 +286,73 @@ func TestBuildMenuExactLabels(t *testing.T) {
 	defer func() { version = old }()
 	for _, state := range []string{"idle", "translating", "unloaded", "no hotkey active", "target profile", "checking", "update"} {
 		for _, engines := range []int{1, 3} {
-			t.Run(fmt.Sprintf("%s/%d engines", state, engines), func(t *testing.T) {
-				a, _, _ := newTestApp(t)
-				a.registerStartupHotkey()
-				if engines == 1 {
-					for _, b := range []string{"cuda", "vulkan"} {
-						if err := os.Remove(filepath.Join(a.dir, "runtime", b, serverBinaryName())); err != nil {
-							t.Fatal(err)
+			for _, models := range []int{0, 2} {
+				t.Run(fmt.Sprintf("%s/%d engines/%d models", state, engines, models), func(t *testing.T) {
+					a, _, _ := newTestApp(t)
+					for i := 0; i < models && i < len(modelCatalog); i++ {
+						putModel(t, a.dir, modelCatalog[i])
+					}
+					a.registerStartupHotkey()
+					if engines == 1 {
+						for _, b := range []string{"cuda", "vulkan"} {
+							if err := os.Remove(filepath.Join(a.dir, "runtime", b, serverBinaryName())); err != nil {
+								t.Fatal(err)
+							}
 						}
 					}
-				}
-				if err := a.startServer(); err != nil {
-					t.Fatal(err)
-				}
-				switch state {
-				case "translating":
-					pending(a)
-				case "unloaded":
-					a.unloadModel()
-				case "no hotkey active":
-					a.closeHotkeys()
-					a.hotkey = noHotkey{}
-				case "target profile":
-					a.conf.Profiles[0] = Profile{Hotkey: "Ctrl+Alt+E", Target: "ko"}
-				case "checking":
-					a.checking = true
-				case "update":
-					a.latest = releaseInfo{Tag: "v2.0.0"}
-				}
-				want := []string{"Settings..."}
-				if a.translating {
-					want = append(want, "Cancel translation", "---")
-				}
-				update := "Check for updates"
-				if a.checking {
-					update = "Checking for updates..."
-				} else if state == "update" {
-					update = "Update to v2.0.0..."
-				}
-				want = append(want, "Unload model", "Recent translations (click to copy)", "---", update, "Open config.json", "---", "Built with PLaMo (license)", "Clipboard Translator 1.0.0")
-				items := a.buildMenu()
-				var got []string
-				for _, it := range items {
-					if it.Separator {
-						got = append(got, "---")
-					} else {
-						got = append(got, it.Label)
+					if err := a.startServer(); err != nil {
+						t.Fatal(err)
 					}
-				}
-				if !reflect.DeepEqual(got, want) {
-					t.Fatalf("menu=%q want=%q", got, want)
-				}
-				if items[0].ID != cmdSettings || items[0].Disabled {
-					t.Fatalf("Settings must be first and enabled: %+v", items[0])
-				}
-				if unloadMenuEnabled(t, a) != (state != "translating" && state != "unloaded") {
-					t.Fatal("incorrect Unload availability")
-				}
-			})
+					switch state {
+					case "translating":
+						pending(a)
+					case "unloaded":
+						a.unloadModel()
+					case "no hotkey active":
+						a.closeHotkeys()
+						a.hotkey = noHotkey{}
+					case "target profile":
+						a.conf.Profiles[0] = Profile{Hotkey: "Ctrl+Alt+E", Target: "ko"}
+					case "checking":
+						a.checking = true
+					case "update":
+						a.latest = releaseInfo{Tag: "v2.0.0"}
+					}
+					want := []string{"Settings..."}
+					if a.translating {
+						want = append(want, "Cancel translation", "---")
+					}
+					update := "Check for updates"
+					if a.checking {
+						update = "Checking for updates..."
+					} else if state == "update" {
+						update = "Update to v2.0.0..."
+					}
+					want = append(want, "Unload model")
+					if models >= 2 {
+						want = append(want, "Translation model")
+					}
+					want = append(want, "Recent translations (click to copy)", "---", update, "Open config.json", "---", "Built with PLaMo (license)", "Clipboard Translator 1.0.0")
+					items := a.buildMenu()
+					var got []string
+					for _, it := range items {
+						if it.Separator {
+							got = append(got, "---")
+						} else {
+							got = append(got, it.Label)
+						}
+					}
+					if !reflect.DeepEqual(got, want) {
+						t.Fatalf("menu=%q want=%q", got, want)
+					}
+					if items[0].ID != cmdSettings || items[0].Disabled {
+						t.Fatalf("Settings must be first and enabled: %+v", items[0])
+					}
+					if unloadMenuEnabled(t, a) != (state != "translating" && state != "unloaded") {
+						t.Fatal("incorrect Unload availability")
+					}
+				})
+			}
 		}
 	}
 }
