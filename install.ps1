@@ -27,6 +27,44 @@ param(
     [switch]$Yes
 )
 
+function Get-FileSha256([string]$file) {
+    $fullPath = if (Test-Path -LiteralPath $file) { (Convert-Path -LiteralPath $file) } else { $file }
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($fullPath)
+    try {
+        $hashBytes = $hasher.ComputeHash($stream)
+        return [System.BitConverter]::ToString($hashBytes).Replace('-', '')
+    } finally {
+        $stream.Dispose()
+        $hasher.Dispose()
+    }
+}
+
+function Get-CleanWindowsPowerShellModulePath {
+    $elements = @()
+    $userMod = [Environment]::GetEnvironmentVariable('PSModulePath', 'User')
+    if (-not [string]::IsNullOrWhiteSpace($userMod)) {
+        $elements += ($userMod -split ';')
+    } else {
+        $docs = [Environment]::GetFolderPath('MyDocuments')
+        if ($docs) { $elements += (Join-Path $docs 'WindowsPowerShell\Modules') }
+    }
+    $machMod = [Environment]::GetEnvironmentVariable('PSModulePath', 'Machine')
+    if (-not [string]::IsNullOrWhiteSpace($machMod)) {
+        $elements += ($machMod -split ';')
+    }
+    $defaultWinPS = @(
+        "$env:ProgramFiles\WindowsPowerShell\Modules",
+        "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules"
+    )
+    foreach ($d in $defaultWinPS) {
+        if (-not ($elements -icontains $d)) {
+            $elements += $d
+        }
+    }
+    return (($elements | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ';')
+}
+
 function Invoke-ClipboardTranslatorInstaller {
     param($Version, $InstallDir, [bool]$SkipSetup, [bool]$NoLaunch, [bool]$Force, [bool]$Uninstall, [bool]$Yes)
 
@@ -209,7 +247,7 @@ function Invoke-ClipboardTranslatorInstaller {
             if ($asset.PSObject.Properties.Name -contains 'digest' -and $asset.digest -match '^sha256:([0-9a-fA-F]{64})$') { $expected = $Matches[1] }
             elseif ($release.body -match 'SHA-256[^`]*`([0-9a-fA-F]{64})`') { $expected = $Matches[1] }
             if (-not $expected) { throw "No SHA-256 published for $($asset.name); refusing to install an unverified download." }
-            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash
+            $actual = Get-FileSha256 $zip
             if ($actual -ne $expected) { throw "SHA-256 mismatch for $($asset.name) (expected $expected, got $actual)." }
             Say "SHA-256 verified: $actual"
 
@@ -244,9 +282,20 @@ function Invoke-ClipboardTranslatorInstaller {
     } else {
         Step 'Downloading the PLaMo model (over 1 GB) and llama.cpp - this can take a while'
         $setup = Join-Path $InstallDir 'setup.ps1'
-        $p = Start-Process -FilePath 'powershell.exe' -WorkingDirectory $InstallDir -Wait -PassThru -NoNewWindow `
-            -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$setup`"", '-Backend', 'auto')
-        if ($p.ExitCode -ne 0) { throw "setup.ps1 failed (exit code $($p.ExitCode)). Run the installer again to retry." }
+        $origModulePath = $env:PSModulePath
+        $needScrub = ($PSVersionTable.PSEdition -eq 'Core')
+        try {
+            if ($needScrub) {
+                $env:PSModulePath = Get-CleanWindowsPowerShellModulePath
+            }
+            $p = Start-Process -FilePath 'powershell.exe' -WorkingDirectory $InstallDir -Wait -PassThru -NoNewWindow `
+                -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$setup`"", '-Backend', 'auto')
+            if ($p.ExitCode -ne 0) { throw "setup.ps1 failed (exit code $($p.ExitCode)). Run the installer again to retry." }
+        } finally {
+            if ($needScrub) {
+                $env:PSModulePath = $origModulePath
+            }
+        }
     }
 
     Step 'Registering the app'

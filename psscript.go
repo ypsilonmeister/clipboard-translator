@@ -35,13 +35,31 @@ func installerPowerShell(url string) string {
 		psFailurePrompt("The update failed.", "Update failed. Press Enter to close")
 }
 
+// cleanPowerShellEnv removes PSModulePath from the environment slice so
+// Windows PowerShell 5.1 does not inherit a PowerShell 7 module path when the
+// parent process was started from pwsh. When PSModulePath is absent,
+// powershell.exe reconstructs its default WindowsPowerShell module paths.
+func cleanPowerShellEnv(base []string) []string {
+	out := make([]string, 0, len(base))
+	for _, entry := range base {
+		eq := strings.IndexByte(entry, '=')
+		if eq > 0 && strings.EqualFold(entry[:eq], "PSModulePath") {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
 // installerEnv is the environment for the installer: it targets this app's
 // folder and installs exactly the release the user agreed to (install.ps1 reads
 // CT_VERSION), not whatever is latest by the time the download starts. Our
 // entries come last so they win over any CT_* values already in the
-// environment.
+// environment. It also scrubs PSModulePath so the child Windows PowerShell
+// process does not inherit a PowerShell 7 module path.
 func installerEnv(base []string, dir, tag string) []string {
-	out := make([]string, 0, len(base)+2)
-	out = append(out, base...)
+	clean := cleanPowerShellEnv(base)
+	out := make([]string, 0, len(clean)+2)
+	out = append(out, clean...)
 	return append(out, "CT_INSTALL_DIR="+dir, "CT_VERSION="+tag)
 }

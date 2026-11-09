@@ -52,8 +52,56 @@ func TestInstallerPowerShellShape(t *testing.T) {
 	}
 }
 
+func TestCleanPowerShellEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		base []string
+		want []string
+	}{
+		{
+			name: "removes PSModulePath case-insensitively",
+			base: []string{
+				"PATH=C:\\bin",
+				"PSModulePath=C:\\pwsh\\modules",
+				"psmodulepath=C:\\other\\modules",
+				"PSMODULEPATH=C:\\more\\modules",
+				"=C:=C:\\dir",
+				"FOO=BAR",
+			},
+			want: []string{"PATH=C:\\bin", "=C:=C:\\dir", "FOO=BAR"},
+		},
+		{
+			name: "keeps entries when PSModulePath not present",
+			base: []string{"A=1", "B=2"},
+			want: []string{"A=1", "B=2"},
+		},
+		{
+			name: "empty slice",
+			base: []string{},
+			want: []string{},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			origLen := len(tc.base)
+			got := cleanPowerShellEnv(tc.base)
+			if len(tc.base) != origLen {
+				t.Fatal("cleanPowerShellEnv modified the input slice")
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("[%d] got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestInstallerEnvPinsTheConfirmedVersion(t *testing.T) {
-	base := []string{"PATH=x", "CT_VERSION=v0.1.0", "CT_INSTALL_DIR=D:\\old"}
+	base := []string{"PATH=x", "PSModulePath=C:\\pwsh\\modules", "CT_VERSION=v0.1.0", "CT_INSTALL_DIR=D:\\old"}
 	env := installerEnv(base, `C:\Apps\CT`, "v0.7.0")
 	// Later entries win (os/exec keeps the last duplicate), so check the order.
 	last := map[string]string{}
@@ -64,7 +112,10 @@ func TestInstallerEnvPinsTheConfirmedVersion(t *testing.T) {
 	if last["CT_VERSION"] != "v0.7.0" || last["CT_INSTALL_DIR"] != `C:\Apps\CT` || last["PATH"] != "x" {
 		t.Fatalf("env = %v", last)
 	}
-	if len(base) != 3 {
+	if _, ok := last["PSModulePath"]; ok {
+		t.Error("installerEnv must scrub PSModulePath")
+	}
+	if len(base) != 4 {
 		t.Fatal("the caller's slice must not be modified")
 	}
 }

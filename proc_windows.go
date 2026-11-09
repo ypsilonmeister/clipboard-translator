@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -116,6 +117,7 @@ func setupCommand(dir string) *exec.Cmd {
 	ps := setupPowerShell(filepath.Join(dir, "setup.ps1"))
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
 	cmd.Dir = dir
+	cmd.Env = cleanPowerShellEnv(os.Environ())
 	return cmd
 }
 
