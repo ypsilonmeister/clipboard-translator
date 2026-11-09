@@ -21,6 +21,9 @@ type captureOps struct {
 	sendCopy        func() error             // synthetic Ctrl+C
 	modifierTimeout time.Duration
 	copyTimeout     time.Duration
+	settleTime      time.Duration
+	now             func() time.Time
+	sleep           func(time.Duration)
 }
 
 // captureWith copies the selection of window win and reports the clipboard text
@@ -34,6 +37,15 @@ type captureOps struct {
 // lost focus meanwhile, aborts instead of copying into another window or
 // falling back to unrelated clipboard text.
 func captureWith(cb Clipboard, win uintptr, ops captureOps) (text string, fromSelection bool, err error) {
+	nowFn := ops.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	sleepFn := ops.sleep
+	if sleepFn == nil {
+		sleepFn = time.Sleep
+	}
+
 	if !ops.waitModifiers(ops.modifierTimeout) {
 		return "", false, errCaptureModifiersHeld
 	}
@@ -42,22 +54,50 @@ func captureWith(cb Clipboard, win uintptr, ops captureOps) (text string, fromSe
 		return "", false, err
 	}
 	before := ops.sequence()
-	if ops.foreground() != win {
+	if ops.foreground != nil && ops.foreground() != win {
 		return "", false, errCaptureFocusChanged
 	}
 	if err := ops.sendCopy(); err != nil {
 		return old, false, nil // cannot inject keys: fall back to the existing clipboard text
 	}
-	deadline := time.Now().Add(ops.copyTimeout)
-	for time.Now().Before(deadline) {
-		if ops.sequence() != before {
-			picked, err := cb.Read()
-			if err != nil {
-				return "", false, err
-			}
-			return picked, true, nil
+	deadline := nowFn().Add(ops.copyTimeout)
+	lastSeq := before
+	var stableSince time.Time
+
+	for {
+		if ops.foreground != nil && ops.foreground() != win {
+			return "", false, errCaptureFocusChanged
 		}
-		time.Sleep(15 * time.Millisecond)
+		now := nowFn()
+		seq := ops.sequence()
+		if seq != before {
+			if seq != lastSeq {
+				lastSeq = seq
+				stableSince = now
+			}
+			if ops.settleTime <= 0 || now.Sub(stableSince) >= ops.settleTime || !now.Before(deadline) {
+				picked, err := cb.Read()
+				if err != nil {
+					return "", false, err
+				}
+				if ops.foreground != nil && ops.foreground() != win {
+					return "", false, errCaptureFocusChanged
+				}
+				return picked, true, nil
+			}
+		} else if !now.Before(deadline) {
+			break
+		}
+		sleepStep := 15 * time.Millisecond
+		if rem := deadline.Sub(now); rem > 0 && rem < sleepStep {
+			sleepStep = rem
+		}
+		if ops.settleTime > 0 && lastSeq != before {
+			if rem := ops.settleTime - now.Sub(stableSince); rem > 0 && rem < sleepStep {
+				sleepStep = rem
+			}
+		}
+		sleepFn(sleepStep)
 	}
 	return old, false, nil
 }

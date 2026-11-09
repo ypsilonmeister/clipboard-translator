@@ -117,7 +117,9 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 - **Clipboard safety.** The result replaces the clipboard only if the text is
   still the original (`ReplaceIfUnchanged`, one `OpenClipboard` lock). Auto-paste
   is off by default and only fires for a fresh selection while the same window
-  is in front.
+  is in front. Selection capture waits for the sequence to settle (~80 ms) to
+  avoid intermediate clipboard writes, and `ReplaceIfUnchanged` tolerates harmless
+  line-break (CRLF/CR) and trailing whitespace changes while protecting newer user copies.
 - **Paths in `config.json` are relative to the exe folder** (`pathWithin`
   rejects absolute paths and `..`), and may use `/` or `\`. Unknown keys must
   survive `updateConfigFile`.

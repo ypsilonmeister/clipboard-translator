@@ -27,6 +27,7 @@ type result struct {
 	window               uintptr // foreground window when the hotkey was pressed
 	fromSelection        bool    // the text was a fresh selection, not the old clipboard
 	output               string
+	capturedAt           time.Time
 }
 
 // translationDirection is what to ask the model for. Source is empty for a

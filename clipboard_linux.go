@@ -38,7 +38,7 @@ func (*linuxClipboard) Close() error { return nil }
 // before claiming CLIPBOARD; another X11 client can still race this operation.
 func (c *linuxClipboard) ReplaceIfUnchanged(expected, translated string) (bool, error) {
 	current, err := c.Read()
-	if err != nil || current != expected {
+	if err != nil || !sameClipboardText(current, expected) {
 		return false, err
 	}
 	if err := c.Write(translated); err != nil {
