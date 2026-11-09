@@ -77,6 +77,28 @@ func (m modelEntry) installed(dir string) bool {
 	return err == nil && info.Mode().IsRegular() && info.Size() >= m.MinBytes
 }
 
+func isRemovableFile(info os.FileInfo) bool {
+	return !info.IsDir() && info.Mode()&os.ModeSymlink == 0
+}
+
+// partialInfo reports whether a .partial file exists for the model, and its size.
+func (m modelEntry) partialInfo(dir string) (bool, int64) {
+	info, err := os.Lstat(m.path(dir) + ".partial")
+	if err == nil && isRemovableFile(info) {
+		return true, info.Size()
+	}
+	return false, 0
+}
+
+// fileInfo reports whether the model file exists, and its size.
+func (m modelEntry) fileInfo(dir string) (bool, int64) {
+	info, err := os.Lstat(m.path(dir))
+	if err == nil && isRemovableFile(info) {
+		return true, info.Size()
+	}
+	return false, 0
+}
+
 func templateInstalled(dir string) bool {
 	info, err := os.Stat(filepath.Join(dir, "models", "chat_template.jinja"))
 	return err == nil && info.Mode().IsRegular() && info.Size() >= 100

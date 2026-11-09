@@ -47,14 +47,15 @@ type downloadManager struct {
 	client  *http.Client
 	events  chan downloadState // final states, for the main loop
 
-	mu     sync.Mutex
-	state  downloadState
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	mu       sync.Mutex
+	state    downloadState
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	deleting map[string]bool
 }
 
 func newDownloadManager(dir string) *downloadManager {
-	m := &downloadManager{dir: dir, baseURL: modelHost, events: make(chan downloadState, 4)}
+	m := &downloadManager{dir: dir, baseURL: modelHost, events: make(chan downloadState, 4), deleting: make(map[string]bool)}
 	m.client = &http.Client{
 		Transport: downloadTransport,
 		// Hugging Face answers with a redirect to its CDN, a different host, so
@@ -85,6 +86,47 @@ func (m *downloadManager) Downloading(key string) bool {
 	return s.Key == key && s.running()
 }
 
+// ClearKey clears the recorded state if it belongs to key and is not running.
+func (m *downloadManager) ClearKey(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state.Key == key && !m.state.running() {
+		m.state = downloadState{}
+	}
+}
+
+// ReserveDelete reserves key for deletion so Start will refuse to download it
+// while the reservation is held. If key is currently being downloaded, ReserveDelete
+// returns an error. The returned release function must be called when deletion
+// completes.
+func (m *downloadManager) ReserveDelete(key string) (func(), error) {
+	e, ok := modelByKey(key)
+	if !ok {
+		return nil, fmt.Errorf("unknown model %q", key)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state.Key == key && m.state.running() {
+		return nil, fmt.Errorf("%s is currently being downloaded", e.Name)
+	}
+	if m.deleting == nil {
+		m.deleting = make(map[string]bool)
+	}
+	if m.deleting[key] {
+		return nil, fmt.Errorf("%s is currently being deleted; try again in a moment", e.Name)
+	}
+	m.deleting[key] = true
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			m.mu.Lock()
+			delete(m.deleting, key)
+			m.mu.Unlock()
+		})
+	}
+	return release, nil
+}
+
 // Start downloads missing installation files in the background, one model at
 // a time. A model with both its GGUF and the shared template is refused.
 func (m *downloadManager) Start(key string) error {
@@ -97,6 +139,9 @@ func (m *downloadManager) Start(key string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.deleting != nil && m.deleting[key] {
+		return fmt.Errorf("%s is currently being deleted; try again in a moment", e.Name)
+	}
 	if m.state.running() {
 		return errors.New("another model is being downloaded; wait for it or cancel it first")
 	}

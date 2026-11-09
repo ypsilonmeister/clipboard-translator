@@ -130,9 +130,14 @@ func TestSettingsServerRefusesWhatItShould(t *testing.T) {
 		{"localhost is not our Host", "GET", "/api/state", nil, func(r *http.Request) { r.Host = "localhost:" + port }, 403},
 		{"cross-origin save", "POST", "/api/save", validForm(), func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }, 403},
 		{"cross-site fetch", "POST", "/api/save", validForm(), func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "cross-site") }, 403},
+		{"cross-origin delete", "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "model"}, func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }, 403},
+		{"cross-site delete", "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "model"}, func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "cross-site") }, 403},
 		{"form post", "POST", "/api/save", validForm(), func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") }, 415},
+		{"form post delete", "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "model"}, func(r *http.Request) { r.Header.Set("Content-Type", "text/plain") }, 415},
 		{"GET on save", "GET", "/api/save", nil, nil, 405},
+		{"GET on delete", "GET", "/api/model/delete", nil, nil, 405},
 		{"POST on state", "POST", "/api/state", map[string]int{}, nil, 405},
+		{"unknown field on delete", "POST", "/api/model/delete", map[string]any{"key": "2b", "kind": "model", "extra": 1}, nil, 400},
 		{"unknown path", "GET", "/nothing", nil, nil, 404},
 	}
 	for _, tc := range cases {

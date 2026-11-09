@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -15,18 +17,84 @@ import (
 // supervisor's ui callback calls serviceSettingsWhileBusy, which answers state
 // requests only.
 
+// isModelActive reports whether e is currently the active model in use by the app.
+// It checks modelForFile(a.conf.ModelFile) and also checks if the resolved path
+// of the configured model file (a.paths.model / a.sup.model) points to the same
+// file as the catalog entry (via os.SameFile and case-insensitive cleaned paths).
+func (a *app) isModelActive(e modelEntry) bool {
+	if active, known := modelForFile(a.conf.ModelFile); known && strings.EqualFold(active.Key, e.Key) {
+		return true
+	}
+	catalogPath := filepath.Clean(e.path(a.dir))
+	catInfo, catErr := os.Stat(catalogPath)
+
+	activePaths := []string{a.paths.model}
+	if a.sup != nil && a.sup.Running() && a.sup.model != "" {
+		activePaths = append(activePaths, a.sup.model)
+	}
+	// If a.paths.model is not resolved yet, resolve from a.conf.ModelFile.
+	if a.paths.model == "" && a.conf.ModelFile != "" {
+		if resolved, err := pathWithin(a.dir, a.conf.ModelFile); err == nil {
+			activePaths = append(activePaths, resolved)
+		}
+	}
+
+	for _, p := range activePaths {
+		if p == "" {
+			continue
+		}
+		cleanP := filepath.Clean(p)
+		if strings.EqualFold(cleanP, catalogPath) {
+			return true
+		}
+		if catErr == nil {
+			if pInfo, err := os.Stat(cleanP); err == nil && os.SameFile(pInfo, catInfo) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // fillModelsAndEngines adds what the model and engine sections show.
 func (a *app) fillModelsAndEngines(st *settingsState) {
-	active, known := modelForFile(a.conf.ModelFile)
+	_, known := modelForFile(a.conf.ModelFile)
 	// One snapshot of the download for the whole state: reading it per model
 	// could show "downloading" in one place and "done" in another.
 	d := a.dl.State()
 	template := templateInstalled(a.dir)
 	for _, e := range modelCatalog {
+		installed := e.installed(a.dir)
+		hasFile, fileBytes := e.fileInfo(a.dir)
+		partial, partialBytes := e.partialInfo(a.dir)
+		isActive := a.isModelActive(e)
+		isDownloading := d.Key == e.Key && d.running()
+
+		canDelete := (installed || hasFile) && !isActive && !isDownloading
+		canDeletePartial := partial && !isDownloading
+		var deleteBlocked string
+		if isActive {
+			deleteBlocked = "active"
+		} else if isDownloading {
+			deleteBlocked = "downloading"
+		}
+
 		st.Models = append(st.Models, modelState{
-			Key: e.Key, Name: e.Name, Note: e.Note, Size: e.SizeLabel,
-			Installed: e.installed(a.dir), Active: known && active.Key == e.Key, Downloading: d.Key == e.Key && d.running(),
+			Key:               e.Key,
+			Name:              e.Name,
+			Note:              e.Note,
+			Size:              e.SizeLabel,
+			Installed:         installed,
 			TemplateInstalled: template,
+			Active:            isActive,
+			Downloading:       isDownloading,
+			Partial:           partial,
+			PartialBytes:      partialBytes,
+			HasFile:           hasFile,
+			FileBytes:         fileBytes,
+			CanDelete:         canDelete,
+			CanDeletePartial:  canDeletePartial,
+			DeleteBlocked:     deleteBlocked,
 		})
 	}
 	if !known {
@@ -199,4 +267,120 @@ func (a *app) onDownloadFinished(st downloadState) {
 	case "failed":
 		a.tray.Notify("Clipboard Translator", "The download of "+e.Name+" failed: "+st.Error, true)
 	}
+}
+
+// handleDeleteModelRequest handles "delete_model" from the page on the UI thread.
+func (a *app) handleDeleteModelRequest(req settingsRequest) {
+	if req.kind != "model" && req.kind != "partial" {
+		req.reply <- settingsReply{state: a.settingsState(), err: errors.New("kind must be 'model' or 'partial'")}
+		return
+	}
+
+	e, ok := modelByKey(req.arg)
+	if !ok {
+		req.reply <- settingsReply{state: a.settingsState(), err: fmt.Errorf("unknown model %q", req.arg)}
+		return
+	}
+
+	// Refuse the active model ONLY when deleting the model file.
+	// Partial files can be removed even for the active model.
+	if req.kind == "model" && a.isModelActive(e) {
+		req.reply <- settingsReply{state: a.settingsState(), err: fmt.Errorf("%s is currently in use and cannot be deleted", e.Name)}
+		return
+	}
+
+	// Refuse a model whose download is running or about to start.
+	if a.dl != nil {
+		release, err := a.dl.ReserveDelete(e.Key)
+		if err != nil {
+			req.reply <- settingsReply{state: a.settingsState(), err: err}
+			return
+		}
+		defer release()
+	}
+
+	targetRel := filepath.Join("models", e.File)
+	if req.kind == "partial" {
+		targetRel += ".partial"
+	}
+
+	targetPath, err := pathWithin(a.dir, targetRel)
+	if err != nil {
+		req.reply <- settingsReply{state: a.settingsState(), err: err}
+		return
+	}
+
+	// Lstat first and refuse directories and symlinks. Non-symlink reparse points
+	// (OneDrive placeholders, CompactOS) must not be refused (isRemovableFile).
+	info, errStat := os.Lstat(targetPath)
+	if errStat != nil && !errors.Is(errStat, os.ErrNotExist) {
+		req.reply <- settingsReply{state: a.settingsState(), err: sanitizeFileErr(targetRel, errStat)}
+		return
+	}
+	if errStat == nil && !isRemovableFile(info) {
+		req.reply <- settingsReply{state: a.settingsState(), err: fmt.Errorf("refusing to delete %s: not a regular file", filepath.ToSlash(targetRel))}
+		return
+	}
+
+	var freed int64
+	var deleted bool
+	if errStat == nil {
+		if err := os.Remove(targetPath); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				req.reply <- settingsReply{state: a.settingsState(), err: sanitizeFileErr(targetRel, err)}
+				return
+			}
+			// Another caller removed it before os.Remove: freed stays 0, deleted stays false.
+		} else {
+			freed = info.Size()
+			deleted = true
+		}
+	}
+
+	if req.kind == "partial" && a.dl != nil {
+		a.dl.ClearKey(e.Key)
+	}
+
+	var notice string
+	label := strings.ToUpper(e.Key)
+	if req.kind == "partial" {
+		if deleted {
+			notice = fmt.Sprintf("Removed the partial download of %s (%s freed).", label, formatBytes(freed))
+		} else {
+			notice = fmt.Sprintf("Removed the partial download of %s (0 B freed).", label)
+		}
+	} else {
+		if deleted {
+			notice = fmt.Sprintf("Deleted %s (%s freed).", label, formatBytes(freed))
+		} else {
+			notice = fmt.Sprintf("Deleted %s (0 B freed).", label)
+		}
+	}
+
+	// NOTE: Do not store delete result in a.settingsNotice (Item 3).
+	// Return it only in settingsReply.notice.
+	st := a.settingsState()
+	req.reply <- settingsReply{state: st, notice: notice}
+}
+
+func formatBytes(n int64) string {
+	switch {
+	case n >= 1e9:
+		return fmt.Sprintf("%.1f GB", float64(n)/1e9)
+	case n >= 1e6:
+		return fmt.Sprintf("%d MB", (n+500000)/1000000)
+	case n >= 1e3:
+		return fmt.Sprintf("%d KB", (n+500)/1000)
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
+func sanitizeFileErr(rel string, err error) error {
+	rel = filepath.ToSlash(rel)
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return fmt.Errorf("could not remove %s: %v", rel, pe.Err)
+	}
+	return fmt.Errorf("could not remove %s: %v", rel, err)
 }

@@ -76,6 +76,7 @@ code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 0.9
   font-size: 14px;
 }
 .banner.error { border-color: var(--err); background: var(--err-bg); color: var(--err); }
+.banner.ok { border-color: var(--ok); background: var(--accent-soft); color: var(--text); }
 .banner p { margin: 0; }
 .banner p + p, .banner ul { margin-top: 6px; }
 .banner ul { margin-bottom: 0; padding-left: 20px; }
@@ -189,7 +190,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .model .name { font-weight: 600; }
 .model .size { color: var(--muted); font-weight: 400; margin-left: 6px; font-size: 13.5px; }
 .model .note { color: var(--muted); font-size: 13.5px; margin: 2px 0 0; }
-.model .actions { display: flex; align-items: center; gap: 10px; flex: 0 1 auto; }
+.model .actions { display: flex; align-items: center; gap: 10px; flex: 0 1 auto; flex-wrap: wrap; }
 .model .progress { flex: 1 1 100%; }
 .model .progress progress { width: 100%; height: 10px; accent-color: var(--accent); }
 .model .progress .ptext { color: var(--muted); font-size: 13px; margin: 4px 0 0; }

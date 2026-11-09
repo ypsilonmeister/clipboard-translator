@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -461,5 +462,411 @@ func TestPageSavesMaxChars(t *testing.T) {
 	}
 	if validateMaxChars(1) != nil || validateMaxChars(100000) != nil || validateMaxChars(100001) == nil {
 		t.Error("validateMaxChars")
+	}
+}
+
+func TestModelDeleteInstalledAndPartial(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+	e, _ := modelByKey("2b")
+	putModel(t, f.a.dir, e)
+	partialPath := e.path(f.a.dir) + ".partial"
+	if err := os.WriteFile(partialPath, []byte("partial download data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stateBytes := s.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, stateBytes).State
+	m := findModel(*st, "2b")
+	if !m.Installed || !m.HasFile || m.FileBytes != e.MinBytes || !m.Partial || !m.CanDelete || !m.CanDeletePartial || m.DeleteBlocked != "" {
+		t.Fatalf("precondition model 2b: %+v", m)
+	}
+
+	// 1. Missing kind or invalid kind is rejected with 422.
+	respMissing, bodyMissing := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "2b"}, nil)
+	if respMissing.StatusCode != 422 {
+		t.Errorf("missing kind should return 422, got %d body %s", respMissing.StatusCode, bodyMissing)
+	}
+	respInvalid, bodyInvalid := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "invalid"}, nil)
+	if respInvalid.StatusCode != 422 {
+		t.Errorf("invalid kind should return 422, got %d body %s", respInvalid.StatusCode, bodyInvalid)
+	}
+
+	// 2. Delete model file (kind: "model") removes models/<File> but leaves .partial alone.
+	resp, body := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "model"}, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 200 || r.State == nil {
+		t.Fatalf("delete model: status %d body %s", resp.StatusCode, body)
+	}
+	if !strings.HasPrefix(r.Notice, "Deleted 2B (") || !strings.HasSuffix(r.Notice, "freed).") {
+		t.Errorf("notice: %q", r.Notice)
+	}
+	// Item 3: Delete result is returned in r.Notice, NOT stored in state.Notice.
+	if r.State.Notice != "" {
+		t.Errorf("reply state notice must be empty: %q", r.State.Notice)
+	}
+
+	// State request after a delete carries no stale notice.
+	_, stBytesAfter := s.do(t, "GET", "/api/state", nil, nil)
+	stAfter := decodeAPI(t, stBytesAfter).State
+	if stAfter.Notice != "" {
+		t.Errorf("subsequent state notice must be empty, got %q", stAfter.Notice)
+	}
+
+	// An existing error banner is not replaced by a stale success banner.
+	f.a.settingsNotice = "an existing engine error"
+	_, stErrBytes := s.do(t, "GET", "/api/state", nil, nil)
+	stErr := decodeAPI(t, stErrBytes).State
+	if stErr.Notice != "an existing engine error" {
+		t.Errorf("error banner should remain intact, got %q", stErr.Notice)
+	}
+	f.a.settingsNotice = ""
+
+	// Verify model file was removed, but partial file remains.
+	if _, err := os.Stat(e.path(f.a.dir)); !os.IsNotExist(err) {
+		t.Errorf("model file was not removed: %v", err)
+	}
+	if _, err := os.Stat(partialPath); err != nil {
+		t.Errorf("partial file should survive model file deletion: %v", err)
+	}
+
+	mAfterModel := findModel(*r.State, "2b")
+	if mAfterModel.Installed || mAfterModel.HasFile || mAfterModel.CanDelete {
+		t.Errorf("state after model delete: %+v", mAfterModel)
+	}
+	if !mAfterModel.Partial || !mAfterModel.CanDeletePartial {
+		t.Errorf("partial should still be present and removable: %+v", mAfterModel)
+	}
+
+	// 3. Delete partial file (kind: "partial") removes .partial.
+	respP, bodyP := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "partial"}, nil)
+	rP := decodeAPI(t, bodyP)
+	if respP.StatusCode != 200 {
+		t.Fatalf("delete partial: status %d body %s", respP.StatusCode, bodyP)
+	}
+	if !strings.HasPrefix(rP.Notice, "Removed the partial download of 2B (") {
+		t.Errorf("partial delete notice: %q", rP.Notice)
+	}
+	if _, err := os.Stat(partialPath); !os.IsNotExist(err) {
+		t.Errorf("partial file was not removed: %v", err)
+	}
+
+	// 4. Idempotent calls return 0 B freed.
+	resp2, body2 := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "model"}, nil)
+	r2 := decodeAPI(t, body2)
+	if resp2.StatusCode != 200 || r2.Notice != "Deleted 2B (0 B freed)." {
+		t.Errorf("idempotent model delete: status %d notice %q", resp2.StatusCode, r2.Notice)
+	}
+
+	respP2, bodyP2 := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "partial"}, nil)
+	rP2 := decodeAPI(t, bodyP2)
+	if respP2.StatusCode != 200 || rP2.Notice != "Removed the partial download of 2B (0 B freed)." {
+		t.Errorf("idempotent partial delete: status %d notice %q", respP2.StatusCode, rP2.Notice)
+	}
+}
+
+func TestModelDeleteIncompleteFile(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+	e, _ := modelByKey("8b")
+	if err := os.MkdirAll(filepath.Join(f.a.dir, "models"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create an incomplete/corrupt .gguf (< e.MinBytes).
+	incompleteData := []byte("corrupt incomplete gguf header")
+	if err := os.WriteFile(e.path(f.a.dir), incompleteData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stateBytes := s.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, stateBytes).State
+	m := findModel(*st, "8b")
+	if m.Installed {
+		t.Errorf("incomplete file must not count as installed: %+v", m)
+	}
+	if !m.HasFile || m.FileBytes != int64(len(incompleteData)) || !m.CanDelete {
+		t.Errorf("incomplete file must report has_file and file_bytes and can_delete: %+v", m)
+	}
+
+	resp, body := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "8b", "kind": "model"}, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("delete incomplete model: status %d body %s", resp.StatusCode, body)
+	}
+	wantNotice := fmt.Sprintf("Deleted 8B (%d B freed).", len(incompleteData))
+	if r.Notice != wantNotice {
+		t.Errorf("notice: want %q, got %q", wantNotice, r.Notice)
+	}
+	if _, err := os.Stat(e.path(f.a.dir)); !os.IsNotExist(err) {
+		t.Errorf("incomplete model file was not removed: %v", err)
+	}
+}
+
+func TestModelDeletePartialOnly(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+	e, _ := modelByKey("8b")
+	if err := os.MkdirAll(filepath.Join(f.a.dir, "models"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	partialPath := e.path(f.a.dir) + ".partial"
+	pf, err := os.Create(partialPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pf.Truncate(312000000); err != nil {
+		pf.Close()
+		t.Fatal(err)
+	}
+	pf.Close()
+
+	_, stateBytes := s.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, stateBytes).State
+	m := findModel(*st, "8b")
+	if m.Installed || !m.Partial || m.PartialBytes != 312000000 || !m.CanDeletePartial || m.DeleteBlocked != "" {
+		t.Fatalf("precondition model 8b partial: %+v", m)
+	}
+
+	resp, body := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "8b", "kind": "partial"}, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("delete: status %d body %s", resp.StatusCode, body)
+	}
+	if r.Notice != "Removed the partial download of 8B (312 MB freed)." {
+		t.Errorf("notice: %q", r.Notice)
+	}
+	if _, err := os.Stat(partialPath); !os.IsNotExist(err) {
+		t.Errorf("partial file was not removed: %v", err)
+	}
+	mAfter := findModel(*r.State, "8b")
+	if mAfter.Partial || mAfter.CanDeletePartial {
+		t.Errorf("state after partial delete: %+v", mAfter)
+	}
+}
+
+func TestModelDeleteRefusesActiveModel(t *testing.T) {
+	e, _ := modelByKey("0.8b")
+	cases := []struct {
+		name      string
+		modelFile string
+	}{
+		{"standard forward slash", "models/" + e.File},
+		{"windows backslash", "models\\" + e.File},
+		{"mixed case uppercase", "MODELS/" + strings.ToUpper(e.File)},
+		{"file leaf only", e.File},
+		{"different relative spelling", "./models/../models/" + e.File},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSettingsFixture(t)
+			s := f.server(t)
+			putModel(t, f.a.dir, e)
+			f.a.conf.ModelFile = tc.modelFile
+			f.a.paths, _ = resolvePaths(f.a.dir, f.a.conf)
+
+			_, stateBytes := s.do(t, "GET", "/api/state", nil, nil)
+			st := decodeAPI(t, stateBytes).State
+			m := findModel(*st, "0.8b")
+			if !m.Active || m.CanDelete || m.DeleteBlocked != "active" {
+				t.Fatalf("precondition active model 0.8b: %+v", m)
+			}
+
+			// Deleting active model file is refused.
+			resp, body := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "0.8b", "kind": "model"}, nil)
+			r := decodeAPI(t, body)
+			if resp.StatusCode != 422 || !strings.Contains(r.Error, "currently in use") {
+				t.Errorf("active model deletion: status %d error %q", resp.StatusCode, r.Error)
+			}
+			if _, err := os.Stat(e.path(f.a.dir)); err != nil {
+				t.Errorf("active model file must not be removed: %v", err)
+			}
+
+			// A partial file for the active model CAN be removed!
+			partialPath := e.path(f.a.dir) + ".partial"
+			if err := os.WriteFile(partialPath, []byte("leftover partial"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			respPartial, bodyPartial := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "0.8b", "kind": "partial"}, nil)
+			rPartial := decodeAPI(t, bodyPartial)
+			if respPartial.StatusCode != 200 || !strings.HasPrefix(rPartial.Notice, "Removed the partial download of 0.8B (") {
+				t.Errorf("active model partial deletion should succeed: status %d body %s", respPartial.StatusCode, bodyPartial)
+			}
+			if _, err := os.Stat(partialPath); !os.IsNotExist(err) {
+				t.Errorf("active model partial file was not removed: %v", err)
+			}
+			// Active model file remains untouched.
+			if _, err := os.Stat(e.path(f.a.dir)); err != nil {
+				t.Errorf("active model file must still be present: %v", err)
+			}
+		})
+	}
+
+	// Test custom alias pointing to the catalog model via symlink.
+	t.Run("symlink alias", func(t *testing.T) {
+		f := newSettingsFixture(t)
+		s := f.server(t)
+		putModel(t, f.a.dir, e)
+
+		linkPath := filepath.Join(f.a.dir, "models", "custom-alias.gguf")
+		if err := os.Symlink(e.path(f.a.dir), linkPath); err != nil {
+			t.Skipf("symlink creation not supported in this environment: %v", err)
+		}
+		defer os.Remove(linkPath)
+
+		f.a.conf.ModelFile = "models/custom-alias.gguf"
+		f.a.paths, _ = resolvePaths(f.a.dir, f.a.conf)
+
+		_, stateBytes := s.do(t, "GET", "/api/state", nil, nil)
+		st := decodeAPI(t, stateBytes).State
+		m := findModel(*st, "0.8b")
+		if !m.Active || m.CanDelete {
+			t.Fatalf("catalog model must be detected active via symlink alias: %+v", m)
+		}
+
+		resp, body := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "0.8b", "kind": "model"}, nil)
+		r := decodeAPI(t, body)
+		if resp.StatusCode != 422 || !strings.Contains(r.Error, "currently in use") {
+			t.Errorf("deleting catalog model while symlink alias is active should be refused: status %d error %q", resp.StatusCode, r.Error)
+		}
+	})
+}
+
+func TestModelDownloadAndDeletionRace(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+	e, _ := modelByKey("2b")
+	putModel(t, f.a.dir, e)
+
+	// 1. Delete reservation held -> Start refused.
+	release, err := f.a.dl.ReserveDelete("0.8b")
+	if err != nil {
+		t.Fatalf("ReserveDelete failed: %v", err)
+	}
+
+	// dl.Start is refused.
+	if err := f.a.dl.Start("0.8b"); err == nil || !strings.Contains(err.Error(), "currently being deleted") {
+		t.Errorf("Start during delete reservation should be refused: %v", err)
+	}
+
+	// HTTP POST /api/model/download is refused.
+	respDl, bodyDl := s.do(t, "POST", "/api/model/download", map[string]string{"key": "0.8b"}, nil)
+	rDl := decodeAPI(t, bodyDl)
+	if respDl.StatusCode != 422 || !strings.Contains(rDl.Error, "currently being deleted") {
+		t.Errorf("HTTP download during delete reservation: status %d body %s", respDl.StatusCode, bodyDl)
+	}
+
+	// Release reservation.
+	release()
+
+	// 2. Download running -> delete refused.
+	f.a.dl.set(func(ds *downloadState) {
+		*ds = downloadState{Key: "2b", Phase: "downloading"}
+	})
+	defer f.a.dl.set(func(ds *downloadState) { *ds = downloadState{} })
+
+	// dl.ReserveDelete is refused.
+	if _, err := f.a.dl.ReserveDelete("2b"); err == nil || !strings.Contains(err.Error(), "currently being downloaded") {
+		t.Errorf("ReserveDelete during download should be refused: %v", err)
+	}
+
+	// HTTP POST /api/model/delete is refused for kind "model".
+	respDelModel, bodyDelModel := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "model"}, nil)
+	rDelModel := decodeAPI(t, bodyDelModel)
+	if respDelModel.StatusCode != 422 || !strings.Contains(rDelModel.Error, "currently being downloaded") {
+		t.Errorf("HTTP delete model during download: status %d error %q", respDelModel.StatusCode, rDelModel.Error)
+	}
+
+	// HTTP POST /api/model/delete is refused for kind "partial".
+	respDelPartial, bodyDelPartial := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "partial"}, nil)
+	rDelPartial := decodeAPI(t, bodyDelPartial)
+	if respDelPartial.StatusCode != 422 || !strings.Contains(rDelPartial.Error, "currently being downloaded") {
+		t.Errorf("HTTP delete partial during download: status %d error %q", respDelPartial.StatusCode, rDelPartial.Error)
+	}
+}
+
+func TestModelDeleteRefusesUnknownAndPathTraversal(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+
+	if err := os.MkdirAll(filepath.Join(f.a.dir, "models"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	templatePath := filepath.Join(f.a.dir, "models", "chat_template.jinja")
+	if err := os.WriteFile(templatePath, []byte("shared jinja template"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unrelatedPath := filepath.Join(f.a.dir, "models", "unrelated.txt")
+	if err := os.WriteFile(unrelatedPath, []byte("keep this"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	badKeys := []string{
+		"unknown",
+		"../models/chat_template.jinja",
+		"../../something",
+		"chat_template.jinja",
+		"0.8B", // exact keys are lowercase "0.8b", "2b", "8b"
+		"",
+	}
+
+	for _, k := range badKeys {
+		resp, body := s.do(t, "POST", "/api/model/delete", map[string]string{"key": k, "kind": "model"}, nil)
+		r := decodeAPI(t, body)
+		if resp.StatusCode != 422 || !strings.Contains(r.Error, "unknown model") {
+			t.Errorf("bad key %q: status %d error %q", k, resp.StatusCode, r.Error)
+		}
+	}
+
+	// Verify template and unrelated files survive untouched.
+	tb, err := os.ReadFile(templatePath)
+	if err != nil || string(tb) != "shared jinja template" {
+		t.Errorf("chat_template.jinja changed: %q %v", tb, err)
+	}
+	ub, err := os.ReadFile(unrelatedPath)
+	if err != nil || string(ub) != "keep this" {
+		t.Errorf("unrelated.txt changed: %q %v", ub, err)
+	}
+}
+
+func TestModelDeleteRefusesNonRegularFile(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+	e, _ := modelByKey("2b")
+
+	// 1. Directory with the catalog name.
+	dirPath := e.path(f.a.dir)
+	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := s.do(t, "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "model"}, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 422 || !strings.Contains(r.Error, "not a regular file") {
+		t.Errorf("directory model deletion: status %d error %q", resp.StatusCode, r.Error)
+	}
+	info, err := os.Stat(dirPath)
+	if err != nil || !info.IsDir() {
+		t.Errorf("directory should survive: info=%v err=%v", info, err)
+	}
+	_ = os.RemoveAll(dirPath)
+
+	// 2. Symlink if symlink creation is permitted.
+	target := filepath.Join(f.a.dir, "models", "target.txt")
+	_ = os.WriteFile(target, []byte("target"), 0o644)
+	if symErr := os.Symlink(target, dirPath); symErr == nil {
+		resp, body = s.do(t, "POST", "/api/model/delete", map[string]string{"key": "2b", "kind": "model"}, nil)
+		r = decodeAPI(t, body)
+		if resp.StatusCode != 422 || !strings.Contains(r.Error, "not a regular file") {
+			t.Errorf("symlink model deletion: status %d error %q", resp.StatusCode, r.Error)
+		}
+		if _, err := os.Lstat(dirPath); err != nil {
+			t.Errorf("symlink should survive: %v", err)
+		}
+		if _, err := os.Stat(target); err != nil {
+			t.Errorf("target should survive: %v", err)
+		}
+		_ = os.Remove(dirPath)
 	}
 }

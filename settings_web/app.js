@@ -13,6 +13,7 @@
   let dirty = false;
   let saving = false;
   let acting = false; // a model / engine / download request is in flight
+  let confirmingDelete = null; // { key: string, kind: 'model' | 'partial' }
   let closed = false; // the page was closed via "Close this page"
   // The revision the unsaved edits are based on. Syncing with the app moves it only
   // while nothing is being edited: moving it under a dirty section would hide a newer
@@ -180,10 +181,11 @@
     el.append(h('p', { text: msg }), actions);
   }
 
-  function showNotice(text) {
+  function showNotice(text, kind) {
     const el = $('notice');
     if (!el) return;
     el.textContent = text || '';
+    el.className = 'banner' + (kind === 'ok' ? ' ok' : ' error');
     el.hidden = !text;
   }
 
@@ -193,8 +195,10 @@
   }
 
   function fmtBytes(n) {
-    if (n >= 1e9) return (n / 1e9).toFixed(2) + ' GB';
-    return Math.round(n / 1e6) + ' MB';
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + ' GB';
+    if (n >= 1e6) return Math.round(n / 1e6) + ' MB';
+    if (n >= 1e3) return Math.round(n / 1e3) + ' KB';
+    return n + ' B';
   }
 
   const isRunning = (phase) => phase === 'checking' || phase === 'downloading' || phase === 'template';
@@ -305,19 +309,138 @@
 
     const actions = h('div', { class: 'actions' });
     const ready = m.installed && m.template_installed;
-    if (running) {
-      actions.append(h('button', { type: 'button', class: 'secondary', onclick: cancelDownload }, 'Cancel'));
-    } else if (m.installed && !m.template_installed) {
-      actions.append(h('button', { type: 'button', class: 'secondary', disabled: lock || otherRunning,
-        onclick: () => act('/api/model/download', { key: m.key }) }, 'Retry chat template'));
-    } else if (m.active) {
-      actions.append(h('span', { class: 'badge on', text: 'In use' }));
-    } else if (ready) {
-      actions.append(h('button', { type: 'button', class: 'secondary', disabled: lock || running,
-        onclick: () => act('/api/model/use', { key: m.key }) }, 'Use this model'));
+
+    if (confirmingDelete && confirmingDelete.key === m.key) {
+      const isPartial = confirmingDelete.kind === 'partial';
+      const valid = isPartial
+        ? (m.can_delete_partial || (m.partial && !running))
+        : m.can_delete;
+
+      if (valid) {
+        const sizeStr = isPartial
+          ? fmtBytes(m.partial_bytes)
+          : (m.installed ? m.size : fmtBytes(m.file_bytes));
+        const confirmLabel = isPartial ? 'Confirm remove (' + sizeStr + ')' : 'Confirm delete (' + sizeStr + ')';
+        const ariaLabel = isPartial ? 'Confirm remove partial download for ' + m.name : 'Confirm delete ' + m.name;
+
+        const cancelBtn = h('button', {
+          type: 'button',
+          class: 'secondary',
+          disabled: lock,
+          'aria-label': 'Cancel delete ' + m.name,
+          'data-key': m.key,
+          'data-action': 'cancel-delete',
+          onclick: () => {
+            confirmingDelete = null;
+            renderModels();
+          },
+        }, 'Cancel');
+
+        const confirmBtn = h('button', {
+          type: 'button',
+          class: 'danger',
+          disabled: lock,
+          'aria-label': ariaLabel,
+          'data-key': m.key,
+          'data-action': 'confirm-delete',
+          onclick: () => {
+            if (confirmingDelete && Date.now() - (confirmingDelete.openedAt || 0) < 400) {
+              return;
+            }
+            const target = confirmingDelete;
+            confirmingDelete = null;
+            act('/api/model/delete', { key: target.key, kind: target.kind });
+          },
+        }, confirmLabel);
+
+        // Put Cancel first so Confirm does not appear directly under the cursor.
+        actions.append(cancelBtn, confirmBtn);
+      }
+    } else if (running) {
+      actions.append(h('button', {
+        type: 'button',
+        class: 'secondary',
+        'data-key': m.key,
+        'data-action': 'cancel-download',
+        onclick: cancelDownload,
+      }, 'Cancel'));
     } else {
-      actions.append(h('button', { type: 'button', class: 'secondary', disabled: lock || otherRunning,
-        onclick: () => act('/api/model/download', { key: m.key }) }, 'Download (' + m.size + ')'));
+      if (m.active) {
+        actions.append(h('span', { class: 'badge on', text: 'In use' }));
+      } else if (m.installed) {
+        if (!m.template_installed) {
+          actions.append(h('button', {
+            type: 'button',
+            class: 'secondary',
+            disabled: lock || otherRunning,
+            'data-key': m.key,
+            'data-action': 'retry-template',
+            onclick: () => act('/api/model/download', { key: m.key }),
+          }, 'Retry chat template'));
+        } else {
+          actions.append(h('button', {
+            type: 'button',
+            class: 'secondary',
+            disabled: lock || running,
+            'data-key': m.key,
+            'data-action': 'use',
+            onclick: () => act('/api/model/use', { key: m.key }),
+          }, 'Use this model'));
+        }
+        if (m.can_delete) {
+          actions.append(h('button', {
+            type: 'button',
+            class: 'danger',
+            disabled: lock,
+            'aria-label': 'Delete ' + m.name,
+            'data-key': m.key,
+            'data-action': 'delete-model',
+            onclick: () => {
+              confirmingDelete = { key: m.key, kind: 'model', openedAt: Date.now() };
+              renderModels();
+            },
+          }, 'Delete'));
+        }
+      } else {
+        actions.append(h('button', {
+          type: 'button',
+          class: 'secondary',
+          disabled: lock || otherRunning,
+          'data-key': m.key,
+          'data-action': 'download',
+          onclick: () => act('/api/model/download', { key: m.key }),
+        }, 'Download (' + m.size + ')'));
+
+        if (m.has_file && m.can_delete) {
+          actions.append(h('button', {
+            type: 'button',
+            class: 'danger',
+            disabled: lock,
+            'aria-label': 'Delete incomplete file for ' + m.name,
+            'data-key': m.key,
+            'data-action': 'delete-model',
+            onclick: () => {
+              confirmingDelete = { key: m.key, kind: 'model', openedAt: Date.now() };
+              renderModels();
+            },
+          }, 'Delete'));
+        }
+      }
+
+      if (m.partial && (m.can_delete_partial || (!running && !otherRunning))) {
+        actions.append(h('button', {
+          type: 'button',
+          class: 'danger',
+          disabled: lock,
+          'aria-label': 'Remove partial download for ' + m.name,
+          'data-key': m.key,
+          'data-action': 'delete-partial',
+          onclick: () => {
+            confirmingDelete = { key: m.key, kind: 'partial', openedAt: Date.now() };
+            renderModels();
+          },
+        }, 'Remove partial download'));
+      }
     }
 
     const row = h('div', { class: 'model' + (m.active ? ' active' : '') },
@@ -343,12 +466,48 @@
     return row;
   }
 
+  let lastModelSnapshot = '';
+
   function renderModels() {
-    $('models').replaceChildren(...state.models.map(modelRow));
+    const modelsBox = $('models');
+    if (!modelsBox) return;
+
+    const currentSnapshot = JSON.stringify({
+      models: state ? state.models : null,
+      download: state ? state.download : null,
+      custom: state ? state.custom_model : null,
+      confirm: confirmingDelete,
+      lock: appBusy() || acting,
+    });
+
+    if (lastModelSnapshot === currentSnapshot) {
+      return;
+    }
+    lastModelSnapshot = currentSnapshot;
+
+    const activeEl = document.activeElement;
+    let focusedKey = null;
+    let focusedAction = null;
+    if (activeEl && modelsBox.contains(activeEl)) {
+      focusedKey = activeEl.getAttribute('data-key');
+      focusedAction = activeEl.getAttribute('data-action');
+    }
+
+    modelsBox.replaceChildren(...state.models.map(modelRow));
     const custom = $('custom-model');
-    custom.hidden = !state.custom_model;
-    custom.textContent = state.custom_model ? 'The model in use is ' + state.custom_model + ' (set in config.json). Choosing one of the models above replaces it.' : '';
-    $('license-link').href = state.license_url || '#';
+    if (custom) {
+      custom.hidden = !state.custom_model;
+      custom.textContent = state.custom_model ? 'The model in use is ' + state.custom_model + ' (set in config.json). Choosing one of the models above replaces it.' : '';
+    }
+    const lic = $('license-link');
+    if (lic) lic.href = state.license_url || '#';
+
+    if (focusedKey && focusedAction) {
+      const toFocus = modelsBox.querySelector(`[data-key="${focusedKey}"][data-action="${focusedAction}"]`);
+      if (toFocus) {
+        toFocus.focus();
+      }
+    }
   }
 
   function renderEngines() {
@@ -366,6 +525,8 @@
     box.append(h('p', { class: 'hint', text: 'Switching reloads the model. If the chosen engine cannot start, the previous one stays.' }));
   }
 
+  let lastServerNotice = '';
+
   function renderBusy() {
     if (closed) return;
     const bar = $('busybar');
@@ -374,7 +535,13 @@
     if (busyText) busyText.textContent = appBusy() ? 'The app is busy: ' + state.busy + '. Loading a model can take a minute.' : '';
     const saveBtn = $('save');
     if (saveBtn) saveBtn.disabled = saving || appBusy();
-    showNotice(state ? (state.notice || '') : '');
+    const currentNotice = state ? (state.notice || '') : '';
+    if (currentNotice) {
+      showNotice(currentNotice, 'error');
+    } else if (lastServerNotice) {
+      showNotice('');
+    }
+    lastServerNotice = currentNotice;
   }
 
   function renderAll() {
@@ -457,7 +624,11 @@
     const r = await api(path, body);
     acting = false;
     if (r.data && r.data.state) mergeState(r.data.state); else renderAll();
-    if (!r.ok && r.status !== 503) showNotice((r.data && r.data.error) || 'That did not work.');
+    if (!r.ok && r.status !== 503) {
+      showNotice((r.data && r.data.error) || 'That did not work.', 'error');
+    } else if (r.data && r.data.notice) {
+      showNotice(r.data.notice, 'ok');
+    }
     schedulePoll();
   }
 
@@ -591,6 +762,12 @@
       goodbye('You can close this tab now.');
     });
     window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && confirmingDelete) {
+        confirmingDelete = null;
+        renderModels();
+      }
+    });
     window.addEventListener('focus', async () => {
       if (closed || saving || acting) return;
       const r = await api('/api/state');
