@@ -396,3 +396,223 @@ func TestX11MultipleHotkeys(t *testing.T) {
 	waitPressed(t, hk3, true, "hk3 should fire after registration")
 	waitPressed(t, hk3, false, "hk3 consumed")
 }
+
+func TestX11HotkeyRobustness(t *testing.T) {
+	if os.Getenv("CT_TEST_X11") != "1" {
+		t.Skip("run only on an isolated Xvfb display with CT_TEST_X11=1")
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := platformRuntimeError(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Subtest 1: X error handler filtering and restoration (Item 1)
+	t.Run("XErrorHandlerFilteringAndRestoration", func(t *testing.T) {
+		x11TestInstallForwardHandler()
+		x11TestSetPrevErrorHandler()
+
+		// 1. Grab conflict (matching display, X_GrabKey 33, BadAccess 10):
+		// Must record grab_error = BadAccess and NOT forward to previous handler.
+		x11TestSetForwardedError(0)
+		x11TestCallGrabErrorHandler(true, 33 /* X_GrabKey */, 10 /* BadAccess */)
+		if x11TestGetGrabError() != 10 {
+			t.Errorf("expected grab_error == BadAccess (10), got %d", x11TestGetGrabError())
+		}
+		if x11TestGetForwardedError() != 0 {
+			t.Errorf("matching grab conflict error must not be forwarded, got %d", x11TestGetForwardedError())
+		}
+
+		// 2. Error from another display connection (e.g. GTK's or other client):
+		// Must NOT record as grab_error and MUST forward to previous handler.
+		x11TestSetForwardedError(0)
+		x11TestCallGrabErrorHandler(false, 33, 10)
+		if x11TestGetForwardedError() != 10 {
+			t.Errorf("error from different display must forward to previous handler, got %d", x11TestGetForwardedError())
+		}
+
+		// 3. Different request code (e.g. 42 instead of X_GrabKey 33):
+		// Must NOT record as grab_error and MUST forward to previous handler.
+		x11TestSetForwardedError(0)
+		x11TestCallGrabErrorHandler(true, 42, 10)
+		if x11TestGetForwardedError() != 10 {
+			t.Errorf("non-X_GrabKey error must forward to previous handler, got %d", x11TestGetForwardedError())
+		}
+
+		// 4. Different error code (e.g. BadValue 2 instead of BadAccess 10):
+		// Must NOT record as grab_error and MUST forward to previous handler.
+		x11TestSetForwardedError(0)
+		x11TestCallGrabErrorHandler(true, 33, 2 /* BadValue */)
+		if x11TestGetForwardedError() != 2 {
+			t.Errorf("non-BadAccess error must forward to previous handler, got %d", x11TestGetForwardedError())
+		}
+
+		// 5. Verify handler restoration after real grab:
+		x11TestInstallForwardHandler()
+		x11TestSetForwardedError(0)
+		hk, err := newHotkey("Ctrl+Alt+E")
+		if err != nil {
+			t.Fatalf("newHotkey failed: %v", err)
+		}
+		defer hk.Close()
+
+		// Previous handler was restored: verify by triggering current process-wide handler
+		x11TestTriggerCurrentErrorHandler(99)
+		if x11TestGetForwardedError() != 99 {
+			t.Errorf("previous error handler must be restored after grab, got %d", x11TestGetForwardedError())
+		}
+	})
+
+	// Subtest 2: Failed re-registration keeps old hotkey working (Item 2)
+	t.Run("FailedReRegistrationPreservesOldHotkey", func(t *testing.T) {
+		kcE := x11TestKeysymToKeycode('e')
+		kcD := x11TestKeysymToKeycode('d')
+		kcK := x11TestKeysymToKeycode('k')
+		mods := uint32(x11ControlMask | x11Mod1Mask) // Ctrl+Alt
+
+		// Register slot 1 to Ctrl+Alt+E
+		res := x11TestHotkeyGrab(1, mods, kcE)
+		if res != 1 {
+			t.Fatalf("grab slot 1 failed: %d", res)
+		}
+		t.Cleanup(func() { x11TestHotkeyUngrab(1) })
+
+		// Register slot 2 to Ctrl+Alt+K
+		res2 := x11TestHotkeyGrab(2, mods, kcK)
+		if res2 != 1 {
+			t.Fatalf("grab slot 2 failed: %d", res2)
+		}
+		t.Cleanup(func() { x11TestHotkeyUngrab(2) })
+
+		// Verify slot 1 fires on Ctrl+Alt+E
+		sendCombo(x11XK_Control_L, x11XK_Alt_L, 'e')
+		x11TestHotkeyPump()
+		if !x11TestHotkeyCheck(1) {
+			t.Fatal("slot 1 did not fire for Ctrl+Alt+E")
+		}
+
+		// Case A: Duplicate re-registration attempt: slot 1 tries to grab slot 2's key (Ctrl+Alt+K)
+		resDup := x11TestHotkeyGrab(1, mods, kcK)
+		if resDup != -2 {
+			t.Fatalf("expected duplicate re-registration to return -2, got %d", resDup)
+		}
+
+		// Slot 1 must still work!
+		sendCombo(x11XK_Control_L, x11XK_Alt_L, 'e')
+		x11TestHotkeyPump()
+		if !x11TestHotkeyCheck(1) {
+			t.Fatal("slot 1 (Ctrl+Alt+E) did not fire after duplicate re-registration attempt!")
+		}
+
+		// Case B: Conflict re-registration attempt
+		// Enable conflict on Ctrl+Alt+D from another X connection
+		x11TestConflictKey('d', mods, true)
+		conflictActive := true
+		t.Cleanup(func() {
+			if conflictActive {
+				x11TestConflictKey('d', mods, false)
+				conflictActive = false
+			}
+		})
+
+		// Try to re-register slot 1 to Ctrl+Alt+D: must fail (-3 BadAccess)
+		resRe := x11TestHotkeyGrab(1, mods, kcD)
+		if resRe != -3 {
+			t.Fatalf("expected re-registration on conflicting key to return -3, got %d", resRe)
+		}
+
+		// Crucial verification: old registration (Ctrl+Alt+E) MUST STILL WORK!
+		sendCombo(x11XK_Control_L, x11XK_Alt_L, 'e')
+		x11TestHotkeyPump()
+		if !x11TestHotkeyCheck(1) {
+			t.Fatal("old hotkey (Ctrl+Alt+E) did not fire after failed re-registration!")
+		}
+
+		// Release conflict
+		x11TestConflictKey('d', mods, false)
+		conflictActive = false
+	})
+
+	// Subtest 3: Closing one hotkey drains queue and preserves pending events of other hotkeys (Item 4)
+	t.Run("UngrabDrainsQueueAndPreservesOthers", func(t *testing.T) {
+		hk1, err := newHotkey("Ctrl+Alt+E")
+		if err != nil {
+			t.Fatalf("newHotkey hk1: %v", err)
+		}
+		t.Cleanup(func() { hk1.Close() })
+
+		hk2, err := newHotkey("Ctrl+Alt+K")
+		if err != nil {
+			t.Fatalf("newHotkey hk2: %v", err)
+		}
+		t.Cleanup(func() { hk2.Close() })
+
+		// Inject keypress for hk1 into X queue
+		x11TestKey(x11XK_Control_L, true)
+		x11TestKey(x11XK_Alt_L, true)
+		x11TestKey('e', true)
+		x11TestKey('e', false)
+		x11TestKey(x11XK_Alt_L, false)
+		x11TestKey(x11XK_Control_L, false)
+
+		// Inject keypress for hk2 into X queue without pumping Go messages
+		x11TestKey(x11XK_Control_L, true)
+		x11TestKey(x11XK_Alt_L, true)
+		x11TestKey('k', true)
+		x11TestKey('k', false)
+		x11TestKey(x11XK_Alt_L, false)
+		x11TestKey(x11XK_Control_L, false)
+
+		// Close hk1 now: ct_hotkey_ungrab must pump the queued event for hk2
+		// before clearing hk1, and discard hk1's queued event!
+		if err := hk1.Close(); err != nil {
+			t.Fatalf("hk1.Close(): %v", err)
+		}
+
+		// hk2 must have latched the event and fire!
+		waitPressed(t, hk2, true, "hk2 event must be preserved when hk1 is closed")
+
+		// Re-register hk1 on Ctrl+Alt+E: it must NOT fire from the old stale event!
+		hk1New, err := newHotkey("Ctrl+Alt+E")
+		if err != nil {
+			t.Fatalf("newHotkey hk1New: %v", err)
+		}
+		t.Cleanup(func() { hk1New.Close() })
+		waitPressed(t, hk1New, false, "hk1New must not fire from stale ungrabbed event")
+	})
+
+	// Subtest 4: Store exact lock-mask variants at grab time and ungrab them (Item 5)
+	t.Run("StoreAndUngrabExactLockMaskVariants", func(t *testing.T) {
+		kcE := x11TestKeysymToKeycode('e')
+		mods := uint32(x11ControlMask | x11Mod1Mask)
+
+		res := x11TestHotkeyGrab(1, mods, kcE)
+		if res != 1 {
+			t.Fatalf("grab slot 1 failed: %d", res)
+		}
+		t.Cleanup(func() { x11TestHotkeyUngrab(1) })
+
+		nvar, vars := x11TestGetSlotVariants(1)
+		if nvar <= 0 || len(vars) != nvar {
+			t.Fatalf("expected stored variants > 0, got nvar=%d, len=%d", nvar, len(vars))
+		}
+		// Base variant 0 must be 0
+		hasZero := false
+		for _, v := range vars {
+			if v == 0 {
+				hasZero = true
+				break
+			}
+		}
+		if !hasZero {
+			t.Errorf("stored variants must include base mask 0: %v", vars)
+		}
+
+		// Ungrab slot 1: must ungrab all stored variants and reset slot state
+		x11TestHotkeyUngrab(1)
+		nvarAfter, _ := x11TestGetSlotVariants(1)
+		if nvarAfter != -1 {
+			t.Errorf("slot 1 must be cleared after ungrab, got nvar=%d", nvarAfter)
+		}
+	})
+}

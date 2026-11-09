@@ -4,40 +4,83 @@
 #include <gtk/gtk.h>
 #include <gdk/gdkx.h>
 #include <X11/Xlib.h>
+#include <X11/Xproto.h>
 #include <X11/keysym.h>
 #include <X11/XKBlib.h>
 #include <X11/extensions/XTest.h>
+#include <string.h>
 
 #define MAX_HOTKEYS 8
 
 typedef struct {
-    int id;               // 1..MAX_HOTKEYS (0 means unused)
-    unsigned int mods;    // normalized modifiers
-    KeyCode keycode;      // X11 keycode
-    int key_down;         // 1 if currently held down
-    int fired;            // 1 if pressed and waiting for check
+    int id;                   // 1..MAX_HOTKEYS (0 means unused)
+    unsigned int mods;        // normalized modifiers
+    KeyCode keycode;          // X11 keycode
+    int key_down;             // 1 if currently held down
+    int fired;                // 1 if pressed and waiting for check
+    unsigned int variants[8]; // lock mask variants grabbed
+    int nvar;                 // number of variants grabbed
 } HotkeyGrab;
 
 static Display *display;
 static HotkeyGrab grabs[MAX_HOTKEYS];
 static unsigned int num_mask, scroll_mask;
 static int grab_error;
+static XErrorHandler prev_error_handler;
 static GtkStatusIcon *status_icon;
 static GtkWidget *current_menu, *control_window, *status_label;
 static int menu_requested;
 static GQueue commands = G_QUEUE_INIT;
 
 static void primary_owner_change(GtkClipboard *clipboard, GdkEventOwnerChange *event, gpointer data);
+static int grab_error_handler(Display *d, XErrorEvent *e);
 
 int ct_init(void) {
     if (display) return 1;
     if (!gtk_init_check(NULL, NULL)) return 0;
     if (!GDK_IS_X11_DISPLAY(gdk_display_get_default())) return 0;
     display = XOpenDisplay(NULL);
-    if (display)
+    if (display) {
         g_signal_connect(gtk_clipboard_get(GDK_SELECTION_PRIMARY), "owner-change", G_CALLBACK(primary_owner_change), NULL);
+        Bool supported;
+        XkbSetDetectableAutoRepeat(display, True, &supported);
+    }
     return display != NULL;
 }
+
+int ct_test_call_grab_error_handler(int matches_display, int request_code, int error_code) {
+    XErrorEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.display = matches_display ? display : (Display *)0xdeadbeef;
+    ev.request_code = (unsigned char)request_code;
+    ev.error_code = (unsigned char)error_code;
+    return grab_error_handler(ev.display, &ev);
+}
+
+void ct_test_set_prev_error_handler(void) {
+    XErrorHandler cur = XSetErrorHandler(NULL);
+    XSetErrorHandler(cur);
+    prev_error_handler = cur;
+}
+
+int ct_test_get_grab_error(void) {
+    return grab_error;
+}
+
+int ct_test_get_slot_variants(int id, unsigned int *variants, int max_var) {
+    for (int i = 0; i < MAX_HOTKEYS; i++) {
+        if (grabs[i].id == id) {
+            int count = grabs[i].nvar;
+            if (count > max_var) count = max_var;
+            for (int v = 0; v < count; v++) {
+                variants[v] = grabs[i].variants[v];
+            }
+            return grabs[i].nvar;
+        }
+    }
+    return -1;
+}
+
 
 static void update_lock_masks(void) {
     num_mask = 0;
@@ -84,7 +127,13 @@ static int get_lock_variants(unsigned int *variants, int max_variants) {
 }
 
 static int grab_error_handler(Display *d, XErrorEvent *e) {
-    grab_error = e->error_code;
+    if (d == display && e->request_code == X_GrabKey && e->error_code == BadAccess) {
+        grab_error = BadAccess;
+        return 0;
+    }
+    if (prev_error_handler) {
+        return prev_error_handler(d, e);
+    }
     return 0;
 }
 
@@ -97,17 +146,18 @@ void ct_hotkey_ungrab(int id) {
     if (!display || !id) return;
     for (int i = 0; i < MAX_HOTKEYS; i++) {
         if (grabs[i].id == id) {
-            unsigned int variants[8];
-            int nvar = get_lock_variants(variants, 8);
-            for (int v = 0; v < nvar; v++) {
-                XUngrabKey(display, grabs[i].keycode, grabs[i].mods | variants[v], DefaultRootWindow(display));
+            for (int v = 0; v < grabs[i].nvar; v++) {
+                XUngrabKey(display, grabs[i].keycode, grabs[i].mods | grabs[i].variants[v], DefaultRootWindow(display));
             }
             XSync(display, False);
+            ct_hotkey_pump();
             grabs[i].id = 0;
             grabs[i].keycode = 0;
             grabs[i].mods = 0;
             grabs[i].key_down = 0;
             grabs[i].fired = 0;
+            grabs[i].nvar = 0;
+            for (int v = 0; v < 8; v++) grabs[i].variants[v] = 0;
             break;
         }
     }
@@ -126,30 +176,32 @@ void ct_ungrab(void) {
 int ct_hotkey_grab(int id, unsigned int mods, unsigned int keycode) {
     if (!ct_init()) return 0;
     if (!keycode || !id) return 0;
-    update_lock_masks();
 
-    int slot = -1;
+    int existing_slot = -1;
+    int free_slot = -1;
     for (int i = 0; i < MAX_HOTKEYS; i++) {
         if (grabs[i].id == id) {
-            ct_hotkey_ungrab(id);
-        }
-        if (grabs[i].id && grabs[i].keycode == (KeyCode)keycode && grabs[i].mods == mods) {
-            return -2; // duplicate
-        }
-        if (!grabs[i].id && slot < 0) {
-            slot = i;
+            existing_slot = i;
+        } else if (grabs[i].id != 0) {
+            if (grabs[i].keycode == (KeyCode)keycode && grabs[i].mods == mods) {
+                return -2; // duplicate with another registered hotkey
+            }
+        } else if (free_slot < 0) {
+            free_slot = i;
         }
     }
+    int slot = (existing_slot >= 0) ? existing_slot : free_slot;
     if (slot < 0) return -1; // table full
 
-    Bool supported;
-    XkbSetDetectableAutoRepeat(display, True, &supported);
-    XSync(display, False);
+    if (existing_slot >= 0 && grabs[existing_slot].keycode == (KeyCode)keycode && grabs[existing_slot].mods == mods) {
+        return 1;
+    }
 
+    update_lock_masks();
     unsigned int variants[8];
     int nvar = get_lock_variants(variants, 8);
 
-    int (*previous)(Display *, XErrorEvent *) = XSetErrorHandler(grab_error_handler);
+    prev_error_handler = XSetErrorHandler(grab_error_handler);
     grab_error = 0;
     int grabbed = 0;
     for (int i = 0; i < nvar; i++) {
@@ -157,21 +209,37 @@ int ct_hotkey_grab(int id, unsigned int mods, unsigned int keycode) {
         grabbed++;
     }
     XSync(display, False);
+    XSetErrorHandler(prev_error_handler);
+    prev_error_handler = NULL;
+
     if (grab_error) {
         for (int i = 0; i < grabbed; i++) {
             XUngrabKey(display, (KeyCode)keycode, mods | variants[i], DefaultRootWindow(display));
         }
         XSync(display, False);
-        XSetErrorHandler(previous);
+        if (grab_error == BadAccess) {
+            return -3;
+        }
         return 0;
     }
-    XSetErrorHandler(previous);
+
+    if (existing_slot >= 0) {
+        for (int v = 0; v < grabs[existing_slot].nvar; v++) {
+            XUngrabKey(display, grabs[existing_slot].keycode, grabs[existing_slot].mods | grabs[existing_slot].variants[v], DefaultRootWindow(display));
+        }
+        XSync(display, False);
+        ct_hotkey_pump();
+    }
 
     grabs[slot].id = id;
     grabs[slot].mods = mods;
     grabs[slot].keycode = (KeyCode)keycode;
     grabs[slot].key_down = 0;
     grabs[slot].fired = 0;
+    grabs[slot].nvar = nvar;
+    for (int v = 0; v < nvar; v++) {
+        grabs[slot].variants[v] = variants[v];
+    }
     return 1;
 }
 
