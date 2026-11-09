@@ -115,6 +115,8 @@ func translateStub(t *testing.T, out string) *httptest.Server {
 func TestPendingCaptureReturnsAtOnceAndTranslatesWhenDone(t *testing.T) {
 	a, tray, cb, _, _ := uxApp(t)
 	a.endpoint = translateStub(t, "こんにちは").URL
+	now := time.Unix(1000, 0)
+	a.now = func() time.Time { return now }
 	cb.text = "old clipboard"
 	ready := false
 	task := &scriptedCapture{done: func() bool { return ready }, text: "Hello", fresh: true}
@@ -128,12 +130,16 @@ func TestPendingCaptureReturnsAtOnceAndTranslatesWhenDone(t *testing.T) {
 	if a.capturing == nil || a.translating {
 		t.Fatalf("capturing=%v translating=%v: the hotkey must return while the copy is pending", a.capturing != nil, a.translating)
 	}
-	if !strings.Contains(tray.status, "copying") {
-		t.Fatalf("status = %q, want a copying note", tray.status)
+	if strings.Contains(tray.status, "copying") {
+		t.Fatalf("status = %q: a copy pending for a moment needs no note yet", tray.status)
 	}
+	now = now.Add(copyingNoteAfter)
 	a.stepCapture()
 	if a.capturing == nil || a.translating {
 		t.Fatal("a capture that is not done must stay pending")
+	}
+	if !strings.Contains(tray.status, "copying") {
+		t.Fatalf("status = %q, want a copying note once the copy takes a while", tray.status)
 	}
 
 	ready = true
@@ -206,7 +212,9 @@ func TestNewHotkeyDropsPendingCapture(t *testing.T) {
 
 // Cancelling (or any abort) also drops a pending capture.
 func TestAbortDropsPendingCapture(t *testing.T) {
-	a, _, _, _, _ := uxApp(t)
+	a, tray, _, _, _ := uxApp(t)
+	now := time.Unix(1000, 0)
+	a.now = func() time.Time { return now }
 	a.beginCapture = func(Clipboard, uintptr) captureTask {
 		return &scriptedCapture{done: func() bool { return false }}
 	}
@@ -214,9 +222,17 @@ func TestAbortDropsPendingCapture(t *testing.T) {
 	if a.capturing == nil {
 		t.Fatal("capture should be pending")
 	}
+	now = now.Add(time.Second)
+	a.stepCapture()
+	if !strings.Contains(tray.status, "copying") {
+		t.Fatalf("status = %q, want the copying note", tray.status)
+	}
 	a.abortTranslation()
 	if a.capturing != nil {
 		t.Fatal("abortTranslation must drop the pending capture")
+	}
+	if tray.status != a.readyTip {
+		t.Fatalf("status = %q after the abort, want the ready tip", tray.status)
 	}
 }
 

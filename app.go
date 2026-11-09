@@ -93,7 +93,13 @@ type pendingCapture struct {
 	task    captureTask
 	profile Profile
 	win     uintptr
+	started time.Time
+	noted   bool // the tray says "copying the selection..."
 }
+
+// copyingNoteAfter is how long a copy may take before the tray says so. Most
+// copies finish well within it, so a normal press shows no extra status.
+const copyingNoteAfter = 300 * time.Millisecond
 
 type extraHotkey struct {
 	profile int // index into conf.Profiles
@@ -649,7 +655,10 @@ func (a *app) abortTranslation() {
 	}
 	a.resetIdleTimer()
 	a.cancelTransientStatus()
-	a.capturing = nil
+	if a.capturing != nil {
+		a.capturing = nil
+		a.tray.SetStatus(a.readyTip) // do not leave "copying the selection..." behind
+	}
 }
 
 // tickTranslationStatus keeps the tooltip's elapsed seconds current.
@@ -680,11 +689,8 @@ func (a *app) startTranslation(index int) {
 	}
 	if a.beginCapture != nil {
 		if task := a.beginCapture(a.cb, win); task != nil {
-			a.capturing = &pendingCapture{task: task, profile: profile, win: win}
+			a.capturing = &pendingCapture{task: task, profile: profile, win: win, started: a.timeNow()}
 			a.stepCapture() // a copy that is already done goes on at once
-			if a.capturing != nil {
-				a.tray.SetStatus("Clipboard Translator - copying the selection...")
-			}
 			return
 		}
 	}
@@ -700,6 +706,10 @@ func (a *app) stepCapture() {
 	}
 	done, source, fromSelection, err := p.task.step()
 	if !done {
+		if !p.noted && a.timeNow().Sub(p.started) >= copyingNoteAfter {
+			p.noted = true
+			a.tray.SetStatus("Clipboard Translator - copying the selection...")
+		}
 		return
 	}
 	a.capturing = nil

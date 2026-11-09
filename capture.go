@@ -74,7 +74,8 @@ func (j *captureJob) focusLost() bool {
 	return j.ops.foreground != nil && j.ops.foreground() != j.win
 }
 
-// step does whatever can be done now. It never sleeps.
+// step does whatever can be done now. It never sleeps itself (opening a
+// clipboard another program holds may retry briefly, as every Read does).
 func (j *captureJob) step() (done bool, text string, fromSelection bool, err error) {
 	if !j.copying {
 		if !j.ops.modifiersUp() {
