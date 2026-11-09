@@ -1,0 +1,122 @@
+name: llama.cpp smoke test
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'setup.ps1'
+      - 'setup.sh'
+      - 'setup-macos.sh'
+      - 'server.go'
+      - 'models.go'
+      - 'main.go'
+      - 'proc_*.go'
+      - 'platform.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'llama_smoke_test.go'
+      - 'tools/bump_llama_pin.py'
+      - 'tools/print_model_pin.py'
+      - '.github/workflows/llama-smoke.yml'
+  pull_request:
+    paths:
+      - 'setup.ps1'
+      - 'setup.sh'
+      - 'setup-macos.sh'
+      - 'server.go'
+      - 'models.go'
+      - 'main.go'
+      - 'proc_*.go'
+      - 'platform.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'llama_smoke_test.go'
+      - 'tools/bump_llama_pin.py'
+      - 'tools/print_model_pin.py'
+      - '.github/workflows/llama-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Linux CPU smoke test (0.8B model)
+    if: github.event_name != 'schedule' || github.repository == 'ypsilonmeister/clipboard-translator'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev
+      - name: Read pinned llama.cpp release info
+        id: llama-info
+        run: python3 tools/bump_llama_pin.py --github-output linux-cpu >> "$GITHUB_OUTPUT"
+      - name: Download and extract pinned llama.cpp
+        env:
+          LLAMA_URL: ${{ steps.llama-info.outputs.url }}
+          LLAMA_SHA: ${{ steps.llama-info.outputs.sha256 }}
+        run: |
+          mkdir -p /tmp/llama-download /tmp/llama-extracted
+          curl -fL -o /tmp/llama-download/llama.tar.gz "$LLAMA_URL"
+          echo "$LLAMA_SHA  /tmp/llama-download/llama.tar.gz" | sha256sum --check --strict -
+          tar -xzf /tmp/llama-download/llama.tar.gz -C /tmp/llama-extracted
+          mapfile -t SERVERS < <(find /tmp/llama-extracted -type f -name llama-server)
+          if [ "${#SERVERS[@]}" -ne 1 ]; then
+            echo "expected exactly 1 llama-server binary, found ${#SERVERS[@]}: ${SERVERS[*]}" >&2
+            exit 1
+          fi
+          SERVER_BIN="${SERVERS[0]}"
+          chmod +x "$SERVER_BIN"
+          echo "SERVER_PATH=$SERVER_BIN" >> "$GITHUB_ENV"
+      - name: Read pinned model info
+        id: model-info
+        run: python3 tools/print_model_pin.py 0.8b --github-output >> "$GITHUB_OUTPUT"
+      - name: Cache model
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: /tmp/models/${{ steps.model-info.outputs.file }}
+          key: plamo-0.8b-${{ steps.model-info.outputs.sha256 }}
+      - name: Download model and template
+        env:
+          MODEL_FILE: ${{ steps.model-info.outputs.file }}
+          MODEL_URL: ${{ steps.model-info.outputs.url }}
+          MODEL_SHA: ${{ steps.model-info.outputs.sha256 }}
+          TEMPLATE_URL: ${{ steps.model-info.outputs.template_url }}
+          TEMPLATE_SHA: ${{ steps.model-info.outputs.template_sha256 }}
+        run: |
+          mkdir -p /tmp/models
+          MODEL_DEST="/tmp/models/$MODEL_FILE"
+          if [ ! -f "$MODEL_DEST" ]; then
+            echo "Downloading model from $MODEL_URL ..."
+            curl -fL -o "$MODEL_DEST.partial" "$MODEL_URL"
+            mv "$MODEL_DEST.partial" "$MODEL_DEST"
+          else
+            echo "Model found in cache: $MODEL_DEST"
+          fi
+          echo "$MODEL_SHA  $MODEL_DEST" | sha256sum --check --strict -
+
+          TEMPLATE_DEST="/tmp/models/chat_template.jinja"
+          echo "Downloading chat template from $TEMPLATE_URL ..."
+          curl -fL -o "$TEMPLATE_DEST.partial" "$TEMPLATE_URL"
+          mv "$TEMPLATE_DEST.partial" "$TEMPLATE_DEST"
+          echo "$TEMPLATE_SHA  $TEMPLATE_DEST" | sha256sum --check --strict -
+
+          echo "MODEL_PATH=$MODEL_DEST" >> "$GITHUB_ENV"
+          echo "TEMPLATE_PATH=$TEMPLATE_DEST" >> "$GITHUB_ENV"
+      - name: Run llama.cpp smoke test
+        env:
+          LLAMA_TAG: ${{ steps.llama-info.outputs.tag }}
+        run: |
+          echo "### llama.cpp Smoke Test" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Pinned llama.cpp tag:** \`$LLAMA_TAG\`" >> "$GITHUB_STEP_SUMMARY"
+          env CT_SMOKE_SERVER="$SERVER_PATH" \
+              CT_SMOKE_MODEL="$MODEL_PATH" \
+              CT_SMOKE_TEMPLATE="$TEMPLATE_PATH" \
+              go test -tags llamasmoke -run '^TestLlamaSmoke' -v -timeout 15m .

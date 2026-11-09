@@ -69,6 +69,25 @@ func serverEnv(base []string, key string) []string {
 	return append(env, "LLAMA_API_KEY="+key, "LLAMA_ARG_UI=0")
 }
 
+// serverArgs returns the command-line arguments for llama-server.
+func serverArgs(model, template string, contextTokens, port, gpuLayers int) []string {
+	return []string{
+		"-m", model,
+		"-c", fmt.Sprint(contextTokens),
+		"--host", "127.0.0.1",
+		"--port", fmt.Sprint(port),
+		"--alias", "plamo-3-translate",
+		"--chat-template-file", template,
+		"--no-prefill-assistant",
+		"-ngl", fmt.Sprint(gpuLayers),
+	}
+}
+
+// serverArgs returns the command-line arguments for this supervisor's server.
+func (s *supervisor) serverArgs(gpuLayers int) []string {
+	return serverArgs(s.model, s.template, s.contextTokens, s.port, gpuLayers)
+}
+
 // start launches binary and blocks until the server answers /health.
 func (s *supervisor) start(binary string, gpuLayers int, label string) error {
 	// Without the VC++ runtime every llama.cpp build dies at once with no output,
@@ -81,9 +100,7 @@ func (s *supervisor) start(binary string, gpuLayers int, label string) error {
 	if err != nil {
 		return fmt.Errorf("could not create a key for the translation server: %w", err)
 	}
-	args := []string{"-m", s.model, "-c", fmt.Sprint(s.contextTokens),
-		"--host", "127.0.0.1", "--port", fmt.Sprint(s.port), "--alias", "plamo-3-translate",
-		"--chat-template-file", s.template, "--no-prefill-assistant", "-ngl", fmt.Sprint(gpuLayers)}
+	args := s.serverArgs(gpuLayers)
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = filepath.Dir(binary)
 	cmd.Env = serverEnv(os.Environ(), key)

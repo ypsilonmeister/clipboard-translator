@@ -94,6 +94,9 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 | `platform.go`, `proc_*.go`, `data_*.go` | Per-OS facts: server binary name, hotkey limit, hiding the console, child-process lifetime, where data lives |
 | `psscript.go` | The PowerShell command lines that run `setup.ps1` / `install.ps1` and keep the failure prompt open |
 | `setup.ps1`, `install.ps1` | Downloads model + llama.cpp; the one-line installer. Must parse on Windows PowerShell 5.1 *and* PowerShell 7 |
+| `llama_smoke_test.go` | Real-binary smoke test (`//go:build llamasmoke`): starts `llama-server` through `supervisor` and tests translation with real model |
+| `tools/bump_llama_pin.py` | Bumps, checks, and inspects (`--show`) the pinned llama.cpp release tag and asset SHA-256 hashes across `setup.ps1`, `setup.sh` and `setup-macos.sh` |
+| `tools/print_model_pin.py` | Prints pinned model URLs and SHA-256 digests from `models.go` for workflow and scripts |
 | `bucket/clipboard-translator.json` | Scoop manifest (this repo is also the bucket) |
 | `tools/mksyso`, `tools/mkicon` | Generate `resource_windows_amd64.syso` (icon, version info, DPI manifest) and `assets/icon.*` |
 
@@ -130,6 +133,10 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
   page (Hugging Face, the pinned revision and SHA-256 only). The Settings page
   itself is a loopback-only server that exists while it is open. Keep it that
   way and keep the README's privacy section true if you add anything.
+- **Pinned llama.cpp release.** `setup.ps1`, `setup.sh` and `setup-macos.sh`
+  install a pinned llama.cpp release tag with verified SHA-256 digests for all
+  asset families (Windows CPU, CUDA+cudart, Vulkan; Linux CPU, Vulkan; macOS
+  ARM64, x64). Update them using `python3 tools/bump_llama_pin.py <tag>`.
 - **Don't commit large or third-party files**: `models/`, `runtime/`, `*.exe`,
   logs (all in `.gitignore`).
 
@@ -147,12 +154,31 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 - Windows-only code lives in `*_windows.go`; give any new one a
   `*_other.go` / `*_nonwindows.go` stub so the Linux CI job still builds.
 
+## Bumping llama.cpp
+
+The setup scripts install a fixed official llama.cpp release (release tag and
+asset SHA-256 hashes hard-coded in each script). To bump to a newer llama.cpp
+release:
+
+1. Run `python3 tools/bump_llama_pin.py <tag>` (queries GitHub API for that
+   release tag, verifies all required asset families and SHA-256 digests are
+   published, and rewrites the pin blocks across `setup.ps1`, `setup.sh`, and
+   `setup-macos.sh`).
+2. Run `python3 tools/bump_llama_pin.py --check` (or `go test ./...`) to ensure
+   all scripts agree and hashes match.
+3. Run the llama.cpp smoke workflow (`.github/workflows/llama-smoke.yml` via
+   `workflow_dispatch` on the branch, or let it run on the PR because the pin
+   files are in its paths) and verify it passes before merge.
+4. Review the diff.
+
 ## Release flow
 
 1. Merge to `main` through a PR (CI = `.github/workflows/ci.yml`: a Windows job
    (gofmt, vet, test, build, PowerShell parse check, version-info check), a Linux
    job (X11 tests under Xvfb, setup/package script checks, tarball) and a macOS
-   job (native smoke checks, setup fixtures, app bundle) on arm64 and Intel).
+   job (native smoke checks, setup fixtures, app bundle) on arm64 and Intel, plus
+   `.github/workflows/llama-smoke.yml` for real-binary smoke tests with pinned
+   llama-server and the 0.8B model).
 2. Tag `vX.Y.Z` (or `gh release create vX.Y.Z --target main`). `release.yml`
    builds `Portable-Clipboard-Translator-Windows-x64-vX.Y.Z.zip` (flat: exe,
    Setup.cmd, Start.cmd, Stop.cmd, setup.ps1, config.json, README.txt, LICENSE),

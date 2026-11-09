@@ -221,42 +221,29 @@ Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a'; digest = 'sha256:abc
 Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a'; digest = ('sha256:' + ('0' * 64)) }) $file } 'checksum mismatch'
 Assert-Hash ([pscustomobject]@{ name = 'a'; digest = ('sha256:' + $good.ToLower()) }) $file
 Assert-Hash ([pscustomobject]@{ name = 'a'; digest = ('sha256:' + $good.ToUpper()) }) $file
+Assert-Hash ([pscustomobject]@{ name = 'a'; sha256 = $good.ToLower() }) $file
+Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a'; sha256 = ('1' * 64) }) $file } 'checksum mismatch'
 Assert-FileSha256 $file $good.ToLower() 'a'
 Assert-Throws { Assert-FileSha256 $file ('1' * 64) 'a' } 'checksum mismatch'
 `)
 }
 
-func TestSetupFindLlamaRelease(t *testing.T) {
+func TestSetupGetLlamaRelease(t *testing.T) {
 	runSetupHarness(t, `
-function New-TestAsset([string]$name, [bool]$digest) {
-    $o = [ordered]@{ name = $name }
-    if ($digest) { $o.digest = 'sha256:' + ('a' * 64) }
-    [pscustomobject]$o
+$llama = Get-LlamaRelease
+Assert-That ($null -ne $llama -and $llama.Tag -match '^b[0-9]+$') 'pinned release has a tag like b12032'
+$assets = $llama.Assets
+Assert-That ($null -ne $assets) 'pinned release has assets'
+foreach ($key in @('cpu', 'cuda', 'cudart', 'vulkan')) {
+    $a = $assets[$key]
+    Assert-That ($null -ne $a) "$key asset exists"
+    Assert-That ($a.File -match '\.zip$') "$key asset is a zip"
+    Assert-That ($a.Sha256 -match '^[0-9a-fA-F]{64}$') "$key sha256 is 64 hex characters"
 }
-$noAssets = [pscustomobject]@{ tag_name = 'b4'; assets = $null }
-# newest usable-looking release publishes no digest for the CUDA runtime package
-$noDigest = [pscustomobject]@{ tag_name = 'b3'; assets = @(
-    (New-TestAsset 'llama-b3-bin-win-cpu-x64.zip' $true),
-    (New-TestAsset 'llama-b3-bin-win-cuda-12.4-x64.zip' $true),
-    (New-TestAsset 'cudart-llama-bin-win-cuda-12.4-x64.zip' $false)) }
-$good = [pscustomobject]@{ tag_name = 'b2'; assets = @(
-    (New-TestAsset 'llama-b2-bin-win-cpu-x64.zip' $true),
-    (New-TestAsset 'llama-b2-bin-win-cuda-12.4-x64.zip' $true),
-    (New-TestAsset 'cudart-llama-bin-win-cuda-12.4-x64.zip' $true),
-    (New-TestAsset 'llama-b2-bin-win-vulkan-x64.zip' $true)) }
-$vulkanOnly = [pscustomobject]@{ tag_name = 'b1'; assets = @((New-TestAsset 'llama-b1-bin-win-vulkan-x64.zip' $true)) }
-$all = @($noAssets, $noDigest, $good, $vulkanOnly)
-
-$f = Find-LlamaRelease $all 'cuda' $true
-Assert-That ($f.Release.tag_name -eq 'b2') 'a release without a digest for every needed asset is skipped'
-Assert-That ($null -ne $f.Cpu -and $null -ne $f.Gpu -and $null -ne $f.CudaDll) 'cuda selection has cpu, gpu and dll assets'
-$f = Find-LlamaRelease $all 'cpu' $true
-Assert-That ($f.Release.tag_name -eq 'b3' -and $null -eq $f.Gpu) 'cpu selection needs only the cpu asset'
-$f = Find-LlamaRelease $all 'vulkan' $false
-Assert-That ($f.Release.tag_name -eq 'b2' -and $null -eq $f.Cpu) 'the cpu asset is not required when cpu is installed'
-$f = Find-LlamaRelease @($noAssets, $noDigest, $vulkanOnly) 'vulkan' $false
-Assert-That ($f.Release.tag_name -eq 'b1') 'a vulkan-only release works when cpu is already installed'
-Assert-That ($null -eq (Find-LlamaRelease @($noDigest, $vulkanOnly) 'cuda' $false)) 'no usable release returns null'
+Assert-That ($assets['cpu'].File -match '^llama-.*-bin-win-cpu-x64\.zip$') 'cpu asset filename pattern'
+Assert-That ($assets['cuda'].File -match '^llama-.*-bin-win-cuda-12\.4-x64\.zip$') 'cuda asset filename pattern'
+Assert-That ($assets['cudart'].File -match '^cudart-llama.*-bin-win-cuda-12\.4-x64\.zip$') 'cudart asset filename pattern'
+Assert-That ($assets['vulkan'].File -match '^llama-.*-bin-win-vulkan-x64\.zip$') 'vulkan asset filename pattern'
 `)
 }
 

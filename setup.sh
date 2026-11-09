@@ -36,6 +36,8 @@ if not hasattr(tarfile, 'data_filter'):
 arch = {'x86_64': 'x64', 'aarch64': 'arm64'}.get(platform.machine())
 if not arch:
     sys.exit('Supported Linux architectures: x86_64 and aarch64.')
+if arch != 'x64':
+    sys.exit('Pre-built Linux binaries are currently pinned for x86_64.')
 
 # The models setup can install. Each file is pinned to one Hugging Face commit and one SHA-256
 # (the model and the chat template), as in setup.ps1; keep the values the same.
@@ -105,48 +107,46 @@ for name, minimum, sha256 in [(model['file'], model['minimum'], model['sha256'])
     if dest.stat().st_size < minimum:
         raise RuntimeError('Incomplete file; remove it and retry: ' + str(dest))
 
+# --- llama.cpp pinned release (managed by tools/bump_llama_pin.py) ---
+LLAMA_TAG = 'b12032'
+LLAMA_ASSETS = {
+    'cpu': {
+        'file': 'llama-b12032-bin-ubuntu-x64.tar.gz',
+        'sha256': '9f10432ca3f66ef003a7a540aaffb9da0acadaefd05404521b9ab7a2436af304',
+    },
+    'vulkan': {
+        'file': 'llama-b12032-bin-ubuntu-vulkan-x64.tar.gz',
+        'sha256': 'f75e7107f9450034c5467492c41e9ed91816e2d815fc4b802c6bd58de7d5b126',
+    },
+}
+# --- end llama.cpp pinned release ---
+
 needed = [b for b in dict.fromkeys(['cpu', backend]) if not (root / 'runtime' / b / 'llama-server').is_file()]
 if needed:
-    with fetch('https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30') as response:
-        releases = json.load(response)
-    chosen = None
-    for release in releases:
-        if release.get('draft') or release.get('prerelease'):
-            continue
-        assets = {}
-        for b in needed:
-            suffix = ('' if b == 'cpu' else '-vulkan') + '-' + arch
-            pattern = r'^llama-.*-bin-ubuntu' + re.escape(suffix) + r'\.tar\.gz$'
-            matches = [a for a in release.get('assets', []) if re.fullmatch(pattern, a['name'])]
-            if matches:
-                assets[b] = matches[0]
-        if len(assets) == len(needed):
-            chosen = (release['tag_name'], assets)
-            break
-    if not chosen:
-        raise RuntimeError('No official llama.cpp release with the requested Linux CPU/Vulkan assets found.')
-    tag, assets = chosen
-    print('Using official llama.cpp release ' + tag, flush=True)
-    for b, asset in assets.items():
-        digest = asset.get('digest') or ''
-        if not re.fullmatch(r'sha256:[0-9a-fA-F]{64}', digest):
-            raise RuntimeError('Missing SHA-256 for ' + asset['name'])
-        url = asset['browser_download_url']
-        if not url.startswith('https://github.com/ggml-org/llama.cpp/releases/download/'):
-            raise RuntimeError('Unexpected runtime download URL')
+    print('Using official llama.cpp release ' + LLAMA_TAG, flush=True)
+    base_url = 'https://github.com/ggml-org/llama.cpp/releases/download/' + LLAMA_TAG + '/'
+    for b in needed:
+        info = LLAMA_ASSETS.get(b)
+        if not info:
+            raise RuntimeError('No pinned asset for backend: ' + b)
+        file_name = info['file']
+        sha256 = info.get('sha256') or ''
+        if not re.fullmatch(r'[0-9a-fA-F]{64}', sha256):
+            raise RuntimeError('Missing SHA-256 for ' + file_name)
+        url = base_url + file_name
         # Stage all files before making the installation visible. A partial
         # download/extraction must never look like an installed backend.
         with tempfile.TemporaryDirectory(prefix='.setup-', dir=root / 'runtime') as tmp:
             tmp = Path(tmp)
             archive = tmp / 'llama.tar.gz'
-            download(url, archive, digest.split(':', 1)[1])
+            download(url, archive, sha256)
             unpacked = tmp / 'unpacked'
             unpacked.mkdir()
             with tarfile.open(archive, 'r:gz') as tar:
                 tar.extractall(unpacked, filter='data')
             servers = list(unpacked.rglob('llama-server'))
             if len(servers) != 1 or not servers[0].is_file():
-                raise RuntimeError('Expected one llama-server executable in ' + asset['name'])
+                raise RuntimeError('Expected one llama-server executable in ' + file_name)
             server = servers[0]
             server.chmod(server.stat().st_mode | 0o111)
             target = root / 'runtime' / b

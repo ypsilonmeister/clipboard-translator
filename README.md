@@ -50,10 +50,10 @@ irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/i
 
 The script downloads the latest release and verifies its SHA-256, installs it to
 `%LOCALAPPDATA%\ClipboardTranslator`, downloads the PLaMo model (over 1 GB) and a
-llama.cpp build (CUDA / Vulkan / CPU is chosen automatically; CPU is always
-installed as a fallback), adds a Start menu shortcut and an *Apps & features*
-entry, and starts the app. Read [`install.ps1`](install.ps1) first if you like;
-it is short.
+fixed llama.cpp build (verified against pinned SHA-256 hashes; CUDA / Vulkan / CPU
+is chosen automatically; CPU is always installed as a fallback), adds a Start menu
+shortcut and an *Apps & features* entry, and starts the app. Read [`install.ps1`](install.ps1)
+first if you like; it is short.
 
 - **Update:** run the same command again, or use *Check for updates* in the tray
   menu. The tray's *Update* runs the installer script from the release being
@@ -162,7 +162,7 @@ Accessibility access may need to be granted again after replacing a development 
 First-run setup requires Python with `tarfile.data_filter` (Python 3.12+, or a security-patched
 3.10/3.11; for example install Python with Homebrew). Start the app and accept the explicit
 download prompt. A responsive setup window offers Cancel; download details go to `setup.log`.
-The official llama.cpp macOS archive is verified against GitHub's SHA-256 and supports
+A fixed official llama.cpp macOS archive is verified against its pinned SHA-256 and supports
 both CPU and Metal. Metal is selected by default; CPU is available as a fallback/menu option.
 As on Windows and Linux, a fresh download of the model and the chat template is checked against pinned SHA-256 values; the size check only guards a file that is already on disk.
 
@@ -328,9 +328,10 @@ written to `translator.log`.
   llama-server to turn off its built-in Web UI (`LLAMA_ARG_UI=0`, read by
   current llama.cpp builds).
 - The app contacts the network only when you ask: the model and llama.cpp
-  download (`Setup.cmd`, `setup.ps1`, the first-run offer, the install script)
-  and *Check for updates* / *Update*. There is no telemetry and no background
-  check.
+  download (`Setup.cmd`, `setup.ps1`, the first-run offer, the install script;
+  both model and llama.cpp versions are pinned and verified against hard-coded
+  SHA-256 hashes) and *Check for updates* / *Update*. There is no telemetry and no
+  background check.
 - *Settings...* opens a page served by the app itself on `127.0.0.1` (a free port,
   only while the page is open; it closes a few minutes after the last request or
   with *Close this page*). It is protected by a random token in its address and
@@ -433,6 +434,9 @@ build" and never claims to be outdated). `setup.ps1` is embedded in the exe.
   that the PowerShell scripts parse. Linux builds/tests include native X11 desktop
   checks under Xvfb, setup fixture tests, and tarball packaging. macOS runs native
   tests/smoke checks and app packaging on Apple Silicon and Intel runners.
+- `.github/workflows/llama-smoke.yml` runs a weekly and PR/dispatch smoke test
+  that verifies real `llama-server` startup and translation against the pinned
+  Linux CPU build and the 0.8B model.
 - Pushing a tag such as `v0.6.0` runs `.github/workflows/release.yml`: it builds
   the exe with the tag as its version, packages
   `Portable-Clipboard-Translator-Windows-x64-<tag>.zip` and attaches it to the
