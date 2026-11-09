@@ -3,6 +3,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -58,13 +60,7 @@ func powershellExe(t *testing.T) string {
 // PowerShell 7 it would point Windows PowerShell 5.1 at modules it cannot load
 // (Get-FileHash and friends go missing).
 func psEnv() []string {
-	var env []string
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(strings.ToUpper(kv), "PSMODULEPATH=") {
-			env = append(env, kv)
-		}
-	}
-	return env
+	return cleanPowerShellEnv(os.Environ())
 }
 
 func runSetupHarness(t *testing.T, body string) {
@@ -88,26 +84,28 @@ func runSetupHarness(t *testing.T, body string) {
 }
 
 func TestSetupParsesOnBothPowerShells(t *testing.T) {
-	script, err := filepath.Abs("setup.ps1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	check := `$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:CT_SETUP_PS1, [ref]$null, [ref]$e); if ($e) { $e | Out-String; exit 1 }`
-	ran := 0
-	for _, name := range []string{"powershell.exe", "pwsh.exe"} {
-		exe, err := exec.LookPath(name)
+	check := `$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($env:CT_TARGET_PS1, [ref]$null, [ref]$e); if ($e) { $e | Out-String; exit 1 }`
+	for _, scriptName := range []string{"setup.ps1", "install.ps1"} {
+		script, err := filepath.Abs(scriptName)
 		if err != nil {
-			continue
+			t.Fatal(err)
 		}
-		ran++
-		cmd := exec.Command(exe, "-NoProfile", "-Command", check)
-		cmd.Env = append(psEnv(), "CT_SETUP_PS1="+script)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Errorf("%s cannot parse setup.ps1: %v\n%s", name, err, out)
+		ran := 0
+		for _, name := range []string{"powershell.exe", "pwsh.exe"} {
+			exe, err := exec.LookPath(name)
+			if err != nil {
+				continue
+			}
+			ran++
+			cmd := exec.Command(exe, "-NoProfile", "-Command", check)
+			cmd.Env = append(psEnv(), "CT_TARGET_PS1="+script)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("%s cannot parse %s: %v\n%s", name, scriptName, err, out)
+			}
 		}
-	}
-	if ran == 0 {
-		t.Skip("no PowerShell available")
+		if ran == 0 {
+			t.Skip("no PowerShell available")
+		}
 	}
 }
 
@@ -141,7 +139,7 @@ New-Zip $dllZip @{ 'cudart64_12.dll' = 'a'; 'cublas64_12.dll' = 'b'; 'cublasLt64
 New-Zip $emptyZip @{ 'readme.txt' = 'no dlls here' }
 function New-TestAsset([string]$name, [string]$zip, [string]$digest = 'auto') {
     $o = [ordered]@{ name = $name; browser_download_url = "https://example.invalid/$name" }
-    if ($digest -eq 'auto') { $o.digest = 'sha256:' + (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLower() }
+    if ($digest -eq 'auto') { $o.digest = 'sha256:' + (Get-FileSha256 $zip).ToLower() }
     elseif ($digest) { $o.digest = $digest }
     $global:zipFor[$o.browser_download_url] = $zip
     [pscustomobject]$o
@@ -214,7 +212,7 @@ func TestSetupAssertHashFailsClosed(t *testing.T) {
 	runSetupHarness(t, `
 $file = Join-Path $work 'a.bin'
 Set-Content -LiteralPath $file -Value 'hello'
-$good = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash
+$good = Get-FileSha256 $file
 Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a' }) $file } 'No SHA256 digest'
 Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a'; digest = $null }) $file } 'No SHA256 digest'
 Assert-Throws { Assert-Hash ([pscustomobject]@{ name = 'a'; digest = '' }) $file } 'No SHA256 digest'
@@ -486,5 +484,149 @@ func TestSetupWholeScriptWhenInstalled(t *testing.T) {
 	cmd.Env = psEnv()
 	if o, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(o), "incomplete") {
 		t.Errorf("a truncated model must be rejected: %v\n%s", err, o)
+	}
+}
+
+func TestGetFileSha256OnBothPowerShells(t *testing.T) {
+	dir := t.TempDir()
+	emptyPath := filepath.Join(dir, "empty.bin")
+	if err := os.WriteFile(emptyPath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	largeData := make([]byte, 1500000)
+	for i := range largeData {
+		largeData[i] = byte((i*31 + 7) % 256)
+	}
+	largePath := filepath.Join(dir, "large.bin")
+	if err := os.WriteFile(largePath, largeData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	emptySum := sha256.Sum256(nil)
+	wantEmpty := strings.ToUpper(hex.EncodeToString(emptySum[:]))
+	largeSum := sha256.Sum256(largeData)
+	wantLarge := strings.ToUpper(hex.EncodeToString(largeSum[:]))
+
+	psScript := `
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:CT_TARGET_PS1, [ref]$null, [ref]$null)
+$func = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-FileSha256' }, $true)
+if ($null -eq $func) { throw "Get-FileSha256 not found in $env:CT_TARGET_PS1" }
+. ([scriptblock]::Create($func.Extent.Text))
+Write-Output (Get-FileSha256 $env:CT_FILE_EMPTY)
+Write-Output (Get-FileSha256 $env:CT_FILE_LARGE)
+`
+	scripts := []string{"setup.ps1", "install.ps1"}
+	shells := []string{"powershell.exe", "pwsh.exe"}
+
+	for _, scriptName := range scripts {
+		scriptPath, err := filepath.Abs(scriptName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, sh := range shells {
+			exe, err := exec.LookPath(sh)
+			if err != nil {
+				continue
+			}
+			t.Run(scriptName+"/"+sh, func(t *testing.T) {
+				cmd := exec.Command(exe, "-NoProfile", "-Command", psScript)
+				cmd.Env = append(psEnv(),
+					"CT_TARGET_PS1="+scriptPath,
+					"CT_FILE_EMPTY="+emptyPath,
+					"CT_FILE_LARGE="+largePath,
+				)
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("%s failed: %v\n%s", sh, err, out)
+				}
+				lines := strings.Fields(string(out))
+				if len(lines) < 2 {
+					t.Fatalf("expected at least 2 output lines, got:\n%s", out)
+				}
+				if lines[0] != wantEmpty {
+					t.Errorf("empty file: got %q, want %q", lines[0], wantEmpty)
+				}
+				if lines[1] != wantLarge {
+					t.Errorf("large file: got %q, want %q", lines[1], wantLarge)
+				}
+			})
+		}
+	}
+
+	// Verify Get-FileSha256 survives even when powershell.exe runs under pwsh's contaminated PSModulePath.
+	if pwshExe, err := exec.LookPath("pwsh.exe"); err == nil {
+		if winPSExe, err := exec.LookPath("powershell.exe"); err == nil {
+			t.Run("powershell.exe with pwsh contaminated PSModulePath", func(t *testing.T) {
+				// Get pwsh's module path
+				cmdPwsh := exec.Command(pwshExe, "-NoProfile", "-Command", "Write-Output $env:PSModulePath")
+				outPwsh, err := cmdPwsh.Output()
+				if err != nil {
+					t.Fatalf("getting pwsh PSModulePath: %v", err)
+				}
+				pwshModPath := strings.TrimSpace(string(outPwsh))
+
+				setupPath, err := filepath.Abs("setup.ps1")
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				cmd := exec.Command(winPSExe, "-NoProfile", "-Command", psScript)
+				cmd.Env = append(cleanPowerShellEnv(os.Environ()),
+					"PSModulePath="+pwshModPath,
+					"CT_TARGET_PS1="+setupPath,
+					"CT_FILE_EMPTY="+emptyPath,
+					"CT_FILE_LARGE="+largePath,
+				)
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("Get-FileSha256 failed under contaminated PSModulePath: %v\n%s", err, out)
+				}
+				lines := strings.Fields(string(out))
+				if len(lines) < 2 {
+					t.Fatalf("expected at least 2 output lines, got:\n%s", out)
+				}
+				if lines[0] != wantEmpty || lines[1] != wantLarge {
+					t.Errorf("got %v, want [%s %s]", lines, wantEmpty, wantLarge)
+				}
+			})
+
+			t.Run("Get-CleanWindowsPowerShellModulePath from pwsh", func(t *testing.T) {
+				installPath, err := filepath.Abs("install.ps1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				testScript := `
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:CT_TARGET_PS1, [ref]$null, [ref]$null)
+$func = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-CleanWindowsPowerShellModulePath' }, $true)
+if ($null -eq $func) { throw 'Get-CleanWindowsPowerShellModulePath not found' }
+. ([scriptblock]::Create($func.Extent.Text))
+$clean = Get-CleanWindowsPowerShellModulePath
+Write-Output "CLEAN_PATH=$clean"
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = 'powershell.exe'
+$psi.Arguments = '-NoProfile -Command "(Get-Command Get-FileHash).Name"'
+$psi.UseShellExecute = $false
+$psi.RedirectStandardOutput = $true
+$psi.EnvironmentVariables['PSModulePath'] = $clean
+$p = [System.Diagnostics.Process]::Start($psi)
+$out = $p.StandardOutput.ReadToEnd().Trim()
+$p.WaitForExit()
+Write-Output "CHILD_RESULT=$out"
+`
+				cmd := exec.Command(pwshExe, "-NoProfile", "-Command", testScript)
+				cmd.Env = append(os.Environ(), "CT_TARGET_PS1="+installPath)
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("clean module path test failed: %v\n%s", err, out)
+				}
+				outStr := string(out)
+				if !strings.Contains(outStr, "CHILD_RESULT=Get-FileHash") {
+					t.Errorf("child powershell.exe did not find Get-FileHash with clean PSModulePath:\n%s", outStr)
+				}
+				if strings.Contains(outStr, "PowerShell\\7") {
+					t.Errorf("clean PSModulePath must not contain PowerShell 7:\n%s", outStr)
+				}
+			})
+		}
 	}
 }

@@ -75,8 +75,21 @@ function Download-File([string]$url, [string]$dest, [string]$sha256 = '') {
     }
 }
 
+function Get-FileSha256([string]$file) {
+    $fullPath = if (Test-Path -LiteralPath $file) { (Convert-Path -LiteralPath $file) } else { $file }
+    $hasher = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($fullPath)
+    try {
+        $hashBytes = $hasher.ComputeHash($stream)
+        return [System.BitConverter]::ToString($hashBytes).Replace('-', '')
+    } finally {
+        $stream.Dispose()
+        $hasher.Dispose()
+    }
+}
+
 function Assert-FileSha256([string]$file, [string]$expected, [string]$label) {
-    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash
+    $actual = Get-FileSha256 $file
     if ($actual -ne $expected) { throw "SHA256 checksum mismatch for $label (expected $expected, got $actual)" }
 }
 
