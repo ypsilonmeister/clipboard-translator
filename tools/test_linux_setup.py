@@ -17,17 +17,6 @@ from unittest import mock
 SOURCE = (Path(__file__).resolve().parents[1] / "setup.sh").read_text()
 
 
-# Scale only the fixture catalog's minimum sizes; NTFS truncate is not sparse.
-def fixture_program(source, filename):
-    source = source.replace('minimum=400 * 1024**2', 'minimum=400')
-    source = source.replace('minimum=1024**3', 'minimum=1024')
-    source = source.replace('minimum=4 * 1024**3', 'minimum=4096')
-    return compile(source.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0], filename, "exec")
-
-
-PROGRAM = fixture_program(SOURCE, "setup.sh:python")
-
-
 def runtime_archive(unsafe=False):
     out = io.BytesIO()
     with tarfile.open(fileobj=out, mode="w:gz") as tar:
@@ -41,6 +30,23 @@ def runtime_archive(unsafe=False):
     return out.getvalue()
 
 
+FIXTURE_ARCHIVE = runtime_archive()
+FIXTURE_SHA256 = hashlib.sha256(FIXTURE_ARCHIVE).hexdigest()
+
+
+# Scale only the fixture catalog's minimum sizes; NTFS truncate is not sparse.
+def fixture_program(source, filename, archive_sha256=FIXTURE_SHA256):
+    source = source.replace('minimum=400 * 1024**2', 'minimum=400')
+    source = source.replace('minimum=1024**3', 'minimum=1024')
+    source = source.replace('minimum=4 * 1024**3', 'minimum=4096')
+    if archive_sha256:
+        source = re.sub(r"'sha256': '[0-9a-fA-F]{64}'", f"'sha256': '{archive_sha256}'", source)
+    return compile(source.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0], filename, "exec")
+
+
+PROGRAM = fixture_program(SOURCE, "setup.sh:python")
+
+
 class SetupTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -52,17 +58,13 @@ class SetupTests(unittest.TestCase):
             f.truncate(1024)
         (self.root / "models/chat_template.jinja").write_text("x" * 101)
         (self.root / "config.json").write_text(json.dumps({"hotkey": "Ctrl+Alt+T", "future_key": {"keep": True}}))
-        self.archive = runtime_archive()
-        self.digest = "sha256:" + hashlib.sha256(self.archive).hexdigest()
+        self.archive = FIXTURE_ARCHIVE
         self.calls = []
 
     def response(self, request, timeout):
         url = request.full_url
         self.calls.append(url)
-        if url.endswith("releases?per_page=30"):
-            assets = [{"name": f"llama-test-bin-ubuntu{suffix}-x64.tar.gz", "digest": self.digest, "browser_download_url": "https://github.com/ggml-org/llama.cpp/releases/download/test/" + backend} for backend, suffix in [("cpu", ""), ("vulkan", "-vulkan")]]
-            return io.BytesIO(json.dumps([{"tag_name": "test", "assets": assets}]).encode())
-        if url.startswith("https://github.com/ggml-org/llama.cpp/releases/download/test/"):
+        if url.startswith("https://github.com/ggml-org/llama.cpp/releases/download/"):
             return io.BytesIO(self.archive)
         if url.startswith("https://huggingface.co/pfnet/") and self.model_bytes is not None:
             return io.BytesIO(self.model_bytes)
@@ -73,9 +75,10 @@ class SetupTests(unittest.TestCase):
     default_backend = "cpu"
     alternate_backend = "vulkan"
 
-    def run_setup(self, backend=None, *model):
+    def run_setup(self, backend=None, *model, prog=None):
+        program = prog or PROGRAM
         with mock.patch("sys.argv", ["setup", str(self.root), backend or self.default_backend, model[0] if model else "", "true" if backend else "false"]), mock.patch("platform.machine", return_value="x86_64"), mock.patch("urllib.request.urlopen", side_effect=self.response), contextlib.redirect_stdout(io.StringIO()):
-            exec(PROGRAM, {"__name__": "__main__"})
+            exec(program, {"__name__": "__main__"})
 
     def test_cpu_vulkan_config_and_symlinks(self):
         self.run_setup("vulkan")
@@ -240,22 +243,23 @@ class SetupTests(unittest.TestCase):
                     self.assertIn(value, text, f"{script} lacks {value} ({key})")
 
     def test_missing_digest_is_rejected(self):
-        self.digest = None
+        prog = fixture_program(re.sub(r"'sha256': '[0-9a-fA-F]{64}'", "'sha256': ''", SOURCE), "setup.sh:python", archive_sha256=None)
         with self.assertRaisesRegex(RuntimeError, "Missing SHA-256"):
-            self.run_setup()
+            self.run_setup(prog=prog)
         self.assertFalse((self.root / "runtime/cpu").exists())
 
     def test_checksum_mismatch_is_rejected(self):
-        self.digest = "sha256:" + "0" * 64
+        self.archive = b"corrupted bytes"
         with self.assertRaisesRegex(RuntimeError, "SHA-256 mismatch"):
             self.run_setup()
         self.assertFalse((self.root / "runtime/cpu").exists())
 
     def test_unsafe_archive_is_rejected(self):
-        self.archive = runtime_archive(unsafe=True)
-        self.digest = "sha256:" + hashlib.sha256(self.archive).hexdigest()
+        unsafe = runtime_archive(unsafe=True)
+        self.archive = unsafe
+        prog = fixture_program(SOURCE, "setup.sh:python", archive_sha256=hashlib.sha256(unsafe).hexdigest())
         with self.assertRaises(tarfile.FilterError):
-            self.run_setup()
+            self.run_setup(prog=prog)
         self.assertFalse((self.root / "runtime/cpu").exists())
         self.assertEqual(list(self.root.rglob("escaped")), [])
 

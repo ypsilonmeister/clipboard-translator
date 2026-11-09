@@ -99,9 +99,9 @@ function Get-AssetSha256($asset) {
     return $null
 }
 
-# Fails closed: an asset without a published SHA-256 is never installed.
+# Fails closed: an asset without a pinned or published SHA-256 is never installed.
 function Assert-Hash($asset, [string]$file) {
-    $expected = Get-AssetSha256 $asset
+    $expected = if ($null -ne $asset.PSObject.Properties['sha256'] -and $asset.sha256) { $asset.sha256 } else { Get-AssetSha256 $asset }
     if ($null -eq $expected) { throw "No SHA256 digest is published for $($asset.name); refusing to install an unverified download." }
     Assert-FileSha256 $file $expected $asset.name
 }
@@ -121,7 +121,8 @@ function Test-BackendComplete([string]$name, [string]$dir) {
 function Add-AssetFiles($asset, [string]$tmp, [string]$stage, [bool]$onlyDlls) {
     $id = [guid]::NewGuid().ToString('N')
     $zip = Join-Path $tmp "$id.zip"
-    Download-File $asset.browser_download_url $zip
+    $url = if ($null -ne $asset.PSObject.Properties['url'] -and $asset.url) { $asset.url } else { $asset.browser_download_url }
+    Download-File $url $zip
     Assert-Hash $asset $zip
     $unpacked = Join-Path $tmp $id
     Expand-Archive -Path $zip -DestinationPath $unpacked
@@ -163,32 +164,31 @@ function Install-Backend([string]$runtimeDir, [string]$name, $serverAsset, $dllA
     }
 }
 
-# /releases/latest points at stable tags that may NOT contain Windows binaries.
-# Use recent official releases, select one with a matching Windows CPU asset (when
-# $needCpu) and the requested GPU asset. Do not construct or guess download filenames.
-# Only releases whose assets publish a SHA-256 digest qualify; returns $null if there is none.
-function Find-LlamaRelease($releases, [string]$backend, [bool]$needCpu) {
-    foreach ($release in $releases) {
-        if ($null -eq $release.assets) { continue }
-        $cpu = $null
-        $gpu = $null
-        $dll = $null
-        if ($needCpu) {
-            $cpu = $release.assets | Where-Object { $_.name -match '^llama-.*-bin-win-cpu-x64\.zip$' -and $null -ne (Get-AssetSha256 $_) } | Select-Object -First 1
-            if ($null -eq $cpu) { continue }
+# --- llama.cpp pinned release (managed by tools/bump_llama_pin.py) ---
+function Get-LlamaRelease {
+    return [ordered]@{
+        Tag = 'b12032'
+        Assets = [ordered]@{
+            'cpu' = [ordered]@{
+                File   = 'llama-b12032-bin-win-cpu-x64.zip'
+                Sha256 = '5296f5d18bb7d422c7c26f4bb9bc796d9d4f41e1312a8c296cff475bdc60d0d4'
+            }
+            'cuda' = [ordered]@{
+                File   = 'llama-b12032-bin-win-cuda-12.4-x64.zip'
+                Sha256 = '36c7e24ad048cceabf00c1b49d0f0411b954c6a410a7ff4300af8721a94fd00a'
+            }
+            'cudart' = [ordered]@{
+                File   = 'cudart-llama-bin-win-cuda-12.4-x64.zip'
+                Sha256 = '8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6'
+            }
+            'vulkan' = [ordered]@{
+                File   = 'llama-b12032-bin-win-vulkan-x64.zip'
+                Sha256 = '19a8bbf269fa683ae7bc04f886c9c2a93e0655c2606f37d2b60069bf9e8bcc32'
+            }
         }
-        if ($backend -eq 'cuda') {
-            $gpu = $release.assets | Where-Object { $_.name -match '^llama-.*-bin-win-cuda-12\.4-x64\.zip$' -and $null -ne (Get-AssetSha256 $_) } | Select-Object -First 1
-            $dll = $release.assets | Where-Object { $_.name -match '^cudart-llama.*-bin-win-cuda-12\.4-x64\.zip$' -and $null -ne (Get-AssetSha256 $_) } | Select-Object -First 1
-            if ($null -eq $gpu -or $null -eq $dll) { continue }
-        } elseif ($backend -eq 'vulkan') {
-            $gpu = $release.assets | Where-Object { $_.name -match '^llama-.*-bin-win-vulkan-x64\.zip$' -and $null -ne (Get-AssetSha256 $_) } | Select-Object -First 1
-            if ($null -eq $gpu) { continue }
-        }
-        return [pscustomobject]@{ Release = $release; Cpu = $cpu; Gpu = $gpu; CudaDll = $dll }
     }
-    return $null
 }
+# --- end llama.cpp pinned release ---
 
 # --- config.json -----------------------------------------------------------------------
 
@@ -291,20 +291,28 @@ $needCpu = -not $completeAtStart['cpu']
 $needGpu = ($Backend -ne 'cpu') -and -not $completeAtStart[$Backend]
 $installedBackend = $Backend
 if (-not $needCpu -and -not $needGpu) {
-    # Nothing to download: skip the GitHub query so an offline or rate-limited run still succeeds.
+    # Nothing to download: skip downloading so an offline run still succeeds.
     Write-Host "llama.cpp is already installed (cpu$(if ($Backend -ne 'cpu') { ", $Backend" }))."
 } else {
-    Write-Host 'Discovering official llama.cpp Windows builds...'
-    $releases = @(Invoke-RestMethod -Uri 'https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30' -Headers @{ 'User-Agent' = 'PortableClipboardTranslator/0.3.2'; 'Accept' = 'application/vnd.github+json' })
-    $found = Find-LlamaRelease $releases $Backend $needCpu
-    if ($null -eq $found) {
-        throw 'No matching official llama.cpp build (with a published SHA256 digest) found in 30 recent GitHub releases. See https://github.com/ggml-org/llama.cpp/releases'
+    $llama = Get-LlamaRelease
+    $tag = $llama.Tag
+    Write-Host "Installing pinned llama.cpp release: $tag"
+    $baseUrl = "https://github.com/ggml-org/llama.cpp/releases/download/$tag"
+    function New-PinnedAsset($entry) {
+        return [pscustomobject]@{
+            name   = $entry.File
+            url    = "$baseUrl/$($entry.File)"
+            sha256 = $entry.Sha256
+        }
     }
-    Write-Host "Selected llama.cpp release: $($found.Release.tag_name)"
-    if ($needCpu) { Install-Backend $runtime 'cpu' $found.Cpu $null }
+    if ($needCpu) {
+        Install-Backend $runtime 'cpu' (New-PinnedAsset $llama.Assets['cpu']) $null
+    }
     if ($needGpu) {
+        $gpuAsset = New-PinnedAsset $llama.Assets[$Backend]
+        $dllAsset = if ($Backend -eq 'cuda') { New-PinnedAsset $llama.Assets['cudart'] } else { $null }
         try {
-            Install-Backend $runtime $Backend $found.Gpu $found.CudaDll
+            Install-Backend $runtime $Backend $gpuAsset $dllAsset
         } catch {
             Write-Warning "Could not install ${Backend}: $($_.Exception.Message)"
             Write-Warning 'Using CPU fallback instead. Run Setup.cmd later to retry GPU installation.'

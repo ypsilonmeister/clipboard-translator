@@ -49,8 +49,8 @@ irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/i
 ```
 
 スクリプトは、最新のリリースをダウンロードして SHA-256 を確認し、
-`%LOCALAPPDATA%\ClipboardTranslator` に入れます。続けて PLaMo のモデル(1 GB 超)と llama.cpp
-(CUDA / Vulkan / CPU は自動で選びます。CPU 版は予備として必ず入ります)をダウンロードし、
+`%LOCALAPPDATA%\ClipboardTranslator` に入れます。続けて PLaMo のモデル(1 GB 超)と固定バージョンの llama.cpp
+(ピン留めされた SHA-256 と照合; CUDA / Vulkan / CPU は自動で選びます。CPU 版は予備として必ず入ります)をダウンロードし、
 スタートメニューのショートカットと「設定 > アプリ」の項目を作って、アプリを起動します。
 短いスクリプトなので、実行前に [`install.ps1`](install.ps1) を読んでもかまいません。
 
@@ -154,7 +154,7 @@ CI は Apple Silicon（`arm64`）と Intel（`amd64`）用に、それぞれ
 初回セットアップには `tarfile.data_filter` が使える Python（3.12 以降、またはセキュリティ更新済みの
 3.10／3.11）が必要です。例えば Homebrew で Python を導入してください。
 アプリを開き、ダウンロードの確認に同意すると、キャンセル可能なセットアップウィンドウを表示します。
-詳細は `setup.log` に記録します。公式 llama.cpp アーカイブは GitHub 公開の SHA-256 と照合し、
+詳細は `setup.log` に記録します。固定された公式 llama.cpp アーカイブをピン留めされた SHA-256 と照合し、
 標準で Metal を使用します。同じランタイムを CPU としても利用でき、メニューから切り替えられます。
 モデルとチャットテンプレートは、Windows／Linux と同様に、新しくダウンロードしたものを固定した SHA-256 と照合します(サイズの確認は、すでにディスクにあるファイルを守るためだけです)。
 
@@ -310,7 +310,7 @@ CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け�
   (状態確認用の `/health` はキーなしでも応答します)。llama-server に組み込みの Web UI も無効にするよう指定しています
   (`LLAMA_ARG_UI=0`。現在の llama.cpp のビルドが読み取ります)。
 - アプリがネットワークに接続するのは、操作したときだけです。モデルと llama.cpp のダウンロード
-  (`Setup.cmd`、`setup.ps1`、初回起動時の提案、インストールスクリプト)と、「Check for updates」「Update」です。
+  (`Setup.cmd`、`setup.ps1`、初回起動時の提案、インストールスクリプト。モデルと llama.cpp はどちらも固定バージョンをダウンロードし、ピン留めされた SHA-256 と照合します)と、「Check for updates」「Update」です。
   テレメトリーも、バックグラウンドでの確認もありません。
 - 「Settings...」は、アプリ自身が `127.0.0.1` で提供するページを開きます(空いているポートで、ページを開いている間だけ。
   最後のアクセスから数分後か、「Close this page」で閉じます)。アドレスに含まれるランダムなトークンで保護され、
@@ -405,6 +405,8 @@ go run ./tools/mksyso -version 0.5.1     # アイコン + assets/app.manifest + 
   `go vet`、`go test`、リリース用のフラグでのビルドを行い、PowerShell の構文も確認します。
   Linux では Xvfb 上の X11 デスクトップ機能、セットアップのフィクスチャテスト、tarball 作成も検証します。
   macOS は Apple Silicon／Intel の両方でネイティブテストとアプリの作成を行います。
+- `.github/workflows/llama-smoke.yml` は、週次および PR/手動実行で、固定された Linux CPU 向け `llama-server` と
+  0.8B モデルを用いて実際の起動と翻訳を検証するスモークテストを実行します。
 - `v0.6.0` のようなタグを push すると、`.github/workflows/release.yml` が動きます。タグをバージョンとして
   exe をビルドし、`Portable-Clipboard-Translator-Windows-x64-<タグ>.zip` にまとめて、GitHub のリリースに
   添付します。Ubuntu 24.04 で作成した Linux amd64 用 tarball と SHA-256 ファイルも添付します。

@@ -155,3 +155,31 @@ func TestStartServerWithoutVCRuntime(t *testing.T) {
 		t.Error("no server may be started")
 	}
 }
+
+func TestServerArgs(t *testing.T) {
+	s := &supervisor{
+		model:         "models/test.gguf",
+		template:      "models/test.jinja",
+		contextTokens: 2048,
+		port:          18119,
+	}
+	args := s.serverArgs(0)
+	want := []string{
+		"-m", "models/test.gguf",
+		"-c", "2048",
+		"--host", "127.0.0.1",
+		"--port", "18119",
+		"--alias", "plamo-3-translate",
+		"--chat-template-file", "models/test.jinja",
+		"--no-prefill-assistant",
+		"-ngl", "0",
+	}
+	if len(args) != len(want) {
+		t.Fatalf("got %d args, want %d", len(args), len(want))
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Errorf("arg[%d] = %q, want %q", i, args[i], want[i])
+		}
+	}
+}

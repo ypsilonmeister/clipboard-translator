@@ -103,30 +103,41 @@ for name, minimum, sha256 in [(model['file'], model['minimum'], model['sha256'])
     if dest.stat().st_size < minimum:
         raise RuntimeError('Incomplete file; remove it and retry: ' + str(dest))
 
+# --- llama.cpp pinned release (managed by tools/bump_llama_pin.py) ---
+LLAMA_TAG = 'b12032'
+LLAMA_ASSETS = {
+    'arm64': {
+        'file': 'llama-b12032-bin-macos-arm64.tar.gz',
+        'sha256': '00468fe833eb000b78a748122f5921b6c7b07dc82331a8d0c68196c69cb26382',
+    },
+    'x64': {
+        'file': 'llama-b12032-bin-macos-x64.tar.gz',
+        'sha256': '291d99f3b6f45f67f73afe5381540f29928840a1a14d9c19d6595bd649a035fc',
+    },
+}
+# --- end llama.cpp pinned release ---
+
 target = root / 'runtime/cpu'
 if not (target / 'llama-server').is_file():
-    with fetch('https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=30') as response:
-        releases = json.load(response)
-    asset = next((a for r in releases if not r.get('draft') and not r.get('prerelease') for a in r.get('assets', []) if re.fullmatch(r'llama-.*-bin-macos-' + arch + r'\.tar\.gz', a['name'])), None)
-    if not asset:
+    info = LLAMA_ASSETS.get(arch)
+    if not info:
         raise RuntimeError('No matching official llama.cpp macOS runtime found.')
-    digest = asset.get('digest') or ''
-    if not re.fullmatch(r'sha256:[0-9a-fA-F]{64}', digest):
-        raise RuntimeError('Missing SHA-256 for ' + asset['name'])
-    url = asset['browser_download_url']
-    if not url.startswith('https://github.com/ggml-org/llama.cpp/releases/download/'):
-        raise RuntimeError('Unexpected runtime download URL')
+    file_name = info['file']
+    sha256 = info.get('sha256') or ''
+    if not re.fullmatch(r'[0-9a-fA-F]{64}', sha256):
+        raise RuntimeError('Missing SHA-256 for ' + file_name)
+    url = 'https://github.com/ggml-org/llama.cpp/releases/download/' + LLAMA_TAG + '/' + file_name
     with tempfile.TemporaryDirectory(prefix='.setup-', dir=root / 'runtime') as tmp:
         tmp = Path(tmp)
         archive = tmp / 'llama.tar.gz'
-        download(url, archive, digest.split(':', 1)[1])
+        download(url, archive, sha256)
         unpacked = tmp / 'unpacked'
         unpacked.mkdir()
         with tarfile.open(archive, 'r:gz') as tar:
             tar.extractall(unpacked, filter='data')
         servers = list(unpacked.rglob('llama-server'))
         if len(servers) != 1 or not servers[0].is_file():
-            raise RuntimeError('Expected one llama-server executable in ' + asset['name'])
+            raise RuntimeError('Expected one llama-server executable in ' + file_name)
         server = servers[0]
         server.chmod(server.stat().st_mode | 0o111)
         staged = tmp / 'backend'
