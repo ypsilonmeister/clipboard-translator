@@ -29,12 +29,16 @@ var modelCatalog = []modelEntry{
 		Sha256:         "73a1d942d8ab1e654d83898d997b8b4808c32ba669b378df612230989d18f079",
 		TemplateSha256: "084af862c7844bdca74e8dca5516fde1f446919e00650ee4d8fae5b193fd064e",
 		SizeLabel:      "0.6 GB", MinBytes: 400 << 20, Bytes: 573125952},
+	// Revision checked 2026-11-09, outputs identical to the previous pin on 46
+	// requests. Upstream template changes: no longer defaults target_lang to ja
+	// when omitted and no longer special-cases ja(easy); the app always sends
+	// target_lang so it is unaffected.
 	{Key: "2b", Name: "PLaMo 3 Translate 2B", Note: "The default.",
 		File: "plamo-3-translate-2b-Q4_K_M.gguf", Repo: "plamo-3-translate-2b-GGUF",
-		Revision:       "232fbd7916519edecddfdae0beae7e76fe70453f",
-		Sha256:         "f36d0813dd95573a852ab5d76e374c543632d9e292929e922bcdbf7e53b494e0",
-		TemplateSha256: "18dcc169548d794897084a04cd150a5a633717f1eb6e62de4a0e0973b377e02a",
-		SizeLabel:      "1.8 GB", MinBytes: 1 << 30, Bytes: 1807199392},
+		Revision:       "228a27cc0bb4f111219963848d50a3127c16ca73",
+		Sha256:         "1ffd9073afcc70e35ccc942428aa2b73d7aa2b9ea779bf504b775369e0276c13",
+		TemplateSha256: "ad7eb87b161c6792be070d777a9f9da50c9e57a77e1fa5cca3a24b91b6bdb9e9",
+		SizeLabel:      "1.8 GB", MinBytes: 1 << 30, Bytes: 1807203040},
 	{Key: "8b", Name: "PLaMo 3 Translate 8B", Note: "The largest on offer: needs more disk space, memory and time.",
 		File: "plamo-3-translate-8b-Q4_K_M.gguf", Repo: "plamo-3-translate-8b-GGUF",
 		Revision:       "407c15bc44f6968e6734bc047d92f766c163bbec",
