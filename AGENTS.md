@@ -43,9 +43,13 @@ with `tarfile.data_filter`. Native integration tests run on a disposable Xvfb
 display by default, not on a desktop someone is working at:
 
 ```bash
-env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 CT_TEST_X11=1 xvfb-run -a go test -tags x11test -run '^TestX11' -timeout 60s .
+env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 CT_TEST_X11=1 xvfb-run -a go test -tags x11test -run '^TestX11' -timeout 60s .
 python3 tools/test_linux_setup.py
 ```
+
+`GDK_BACKEND=x11` matters on a machine that also runs a Wayland session (Ubuntu
+26.04 has only Wayland): without it GTK may pick the Wayland socket in
+`XDG_RUNTIME_DIR` and `TestX11Desktop` fails with "could not initialize GTK 3".
 
 `CGO_ENABLED=0` builds only the portable logic/stubs on Linux. Wayland is
 explicitly rejected at runtime. `desktop_linux.go` / `native_linux.c` own the
