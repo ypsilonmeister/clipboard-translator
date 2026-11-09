@@ -82,15 +82,18 @@ static void test_key(unsigned long sym, int down) {
     XSync(d, False);
 }
 static Display *conflict_display;
-static void test_conflict(int enable) {
+static void test_conflict_key(unsigned long sym, unsigned int mods, int enable) {
     if (enable) {
-        conflict_display = XOpenDisplay(NULL);
-        XGrabKey(conflict_display, XKeysymToKeycode(conflict_display, XK_e), ControlMask | Mod1Mask, DefaultRootWindow(conflict_display), False, GrabModeAsync, GrabModeAsync);
+        if (!conflict_display) conflict_display = XOpenDisplay(NULL);
+        XGrabKey(conflict_display, XKeysymToKeycode(conflict_display, sym), mods, DefaultRootWindow(conflict_display), False, GrabModeAsync, GrabModeAsync);
         XSync(conflict_display, False);
     } else if (conflict_display) {
         XCloseDisplay(conflict_display);
         conflict_display = NULL;
     }
+}
+static void test_conflict(int enable) {
+    test_conflict_key(XK_e, ControlMask | Mod1Mask, enable);
 }
 static void test_menu_click(int id) {
     // Use a real GtkMenuItem activation to exercise the native command queue.
@@ -117,3 +120,6 @@ func x11TestTextB() string             { return C.GoString(C.test_text_b()) }
 func x11TestKey(key uint64, down bool) { C.test_key(C.ulong(key), C.int(boolInt(down))) }
 func x11TestMenuClick(id int)          { C.test_menu_click(C.int(id)) }
 func x11TestConflict(enable bool)      { C.test_conflict(C.int(boolInt(enable))) }
+func x11TestConflictKey(key uint64, mods uint32, enable bool) {
+	C.test_conflict_key(C.ulong(key), C.uint(mods), C.int(boolInt(enable)))
+}

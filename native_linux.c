@@ -8,10 +8,20 @@
 #include <X11/XKBlib.h>
 #include <X11/extensions/XTest.h>
 
+#define MAX_HOTKEYS 8
+
+typedef struct {
+    int id;               // 1..MAX_HOTKEYS (0 means unused)
+    unsigned int mods;    // normalized modifiers
+    KeyCode keycode;      // X11 keycode
+    int key_down;         // 1 if currently held down
+    int fired;            // 1 if pressed and waiting for check
+} HotkeyGrab;
+
 static Display *display;
-static unsigned int grab_mods, num_mask;
-static KeyCode grab_key;
-static int key_down, fired, grab_error;
+static HotkeyGrab grabs[MAX_HOTKEYS];
+static unsigned int num_mask, scroll_mask;
+static int grab_error;
 static GtkStatusIcon *status_icon;
 static GtkWidget *current_menu, *control_window, *status_label;
 static int menu_requested;
@@ -29,68 +39,200 @@ int ct_init(void) {
     return display != NULL;
 }
 
+static void update_lock_masks(void) {
+    num_mask = 0;
+    scroll_mask = 0;
+    KeyCode num = XKeysymToKeycode(display, XK_Num_Lock);
+    KeyCode scroll = XKeysymToKeycode(display, XK_Scroll_Lock);
+    XModifierKeymap *map = XGetModifierMapping(display);
+    if (map) {
+        for (int m = 0; m < 8; m++) {
+            for (int k = 0; k < map->max_keypermod; k++) {
+                KeyCode code = map->modifiermap[m * map->max_keypermod + k];
+                if (num && code == num) num_mask |= 1U << m;
+                if (scroll && code == scroll) scroll_mask |= 1U << m;
+            }
+        }
+        XFreeModifiermap(map);
+    }
+}
+
+static int get_lock_variants(unsigned int *variants, int max_variants) {
+    unsigned int masks[3];
+    int mask_count = 0;
+    masks[mask_count++] = LockMask;
+    if (num_mask && num_mask != LockMask) {
+        masks[mask_count++] = num_mask;
+    }
+    if (scroll_mask && scroll_mask != LockMask && scroll_mask != num_mask) {
+        masks[mask_count++] = scroll_mask;
+    }
+
+    int total = 1 << mask_count;
+    if (total > max_variants) total = max_variants;
+
+    for (int i = 0; i < total; i++) {
+        unsigned int var = 0;
+        for (int m = 0; m < mask_count; m++) {
+            if (i & (1 << m)) {
+                var |= masks[m];
+            }
+        }
+        variants[i] = var;
+    }
+    return total;
+}
+
 static int grab_error_handler(Display *d, XErrorEvent *e) {
     grab_error = e->error_code;
     return 0;
 }
 
-static void grab_variants(int grab) {
-    unsigned int locks[] = {0, LockMask, num_mask, LockMask | num_mask};
-    for (int i = 0; i < 4; i++) {
-        if (grab) XGrabKey(display, grab_key, grab_mods | locks[i], DefaultRootWindow(display), False, GrabModeAsync, GrabModeAsync);
-        else XUngrabKey(display, grab_key, grab_mods | locks[i], DefaultRootWindow(display));
+int ct_keysym_to_keycode(unsigned long keysym) {
+    if (!ct_init()) return 0;
+    return (int)XKeysymToKeycode(display, (KeySym)keysym);
+}
+
+void ct_hotkey_ungrab(int id) {
+    if (!display || !id) return;
+    for (int i = 0; i < MAX_HOTKEYS; i++) {
+        if (grabs[i].id == id) {
+            unsigned int variants[8];
+            int nvar = get_lock_variants(variants, 8);
+            for (int v = 0; v < nvar; v++) {
+                XUngrabKey(display, grabs[i].keycode, grabs[i].mods | variants[v], DefaultRootWindow(display));
+            }
+            XSync(display, False);
+            grabs[i].id = 0;
+            grabs[i].keycode = 0;
+            grabs[i].mods = 0;
+            grabs[i].key_down = 0;
+            grabs[i].fired = 0;
+            break;
+        }
     }
 }
 
 void ct_ungrab(void) {
-    if (!display || !grab_key) return;
-    grab_variants(0);
-    XSync(display, False);
-    grab_key = 0;
-    key_down = fired = 0;
-    // Discard events for the old binding before registering its replacement.
+    if (!display) return;
+    for (int i = 0; i < MAX_HOTKEYS; i++) {
+        if (grabs[i].id) {
+            ct_hotkey_ungrab(grabs[i].id);
+        }
+    }
     while (XPending(display)) { XEvent e; XNextEvent(display, &e); }
+}
+
+int ct_hotkey_grab(int id, unsigned int mods, unsigned int keycode) {
+    if (!ct_init()) return 0;
+    if (!keycode || !id) return 0;
+    update_lock_masks();
+
+    int slot = -1;
+    for (int i = 0; i < MAX_HOTKEYS; i++) {
+        if (grabs[i].id == id) {
+            ct_hotkey_ungrab(id);
+        }
+        if (grabs[i].id && grabs[i].keycode == (KeyCode)keycode && grabs[i].mods == mods) {
+            return -2; // duplicate
+        }
+        if (!grabs[i].id && slot < 0) {
+            slot = i;
+        }
+    }
+    if (slot < 0) return -1; // table full
+
+    Bool supported;
+    XkbSetDetectableAutoRepeat(display, True, &supported);
+    XSync(display, False);
+
+    unsigned int variants[8];
+    int nvar = get_lock_variants(variants, 8);
+
+    int (*previous)(Display *, XErrorEvent *) = XSetErrorHandler(grab_error_handler);
+    grab_error = 0;
+    int grabbed = 0;
+    for (int i = 0; i < nvar; i++) {
+        XGrabKey(display, (KeyCode)keycode, mods | variants[i], DefaultRootWindow(display), False, GrabModeAsync, GrabModeAsync);
+        grabbed++;
+    }
+    XSync(display, False);
+    if (grab_error) {
+        for (int i = 0; i < grabbed; i++) {
+            XUngrabKey(display, (KeyCode)keycode, mods | variants[i], DefaultRootWindow(display));
+        }
+        XSync(display, False);
+        XSetErrorHandler(previous);
+        return 0;
+    }
+    XSetErrorHandler(previous);
+
+    grabs[slot].id = id;
+    grabs[slot].mods = mods;
+    grabs[slot].keycode = (KeyCode)keycode;
+    grabs[slot].key_down = 0;
+    grabs[slot].fired = 0;
+    return 1;
 }
 
 int ct_grab(unsigned int mods, unsigned long key) {
     if (!ct_init()) return 0;
     ct_ungrab();
-    grab_mods = mods;
-    grab_key = XKeysymToKeycode(display, key);
-    if (!grab_key) return 0;
-    num_mask = 0;
-    KeyCode num = XKeysymToKeycode(display, XK_Num_Lock);
-    XModifierKeymap *map = XGetModifierMapping(display);
-    if (map) {
-        for (int m = 0; m < 8; m++)
-            for (int k = 0; k < map->max_keypermod; k++)
-                if (map->modifiermap[m * map->max_keypermod + k] == num) num_mask |= 1U << m;
-        XFreeModifiermap(map);
-    }
-    Bool supported;
-    XkbSetDetectableAutoRepeat(display, True, &supported);
-    XSync(display, False);
-    int (*previous)(Display *, XErrorEvent *) = XSetErrorHandler(grab_error_handler);
-    grab_error = 0;
-    grab_variants(1);
-    XSync(display, False);
-    if (grab_error) { grab_variants(0); XSync(display, False); grab_key = 0; }
-    XSetErrorHandler(previous);
-    return grab_error == 0;
+    KeyCode kc = XKeysymToKeycode(display, (KeySym)key);
+    if (!kc) return 0;
+    return ct_hotkey_grab(1, mods, kc) == 1;
 }
 
-int ct_hotkey(void) {
-    if (!display) return 0;
+void ct_hotkey_pump(void) {
+    if (!display) return;
     while (XPending(display)) {
         XEvent e;
         XNextEvent(display, &e);
-        if (e.xkey.keycode != grab_key) continue;
-        if (e.type == KeyPress && !key_down) { fired = 1; key_down = 1; }
-        if (e.type == KeyRelease) key_down = 0;
+        if (e.type == MappingNotify) {
+            XRefreshKeyboardMapping(&e.xmapping);
+            update_lock_masks();
+            continue;
+        }
+        if (e.type != KeyPress && e.type != KeyRelease) continue;
+        unsigned int state_clean = e.xkey.state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask);
+        for (int i = 0; i < MAX_HOTKEYS; i++) {
+            if (!grabs[i].id) continue;
+            if (grabs[i].keycode != e.xkey.keycode) continue;
+            if (e.type == KeyPress) {
+                if (grabs[i].mods == state_clean) {
+                    if (!grabs[i].key_down) {
+                        grabs[i].fired = 1;
+                        grabs[i].key_down = 1;
+                    }
+                }
+            } else if (e.type == KeyRelease) {
+                grabs[i].key_down = 0;
+            }
+        }
     }
-    int result = fired;
-    fired = 0;
-    return result;
+}
+
+int ct_hotkey_check(int id) {
+    if (!id) return 0;
+    for (int i = 0; i < MAX_HOTKEYS; i++) {
+        if (grabs[i].id == id) {
+            int result = grabs[i].fired;
+            grabs[i].fired = 0;
+            return result;
+        }
+    }
+    return 0;
+}
+
+int ct_hotkey(void) {
+    ct_hotkey_pump();
+    for (int i = 0; i < MAX_HOTKEYS; i++) {
+        if (grabs[i].id && grabs[i].fired) {
+            grabs[i].fired = 0;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 unsigned long ct_focus(void) {

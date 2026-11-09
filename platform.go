@@ -41,8 +41,10 @@ func setupScriptName() string {
 	return "setup.ps1"
 }
 
+const maxHotkeys = 8
+
 // maxWindowsHotkeys is the size of the Windows hotkey id pool (hotkey_windows.go).
-const maxWindowsHotkeys = 8
+const maxWindowsHotkeys = maxHotkeys
 
 // hotkeyLimit is how many hotkeys one run can register. Windows keeps one
 // RegisterHotKey id per hotkey; the X11 and macOS code holds a single grab, so

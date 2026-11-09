@@ -3,6 +3,11 @@
 #include <stdint.h>
 int ct_init(void);
 void ct_pump(void);
+int ct_keysym_to_keycode(unsigned long keysym);
+int ct_hotkey_grab(int id, unsigned int mods, unsigned int keycode);
+void ct_hotkey_ungrab(int id);
+void ct_hotkey_pump(void);
+int ct_hotkey_check(int id);
 int ct_grab(unsigned int mods, unsigned long key);
 void ct_ungrab(void);
 int ct_hotkey(void);

@@ -56,20 +56,62 @@ type Hotkey interface {
 	Pressed() (bool, error)
 	Close() error
 }
-type linuxHotkey struct{}
+
+type linuxHotkey struct {
+	id     int
+	spec   string
+	closed bool
+}
+
+var x11Registry = newHotkeyRegistry(maxHotkeys)
 
 func newHotkey(spec string) (Hotkey, error) {
-	mods, key, err := parseX11Hotkey(spec)
+	if err := platformRuntimeError(); err != nil {
+		return nil, err
+	}
+	rawMods, keysym, err := parseX11Hotkey(spec)
 	if err != nil {
 		return nil, err
 	}
-	if C.ct_grab(C.uint(mods), C.ulong(key)) == 0 {
+	keycode := uint32(C.ct_keysym_to_keycode(C.ulong(keysym)))
+	if keycode == 0 {
+		return nil, fmt.Errorf("unsupported key %q: no keycode on X11 display", spec)
+	}
+	normMods := normalizeX11Modifiers(rawMods)
+
+	id, err := x11Registry.Register(spec, keycode, rawMods)
+	if err != nil {
+		return nil, err
+	}
+
+	res := C.ct_hotkey_grab(C.int(id), C.uint(normMods), C.uint(keycode))
+	if res <= 0 {
+		x11Registry.Unregister(id)
+		if res == -2 {
+			return nil, fmt.Errorf("hotkey %s is already registered", spec)
+		}
 		return nil, fmt.Errorf("could not grab %s on X11 (already used by another app?)", spec)
 	}
-	return &linuxHotkey{}, nil
+	return &linuxHotkey{id: id, spec: spec}, nil
 }
-func (*linuxHotkey) Pressed() (bool, error) { return pumpMessages(), nil }
-func (*linuxHotkey) Close() error           { C.ct_ungrab(); return nil }
+
+func (h *linuxHotkey) Pressed() (bool, error) {
+	if h.closed {
+		return false, nil
+	}
+	pumpMessages()
+	return C.ct_hotkey_check(C.int(h.id)) != 0, nil
+}
+
+func (h *linuxHotkey) Close() error {
+	if h.closed {
+		return nil
+	}
+	h.closed = true
+	x11Registry.Unregister(h.id)
+	C.ct_hotkey_ungrab(C.int(h.id))
+	return nil
+}
 
 func foregroundWindow() uintptr { return uintptr(C.ct_focus()) }
 func waitModifiersReleased(max time.Duration) bool {
@@ -195,6 +237,7 @@ func linuxMenu(items []MenuItem) unsafe.Pointer {
 }
 func pumpMessages() bool {
 	C.ct_pump()
+	C.ct_hotkey_pump()
 	if t := activeLinuxTray; t != nil {
 		for id := int(C.ct_command()); id != 0; id = int(C.ct_command()) {
 			switch id {
@@ -219,7 +262,7 @@ func pumpMessages() bool {
 		items = append(items, MenuItem{Separator: true}, MenuItem{ID: 3, Label: "Start at login", Checked: linuxAutostartEnabled()}, MenuItem{ID: 1, Label: "Open log"}, MenuItem{ID: 2, Label: "Quit"})
 		C.ct_menu_popup(linuxMenu(items))
 	}
-	return C.ct_hotkey() != 0
+	return false
 }
 func dialog(msg string, question, isError bool) bool {
 	answer := false
