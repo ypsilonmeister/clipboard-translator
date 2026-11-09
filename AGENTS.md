@@ -39,13 +39,17 @@ go build -trimpath -buildvcs=false -ldflags "-H=windowsgui -s -w" -o ClipboardTr
 
 Linux: install `libgtk-3-dev libx11-dev libxtst-dev pkg-config`, then run
 `go test ./...` and `bash tools/package-linux.sh dev`. `setup.sh` needs Python
-with `tarfile.data_filter`. Native integration tests require a disposable Xvfb
-display, never the user's desktop:
+with `tarfile.data_filter`. Native integration tests run on a disposable Xvfb
+display by default, not on a desktop someone is working at:
 
 ```bash
-env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 CT_TEST_X11=1 xvfb-run -a go test -tags x11test -run '^TestX11' -timeout 60s .
+env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 CT_TEST_X11=1 xvfb-run -a go test -tags x11test -run '^TestX11' -timeout 60s .
 python3 tools/test_linux_setup.py
 ```
+
+`GDK_BACKEND=x11` matters on a machine that also runs a Wayland session (Ubuntu
+26.04 has only Wayland): without it GTK may pick the Wayland socket in
+`XDG_RUNTIME_DIR` and `TestX11Desktop` fails with "could not initialize GTK 3".
 
 `CGO_ENABLED=0` builds only the portable logic/stubs on Linux. Wayland is
 explicitly rejected at runtime. `desktop_linux.go` / `native_linux.c` own the
@@ -150,7 +154,12 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
   only reach loopback (`downloadTransport` is set in `TestMain`).
 - Behaviour that needs a real desktop (live hotkey, real selection, Ctrl+V into
   another app, the look of the tray menu) is not covered by `go test`. Say so
-  when you could not check it; never inject keystrokes into the user's desktop.
+  when you could not check it. Do not inject keystrokes into, or take screenshots
+  of, a desktop someone is working at. A machine or VM the maintainer has set up
+  for testing (for example a Linux VM reached over SSH) is fair game for real
+  checks, including key injection and screenshots, as is any desktop the
+  maintainer explicitly points you at; use it for this project only, leave
+  nothing running afterwards, and say which machine you used.
 - Windows-only code lives in `*_windows.go`; give any new one a
   `*_other.go` / `*_nonwindows.go` stub so the Linux CI job still builds.
 
