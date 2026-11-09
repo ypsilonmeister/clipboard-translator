@@ -882,3 +882,207 @@ func TestCaptureFailureDisarmsTransientTimer(t *testing.T) {
 		t.Fatalf("transient timer fired after capture failure: status = %q", tray.status)
 	}
 }
+
+func TestHandleResultBilingualOutput(t *testing.T) {
+	a, tray, cb, pastes, _ := uxApp(t)
+	a.conf.NotifyOnComplete = true
+
+	// Original text with trailing CRLF
+	original := "Hello world\r\n"
+	translated := "こんにちは世界"
+	cb.text = original
+	g := pending(a)
+
+	a.handleResult(result{
+		original:      original,
+		translated:    translated,
+		generation:    g,
+		direction:     translationDirection{"en", "ja"},
+		window:        100,
+		fromSelection: true,
+		output:        OutputBilingual,
+	})
+
+	wantClipboard := "Hello world\nこんにちは世界"
+	if cb.text != wantClipboard {
+		t.Fatalf("clipboard = %q, want %q", cb.text, wantClipboard)
+	}
+
+	// History must store Source and Translated separately (plain translation, not bilingual)
+	items := a.hist.Items()
+	if len(items) != 1 {
+		t.Fatalf("history length = %d, want 1", len(items))
+	}
+	if items[0].Source != original || items[0].Translated != translated {
+		t.Fatalf("history entry = %+v, want Source=%q Translated=%q", items[0], original, translated)
+	}
+
+	if a.translating {
+		t.Fatal("translating flag must be cleared")
+	}
+	if *pastes != 0 {
+		t.Fatal("auto-paste is off and must not paste")
+	}
+
+	// Notifications must stay free of source and translated text
+	for _, text := range []string{tray.lastTitle(), tray.lastNote(), tray.status} {
+		if strings.Contains(text, "Hello") {
+			t.Errorf("text %q contains source text", text)
+		}
+		if strings.Contains(text, "こんにちは") {
+			t.Errorf("text %q contains translated text", text)
+		}
+	}
+}
+
+func TestHandleResultBilingualReplaceIfUnchanged(t *testing.T) {
+	a, tray, cb, _, _ := uxApp(t)
+	original := "Hello"
+	translated := "こんにちは"
+
+	// User changed clipboard text while translation was running
+	cb.text = "user copied new text"
+	g := pending(a)
+
+	a.handleResult(result{
+		original:      original,
+		translated:    translated,
+		generation:    g,
+		direction:     translationDirection{"en", "ja"},
+		window:        100,
+		fromSelection: true,
+		output:        OutputBilingual,
+	})
+
+	if cb.text != "user copied new text" {
+		t.Fatalf("clipboard was modified: %q", cb.text)
+	}
+	if !strings.Contains(tray.lastNote(), "clipboard changed while translating") {
+		t.Fatalf("notification should mention clipboard changed: %q", tray.lastNote())
+	}
+	for _, text := range []string{tray.lastTitle(), tray.lastNote()} {
+		if strings.Contains(text, original) || strings.Contains(text, translated) {
+			t.Errorf("notification %q leaked source or translated text", text)
+		}
+	}
+}
+
+func TestHandleResultBilingualTranslationUnchanged(t *testing.T) {
+	a, tray, cb, _, _ := uxApp(t)
+	original := "Same text"
+	cb.text = original
+	g := pending(a)
+
+	a.handleResult(result{
+		original:      original,
+		translated:    original, // model returned unchanged text
+		generation:    g,
+		direction:     translationDirection{"en", "ja"},
+		window:        100,
+		fromSelection: true,
+		output:        OutputBilingual,
+	})
+
+	if cb.text != original {
+		t.Fatalf("clipboard changed when translation was identical: %q", cb.text)
+	}
+	if !strings.Contains(tray.status, "translation is the same as the source") {
+		t.Fatalf("status should note translation is unchanged: %q", tray.status)
+	}
+}
+
+func TestHandleResultBilingualTargetOnly(t *testing.T) {
+	a, _, cb, _, _ := uxApp(t)
+	original := "Good morning\n"
+	translated := "좋은 아침"
+	cb.text = original
+	g := pending(a)
+
+	a.handleResult(result{
+		original:      original,
+		translated:    translated,
+		generation:    g,
+		direction:     translationDirection{Target: "ko"},
+		window:        100,
+		fromSelection: true,
+		output:        OutputBilingual,
+	})
+
+	want := "Good morning\n좋은 아침"
+	if cb.text != want {
+		t.Fatalf("target-only bilingual clipboard = %q, want %q", cb.text, want)
+	}
+}
+
+func TestHandleResultMultipleProfilesDifferentModes(t *testing.T) {
+	a, _, cb, _, _ := uxApp(t)
+
+	// Result from profile 0 (replace mode)
+	cb.text = "Hello\r\n"
+	g := pending(a)
+	a.handleResult(result{
+		original:      "Hello\r\n",
+		translated:    "こんにちは",
+		generation:    g,
+		direction:     translationDirection{"en", "ja"},
+		window:        100,
+		fromSelection: true,
+		output:        OutputReplace,
+	})
+	if cb.text != "こんにちは" {
+		t.Fatalf("replace mode clipboard = %q, want %q", cb.text, "こんにちは")
+	}
+
+	// Result from profile 1 (bilingual mode)
+	cb.text = "Good night\r\n"
+	g = pending(a)
+	a.handleResult(result{
+		original:      "Good night\r\n",
+		translated:    "おやすみ",
+		generation:    g,
+		direction:     translationDirection{"en", "ja"},
+		window:        100,
+		fromSelection: true,
+		output:        OutputBilingual,
+	})
+	wantBilingual := "Good night\nおやすみ"
+	if cb.text != wantBilingual {
+		t.Fatalf("bilingual mode clipboard = %q, want %q", cb.text, wantBilingual)
+	}
+}
+
+func TestHandleResultBilingualAutoPaste(t *testing.T) {
+	a, tray, cb, pastes, _ := uxApp(t)
+	a.conf.AutoPaste = true
+
+	original := "Select and translate\r\n"
+	translated := "選択して翻訳"
+	cb.text = original
+	g := pending(a)
+
+	a.handleResult(result{
+		original:      original,
+		translated:    translated,
+		generation:    g,
+		direction:     translationDirection{"en", "ja"},
+		window:        100,
+		fromSelection: true,
+		output:        OutputBilingual,
+	})
+
+	wantClipboard := "Select and translate\n選択して翻訳"
+	if cb.text != wantClipboard {
+		t.Fatalf("clipboard = %q, want %q", cb.text, wantClipboard)
+	}
+	if *pastes != 1 {
+		t.Fatalf("auto-paste should paste under matching window, pastes = %d", *pastes)
+	}
+	if !strings.Contains(tray.status, "translation pasted") {
+		t.Fatalf("status = %q, want translation pasted", tray.status)
+	}
+	for _, text := range []string{tray.lastTitle(), tray.lastNote(), tray.status} {
+		if strings.Contains(text, "Select") || strings.Contains(text, "選択") {
+			t.Errorf("status/note %q leaked source or translated text", text)
+		}
+	}
+}

@@ -42,6 +42,7 @@ func TestLoadConfigProfiles(t *testing.T) {
 		{"bad target", `{"profiles": [{"hotkey": "Ctrl+Alt+E", "target": "xx"}]}`, `"xx"`},
 		{"bad pair", `{"profiles": [{"hotkey": "Ctrl+Alt+E", "languages": ["en","de"]}]}`, "same script"},
 		{"bad hotkey", `{"profiles": [{"hotkey": "E", "target": "ko"}]}`, "profiles[0]"},
+		{"bad output", `{"profiles": [{"hotkey": "Ctrl+Alt+E", "target": "ko", "output": "invalid"}]}`, "not supported"},
 		{"same key twice", `{"profiles": [{"hotkey": "Ctrl+Alt+E", "target": "ko"}, {"hotkey": "alt+control+e", "target": "de"}]}`, "same key combination"},
 	}
 	for _, tc := range bad {
@@ -240,6 +241,49 @@ func TestEachProfileTranslatesWithItsOwnLanguages(t *testing.T) {
 	}
 	if _, has := got[1]["source_lang"]; has || got[1]["target_lang"] != "ko" {
 		t.Errorf("profile 1 (target ko): %v", got[1])
+	}
+}
+
+func TestEachProfileTranslatesWithItsOwnOutputMode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": "こんにちは"}}}})
+	}))
+	defer srv.Close()
+
+	a := profilesApp(t,
+		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Output: OutputReplace},
+		Profile{Hotkey: "Ctrl+Alt+B", Languages: []string{"ja", "en"}, Output: OutputBilingual})
+	a.endpoint = srv.URL
+	a.foreground = func() uintptr { return 1 }
+	a.paste = func(uintptr) error { return nil }
+
+	// Profile 0 (replace mode)
+	a.cb = &testClipboard{text: "Hello\r\n"}
+	a.capture = func(Clipboard, uintptr) (string, bool, error) { return "Hello\r\n", true, nil }
+	a.startTranslation(0)
+	select {
+	case res := <-a.results:
+		a.handleResult(res)
+	case <-time.After(5 * time.Second):
+		t.Fatal("profile 0: no result")
+	}
+	if a.cb.(*testClipboard).text != "こんにちは" {
+		t.Fatalf("profile 0 clipboard = %q, want plain translation", a.cb.(*testClipboard).text)
+	}
+
+	// Profile 1 (bilingual mode)
+	a.cb = &testClipboard{text: "Hello\r\n"}
+	a.capture = func(Clipboard, uintptr) (string, bool, error) { return "Hello\r\n", true, nil }
+	a.startTranslation(1)
+	select {
+	case res := <-a.results:
+		a.handleResult(res)
+	case <-time.After(5 * time.Second):
+		t.Fatal("profile 1: no result")
+	}
+	wantBilingual := "Hello\nこんにちは"
+	if a.cb.(*testClipboard).text != wantBilingual {
+		t.Fatalf("profile 1 clipboard = %q, want %q", a.cb.(*testClipboard).text, wantBilingual)
 	}
 }
 

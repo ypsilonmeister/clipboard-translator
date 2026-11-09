@@ -335,7 +335,7 @@ CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け�
 | `auto_paste` | `true` で翻訳後に Ctrl+V を自動入力(初期値は `false`) |
 | `notify_on_complete` | `true` で自動貼り付けしない翻訳の完了時に、テキストは表示せずクリップボードに準備できたことをトレイ通知(初期値は `false`) |
 | `languages` | 双方向に翻訳する 2 つの言語コード。例: `["ja", "en"]`(初期値)、`["en", "ko"]`、`["ja", "zh-hans"]`。コードはモデルのものです: `ja en ko zh-hans zh-hant ru th ar de fr es ...`(全 53 言語。[モデルカード](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)を見てください)。翻訳の向きはテキストの文字種から決めるため、2 つの言語は別の文字を使うものにしてください(en ↔ de は今のところ拒否されます)。主な用途は日本語 ↔ 英語で、ほかの言語はベストエフォートです。 |
-| `profiles` | ホットキーごとに言語を割り当てます。例: `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko"}]`。各プロファイルには `languages`(ペア。双方向)か `target`(常にその言語へ翻訳。原文の言語はモデルが判定するので、どの言語でも使えます。`en` と `de` のように文字が同じペアは、`target` のプロファイルを1つずつ作ってください)のどちらか一方を書きます。`hotkey` と `languages` の代わりになり、トレイメニューが編集するのは先頭のプロファイルです。Windows と Linux では最大 8 個。macOS では今のところ最初の 1 個だけ登録し、有効にならなかったものは通知で知らせます。他のプログラムが使っているホットキーは、そのプロファイルだけが無効になります。 |
+| `profiles` | ホットキーごとに言語を割り当てます。例: `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "bilingual"}]`。各プロファイルには `languages`(ペア。双方向)か `target`(常にその言語へ翻訳。原文の言語はモデルが判定するので、どの言語でも使えます。`en` と `de` のように文字が同じペアは、`target` のプロファイルを1つずつ作ってください)のどちらか一方を書きます。また、出力形式として `output` を指定できます: `"replace"`(デフォルト。省略時もこれ)は翻訳文のみをクリップボードに入れます。`"bilingual"` は原文、改行、翻訳文の順でクリップボードに入れます(`<source>\n<translated>`。原文末尾の改行文字 CR/LF は取り除いてから 1 つの改行 `\n` を付加します)。翻訳履歴には原文と翻訳文が個別に保持され、「Recent translations」メニューからは翻訳文のみがコピーされます。`hotkey` と `languages` の代わりになり、トレイメニューが編集するのは先頭のプロファイルです。Windows と Linux では最大 8 個。macOS では今のところ最初の 1 個だけ登録し、有効にならなかったものは通知で知らせます。他のプログラムが使っているホットキーは、そのプロファイルだけが無効になります。 |
 | `port` | ローカルの llama-server のポート(1024〜65534。アプリは `port + 1` も多重起動の防止に使います) |
 | `max_chars` | これより長いテキストは翻訳しません |
 | `idle_unload_minutes` | アイドル時にモデルをアンロードするまでの分数。0〜1440、初期値 `0` は無効。設定ページでも変更できます。 |
@@ -356,7 +356,7 @@ CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け�
 トレイメニューの「Settings...」で、ブラウザに開きます(提供のしかたは「プライバシーとネットワーク」を見てください)。
 次の設定ができます。
 
-- **ホットキー**(キーと、言語のペアまたは翻訳先の言語の組。`config.json` の `profiles`)、**自動貼り付け**、**完了通知**(`notify_on_complete`)、
+- **ホットキー**(キー、言語のペアまたは翻訳先の言語、および**出力形式**(「Replace with the translation」/「Keep the original, then the translation」)。`config.json` の `profiles`)、**自動貼り付け**、**完了通知**(`notify_on_complete`)、
   **翻訳する文字数の上限**(`max_chars`)。これらは「Save」で反映されます。
 - **翻訳モデル**: 「Download」で、まだ持っていないサイズを取得します(進捗表示と「Cancel」つき。31B は選べません)。
   「Use this model」で、導入済みのモデルへ切り替えます。切り替えでは `llama-server` を起動し直すので、少し時間が

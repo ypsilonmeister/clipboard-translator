@@ -334,3 +334,79 @@ func TestHotkeyDuplicateDetection(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileOutputConfig(t *testing.T) {
+	// Legacy config without profiles defaults to replace.
+	c, err := loadConfig(writeConfig(t, `{"hotkey": "Ctrl+Alt+E"}`))
+	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Output != OutputReplace {
+		t.Fatalf("legacy config output: %+v, %v", c.Profiles, err)
+	}
+
+	// Profile with output omitted defaults to replace.
+	c, err = loadConfig(writeConfig(t, `{"profiles": [{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}]}`))
+	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Output != OutputReplace {
+		t.Fatalf("omitted output: %+v, %v", c.Profiles, err)
+	}
+
+	// Explicit replace and bilingual modes with case/whitespace normalization.
+	c, err = loadConfig(writeConfig(t, `{"profiles": [
+		{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"], "output": " Replace "},
+		{"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "BILINGUAL"}
+	]}`))
+	if err != nil || len(c.Profiles) != 2 {
+		t.Fatalf("explicit output modes: %+v, %v", c.Profiles, err)
+	}
+	if c.Profiles[0].Output != OutputReplace {
+		t.Errorf("profile 0 output = %q, want %q", c.Profiles[0].Output, OutputReplace)
+	}
+	if c.Profiles[1].Output != OutputBilingual {
+		t.Errorf("profile 1 output = %q, want %q", c.Profiles[1].Output, OutputBilingual)
+	}
+
+	// Unknown output value rejected with helpful error listing valid values.
+	err = loadConfig2(t, `{"profiles": [{"hotkey": "Ctrl+Alt+E", "target": "ko", "output": "invalid_mode"}]}`)
+	if err == nil {
+		t.Fatal("unknown output mode must be rejected")
+	}
+	for _, want := range []string{"profiles[0]", "invalid_mode", "replace", "bilingual"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should contain %q", err.Error(), want)
+		}
+	}
+}
+
+func TestUpdateConfigFilePreservesUnknownKeysWithProfileOutput(t *testing.T) {
+	dir := writeConfig(t, `{
+  "custom_unknown_key": "custom_value",
+  "port": 18119,
+  "profiles": [
+    {
+      "hotkey": "Ctrl+Alt+E",
+      "languages": ["ja", "en"],
+      "output": "replace"
+    }
+  ]
+}
+`)
+	newProfiles := []Profile{
+		{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Output: OutputBilingual},
+	}
+	if err := updateConfigFile(dir, map[string]any{"profiles": newProfiles}); err != nil {
+		t.Fatalf("updateConfigFile: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+	if !strings.Contains(content, `"custom_unknown_key": "custom_value"`) {
+		t.Fatalf("unknown key lost: %s", content)
+	}
+	if !strings.Contains(content, `"output":"bilingual"`) {
+		t.Fatalf("bilingual output not saved: %s", content)
+	}
+	loaded, err := loadConfig(dir)
+	if err != nil || len(loaded.Profiles) != 1 || loaded.Profiles[0].Output != OutputBilingual {
+		t.Fatalf("loaded config: %+v, %v", loaded, err)
+	}
+}

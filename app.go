@@ -720,11 +720,12 @@ func (a *app) startTranslation(index int) {
 	}
 	log.Printf("translating %s -> %s", from, direction.Target)
 	a.tray.SetStatus("Clipboard Translator - translating... (0s)")
+	outputMode := profile.outputMode()
 	go func() {
 		translated, err := translate(ctx, a.endpoint, key, source, direction, a.conf.MaxTokens)
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
-			direction: direction, window: win, fromSelection: fromSelection}:
+			direction: direction, window: win, fromSelection: fromSelection, output: outputMode}:
 		default:
 		}
 	}()
@@ -759,7 +760,11 @@ func (a *app) handleResult(res result) {
 	// A sequence number is not a reliable test for a text change:
 	// apps can update clipboard formats without changing the text.
 	// Compare text AND replace under a single OpenClipboard lock.
-	applied, err := applyTranslation(a.cb, res.original, res.translated)
+	replacement := res.translated
+	if res.output == OutputBilingual {
+		replacement = formatBilingual(res.original, res.translated)
+	}
+	applied, err := applyTranslation(a.cb, res.original, replacement)
 	if err != nil {
 		log.Printf("clipboard check/write failed: %v", err)
 		a.tray.SetStatus(a.readyTip)

@@ -9,8 +9,8 @@ working on the code.
 A tray app for Windows x64, with experimental Linux X11 and macOS support. The
 user selects text, presses a hotkey (default Ctrl+Alt+E), and the app puts the
 translation on the clipboard: Japanese<->English by default, or any language
-pair or target language of the 53 the model covers, set per hotkey (`profiles`
-in `config.json`, also editable on the Settings page). Translation is fully
+pair or target language of the 53 the model covers, with replace or bilingual
+output set per hotkey (`profiles` in `config.json`, also editable on the Settings page). Translation is fully
 local: the app starts a loopback-only `llama-server` (llama.cpp) child process
 with a PLaMo 3 Translate GGUF model (2B by default; 0.8B and 8B through
 `setup.ps1 -Model` or the Settings page) and talks to it over HTTP. Go,

@@ -180,7 +180,7 @@ func sameProfiles(a, b []Profile) bool {
 		return false
 	}
 	for i := range a {
-		if a[i].Hotkey != b[i].Hotkey || a[i].Target != b[i].Target || len(a[i].Languages) != len(b[i].Languages) {
+		if a[i].Hotkey != b[i].Hotkey || a[i].Target != b[i].Target || a[i].outputMode() != b[i].outputMode() || len(a[i].Languages) != len(b[i].Languages) {
 			return false
 		}
 		for j := range a[i].Languages {

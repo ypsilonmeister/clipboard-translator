@@ -306,7 +306,8 @@ func TestSettingsSaveRejectsInvalidAndChangesNothing(t *testing.T) {
 		"duplicate key": {MaxChars: 4000, Profiles: []profileForm{
 			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}},
 			{Alt: true, Ctrl: true, Key: "e", Target: "ko"}}},
-		"both modes": {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Languages: []string{"ja", "en"}, Target: "ko"}}},
+		"both modes":     {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Languages: []string{"ja", "en"}, Target: "ko"}}},
+		"unknown output": {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Target: "ko", Output: "foo"}}},
 	}
 	for name, form := range bad {
 		resp, body := s.do(t, "POST", "/api/save", form, nil)
@@ -817,5 +818,78 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 	}
 	if !samePair(f.a.conf.Languages, []string{"ja", "zh-hans"}) {
 		t.Fatalf("tray change lost on direct applySettings conflict: %v", f.a.conf.Languages)
+	}
+}
+
+func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+
+	// Initial state: profile 0 output is replace.
+	_, body := s.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, body).State
+	if st == nil || len(st.Profiles) != 1 || st.Profiles[0].Output != OutputReplace {
+		t.Fatalf("initial state output = %q, want replace", st.Profiles[0].Output)
+	}
+
+	// Save profile with output: "bilingual".
+	saveForm := settingsForm{
+		BaseRevision: st.Revision,
+		MaxChars:     4000,
+		Changed:      []string{"profiles"},
+		Profiles: []profileForm{
+			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Output: OutputBilingual},
+		},
+	}
+	resp, body := s.do(t, "POST", "/api/save", saveForm, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 200 || r.Error != "" || r.State == nil {
+		t.Fatalf("save bilingual output: %d %s", resp.StatusCode, body)
+	}
+	if r.State.Profiles[0].Output != OutputBilingual {
+		t.Fatalf("state profile 0 output = %q, want bilingual", r.State.Profiles[0].Output)
+	}
+	if f.a.conf.Profiles[0].Output != OutputBilingual {
+		t.Fatalf("conf profile 0 output = %q, want bilingual", f.a.conf.Profiles[0].Output)
+	}
+
+	// Verify config.json on disk.
+	raw, err := os.ReadFile(filepath.Join(f.a.dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"output":"bilingual"`) {
+		t.Fatalf("config.json did not save bilingual output:\n%s", raw)
+	}
+
+	// Second save of the exact same settings changes nothing (hotkeys not re-registered).
+	before := f.reg.Load()
+	saveForm.BaseRevision = r.State.Revision
+	resp, _ = s.do(t, "POST", "/api/save", saveForm, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("second save: %d", resp.StatusCode)
+	}
+	if f.reg.Load() != before {
+		t.Error("an unchanged save re-registered hotkeys")
+	}
+
+	// Overlapping edit conflict: app revision moves ahead (e.g. tray changed languages).
+	f.a.changeLanguages([]string{"ja", "ko"})
+
+	// Attempt save with stale base_revision.
+	staleForm := settingsForm{
+		BaseRevision: saveForm.BaseRevision, // older than f.a.profilesRev
+		Changed:      []string{"profiles"},
+		Profiles: []profileForm{
+			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Output: OutputReplace},
+		},
+	}
+	resp, body = s.do(t, "POST", "/api/save", staleForm, nil)
+	r = decodeAPI(t, body)
+	if resp.StatusCode != 409 {
+		t.Fatalf("stale profile output save must return 409 Conflict, got %d %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(r.Error, "settings were changed in the tray menu") {
+		t.Fatalf("unexpected error message: %q", r.Error)
 	}
 }

@@ -26,6 +26,7 @@ type result struct {
 	direction            translationDirection
 	window               uintptr // foreground window when the hotkey was pressed
 	fromSelection        bool    // the text was a fresh selection, not the old clipboard
+	output               string
 }
 
 // translationDirection is what to ask the model for. Source is empty for a
@@ -363,9 +364,15 @@ func main() {
 }
 
 // applyTranslation never replaces unrelated clipboard contents.
-func applyTranslation(cb Clipboard, original, translated string) (bool, error) {
-	if translated == original {
+func applyTranslation(cb Clipboard, original, replacement string) (bool, error) {
+	if replacement == original {
 		return false, nil
 	}
-	return cb.ReplaceIfUnchanged(original, translated)
+	return cb.ReplaceIfUnchanged(original, replacement)
+}
+
+// formatBilingual joins the source and translation with a newline, trimming any
+// trailing CR and LF characters from the source.
+func formatBilingual(source, translated string) string {
+	return strings.TrimRight(source, "\r\n") + "\n" + translated
 }
