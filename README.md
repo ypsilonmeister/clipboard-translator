@@ -4,8 +4,9 @@
 
 English | [日本語](README.ja.md)
 
-Japanese <-> English clipboard translator for Windows, Linux (X11), and macOS. Select text, press
-**Ctrl+Alt+E**, then paste the translation with **Ctrl+V**.
+Clipboard translator for Windows, Linux (X11), and macOS. It translates between 53 languages
+(Japanese <-> English by default). Select text, press **Ctrl+Alt+E**, then paste the translation
+with **Ctrl+V**.
 
 Translation runs fully locally with [llama.cpp](https://github.com/ggml-org/llama.cpp)
 and [PLaMo 3 Translate 2B (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF).
@@ -398,7 +399,7 @@ use* for how it is served). It edits:
   *Remove partial download* cleans up an interrupted download to free disk space
   (available for installed and active models too). The active model's file and the
   shared chat template are never deleted.
-- the **engine** (CPU, CUDA, Vulkan), when more than one is installed.
+- the **engine** (CPU, CUDA, Vulkan, or Metal on macOS), when more than one is installed.
 
 Everything else stays in `config.json`.
 

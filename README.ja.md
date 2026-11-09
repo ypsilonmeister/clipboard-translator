@@ -4,8 +4,8 @@
 
 [English](README.md) | 日本語
 
-Windows、Linux（X11）、macOS 用の、日本語 <-> 英語のクリップボード翻訳ツールです。テキストを選択して
-**Ctrl+Alt+E** を押し、翻訳結果を **Ctrl+V** で貼り付けます。
+Windows、Linux（X11）、macOS 用のクリップボード翻訳ツールです。53 言語に対応し、既定は日本語 <-> 英語です。
+テキストを選択して **Ctrl+Alt+E** を押し、翻訳結果を **Ctrl+V** で貼り付けます。
 
 翻訳はすべて手元の PC で、[llama.cpp](https://github.com/ggml-org/llama.cpp) と
 [PLaMo 3 Translate 2B (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)
@@ -370,7 +370,7 @@ CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け�
   かかります。新しいモデルを読み込めなかったとき(メモリ不足など)は、前のモデルに戻し、ページに理由を表示します。
   「Delete」で使っていない導入済みモデルや不完全なファイルを削除でき(確認ボタンつき)、「Remove partial download」で中断した
   ダウンロードの残骸を削除してディスク容量を解放できます(導入済みや使用中のモデルに対しても実行可能)。使用中のモデル本体と共有のチャットテンプレートは削除されません。
-- **エンジン**(CPU、CUDA、Vulkan): 2 種類以上入っているときだけ選べます。
+- **エンジン**(CPU、CUDA、Vulkan。macOS では Metal): 2 種類以上入っているときだけ選べます。
 
 そのほかの設定は `config.json` に残ります。
 
