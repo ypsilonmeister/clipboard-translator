@@ -153,6 +153,7 @@ func (a *app) switchModel(e modelEntry) error {
 		}
 		// Neither works: the loop notices the idle supervisor and recovers.
 		log.Printf("could not restore the previous model: %v", rerr)
+		a.cancelTransientStatus()
 		a.tray.SetStatus("Clipboard Translator - server stopped, restarting...")
 	} else {
 		a.refreshStatus()

@@ -285,6 +285,7 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 // refreshStatus shows the idle tooltip again, unless a translation is running.
 func (a *app) refreshStatus() {
 	if !a.translating {
+		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
 	}
 }

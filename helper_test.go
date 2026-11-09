@@ -76,19 +76,25 @@ const fakeTranslation = "fake translation"
 
 // fakeTray records what the app tells the tray.
 type fakeTray struct {
-	quit   bool
-	status string
-	notes  []string
-	titles []string
-	cmds   []int
-	build  func() []MenuItem
+	quit     bool
+	status   string
+	statuses []string
+	notes    []string
+	titles   []string
+	errs     []bool
+	cmds     []int
+	build    func() []MenuItem
 }
 
 func (f *fakeTray) QuitRequested() bool { return f.quit }
-func (f *fakeTray) SetStatus(s string)  { f.status = s }
+func (f *fakeTray) SetStatus(s string) {
+	f.status = s
+	f.statuses = append(f.statuses, s)
+}
 func (f *fakeTray) Notify(title, msg string, isError bool) {
 	f.titles = append(f.titles, title)
 	f.notes = append(f.notes, msg)
+	f.errs = append(f.errs, isError)
 }
 func (f *fakeTray) SetMenu(b func() []MenuItem) { f.build = b }
 func (f *fakeTray) NextCommand() (int, bool) {
@@ -113,6 +119,20 @@ func (f *fakeTray) lastTitle() string {
 		return ""
 	}
 	return f.titles[len(f.titles)-1]
+}
+
+func (f *fakeTray) lastStatus() string {
+	if len(f.statuses) == 0 {
+		return ""
+	}
+	return f.statuses[len(f.statuses)-1]
+}
+
+func (f *fakeTray) lastError() bool {
+	if len(f.errs) == 0 {
+		return false
+	}
+	return f.errs[len(f.errs)-1]
 }
 
 // fakeHotkey is a Hotkey that reports no presses.

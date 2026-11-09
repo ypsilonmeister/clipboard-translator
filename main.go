@@ -32,20 +32,107 @@ type result struct {
 // target-only profile: the model then detects the source language itself.
 type translationDirection struct{ Source, Target string }
 
+type skipReason int
+
+const (
+	skipNone skipReason = iota
+	skipEmpty
+	skipTooLong
+	skipURL
+	skipNoTranslatableText
+)
+
+func (r skipReason) String() string {
+	switch r {
+	case skipNone:
+		return "none"
+	case skipEmpty:
+		return "empty"
+	case skipTooLong:
+		return "too long"
+	case skipURL:
+		return "URL"
+	case skipNoTranslatableText:
+		return "no translatable text"
+	default:
+		return "unknown"
+	}
+}
+
+// check classifies why s cannot be translated by p, or returns skipNone and
+// the translationDirection.
+func (p Profile) check(s string, maxChars int) (skipReason, translationDirection) {
+	if strings.TrimSpace(s) == "" {
+		return skipEmpty, translationDirection{}
+	}
+	if utf8.RuneCountInString(s) > maxChars {
+		return skipTooLong, translationDirection{}
+	}
+	if isURL(strings.TrimSpace(s)) {
+		return skipURL, translationDirection{}
+	}
+	if p.Target != "" {
+		if strings.IndexFunc(s, unicode.IsLetter) < 0 {
+			return skipNoTranslatableText, translationDirection{}
+		}
+		return skipNone, translationDirection{Target: p.Target}
+	}
+	dir, ok := directionFor(p.Languages, s)
+	if !ok {
+		return skipNoTranslatableText, translationDirection{}
+	}
+	return skipNone, dir
+}
+
+// skipReason returns why s cannot be translated by p, or skipNone if it can.
+func (p Profile) skipReason(s string, maxChars int) skipReason {
+	reason, _ := p.check(s, maxChars)
+	return reason
+}
+
 // direction is a profile's direction for s, or false for empty, too long,
 // URL-only or undetectable text (see directionFor in languages.go for pairs).
 func (p Profile) direction(s string, maxChars int) (translationDirection, bool) {
-	if strings.TrimSpace(s) == "" || utf8.RuneCountInString(s) > maxChars {
-		return translationDirection{}, false
+	reason, dir := p.check(s, maxChars)
+	return dir, reason == skipNone
+}
+
+// skipMessage returns the user-facing message explaining why translation was skipped.
+func skipMessage(reason skipReason, count, limit int, label string) string {
+	switch reason {
+	case skipEmpty:
+		return "Nothing to translate: no text was selected or copied."
+	case skipTooLong:
+		return fmt.Sprintf("Nothing was translated: the selection is %d characters, over the %d-character limit. Select less text or raise the limit in Settings (Longest text).", count, limit)
+	case skipURL:
+		return "Nothing was translated: the selection is just a URL."
+	case skipNoTranslatableText:
+		if label != "" {
+			return fmt.Sprintf("Nothing was translated: this hotkey translates %s.", label)
+		}
+		return "Nothing was translated: no translatable text found."
+	default:
+		return ""
 	}
-	if p.Target == "" {
-		return directionFor(p.Languages, s)
+}
+
+// skipStatus returns the tooltip status text for a skipped request.
+func skipStatus(reason skipReason, label string) string {
+	switch reason {
+	case skipEmpty:
+		return "Clipboard Translator - nothing to translate (empty selection)"
+	case skipTooLong:
+		return "Clipboard Translator - text is too long"
+	case skipURL:
+		return "Clipboard Translator - nothing to translate (URL only)"
+	case skipNoTranslatableText:
+		if strings.Contains(label, "↔") {
+			return "Clipboard Translator - nothing to translate (not " + label + ")"
+		}
+		return "Clipboard Translator - nothing to translate (unsupported text)"
+	default:
+		return ""
 	}
-	// Any language can be the source, so only require that there is some text.
-	if isURL(strings.TrimSpace(s)) || strings.IndexFunc(s, unicode.IsLetter) < 0 {
-		return translationDirection{}, false
-	}
-	return translationDirection{Target: p.Target}, true
 }
 
 // label says what the profile does, for the tooltip and notifications.
