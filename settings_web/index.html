@@ -63,6 +63,12 @@
       <span class="plus">characters</span>
     </div>
     <p class="hint">Longer selections are skipped instead of translated.</p>
+    <div class="row field-row">
+      <label for="idle-unload-minutes" class="label">Unload model after idle</label>
+      <input type="number" id="idle-unload-minutes" min="0" max="1440" step="1" inputmode="numeric">
+      <span class="plus">minutes (0 = never)</span>
+    </div>
+    <p class="hint">Frees RAM/VRAM while idle. The next translation loads the model again and takes longer.</p>
   </section>
 
   <footer class="bar">
@@ -71,7 +77,7 @@
     <button id="close" type="button" class="link">Close this page</button>
   </footer>
 
-  <p class="foot">This page is served by the app on this computer only, and goes away when you close it. The hotkeys, auto-paste and the longest text are saved with the Save button; choosing a model or engine takes effect at once. Other settings are in <code>config.json</code> (tray menu: Open config.json).</p>
+  <p class="foot">This page is served by the app on this computer only, and goes away when you close it. The hotkeys, auto-paste, notifications, longest text and idle unload time are saved with the Save button; choosing a model or engine takes effect at once. Other settings are in <code>config.json</code> (tray menu: Open config.json).</p>
 </main>
 <script src="app.js?t={{TOKEN}}"></script>
 </body>

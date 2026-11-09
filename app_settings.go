@@ -29,6 +29,9 @@ func (a *app) ensureRevisions() {
 	if a.notifyOnCompleteRev == 0 {
 		a.notifyOnCompleteRev = 1
 	}
+	if a.idleUnloadRev == 0 {
+		a.idleUnloadRev = 1
+	}
 	if a.maxCharsRev == 0 {
 		a.maxCharsRev = 1
 	}
@@ -76,6 +79,8 @@ func (a *app) askSettings(req settingsRequest) settingsReply {
 // handleSettingsRequest runs on the UI thread. A request whose deadline passed
 // while the loop was busy is dropped: the page was already told it failed.
 func (a *app) handleSettingsRequest(req settingsRequest) {
+	a.settingsServing = true
+	defer func() { a.settingsServing = false }()
 	if time.Now().After(req.deadline) {
 		req.reply <- settingsReply{err: errSettingsBusy}
 		return
@@ -114,6 +119,7 @@ func (a *app) settingsState() settingsState {
 	st.AutoPaste = a.conf.AutoPaste
 	st.NotifyOnComplete = a.conf.NotifyOnComplete
 	st.MaxChars = a.conf.MaxChars
+	st.IdleUnloadMinutes = a.conf.IdleUnloadMinutes
 	st.LicenseURL = plamoLicenseURL
 	st.Notice = a.settingsNotice
 	a.fillModelsAndEngines(&st)
@@ -217,6 +223,9 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 		if hasField("notify_on_complete") && form.BaseRevision < a.notifyOnCompleteRev {
 			return nil, ErrConflict
 		}
+		if hasField("idle_unload_minutes") && form.BaseRevision < a.idleUnloadRev {
+			return nil, ErrConflict
+		}
 		if hasField("max_chars") && form.BaseRevision < a.maxCharsRev {
 			return nil, ErrConflict
 		}
@@ -226,13 +235,14 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if sameProfiles(cand.Profiles, a.conf.Profiles) && cand.AutoPaste == a.conf.AutoPaste && cand.NotifyOnComplete == a.conf.NotifyOnComplete && cand.MaxChars == a.conf.MaxChars {
+	if sameProfiles(cand.Profiles, a.conf.Profiles) && cand.AutoPaste == a.conf.AutoPaste && cand.NotifyOnComplete == a.conf.NotifyOnComplete && cand.MaxChars == a.conf.MaxChars && cand.IdleUnloadMinutes == a.conf.IdleUnloadMinutes {
 		return a.inactiveHotkeys(), nil
 	}
 
 	changedProfiles := hasField("profiles") && !sameProfiles(cand.Profiles, a.conf.Profiles)
 	changedAutoPaste := hasField("auto_paste") && cand.AutoPaste != a.conf.AutoPaste
 	changedNotifyOnComplete := hasField("notify_on_complete") && cand.NotifyOnComplete != a.conf.NotifyOnComplete
+	changedIdleUnload := hasField("idle_unload_minutes") && cand.IdleUnloadMinutes != a.conf.IdleUnloadMinutes
 	changedMaxChars := hasField("max_chars") && cand.MaxChars != a.conf.MaxChars
 
 	if !changedProfiles {
@@ -241,6 +251,7 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 		// must from now on save "profiles" too: a legacy hotkey/languages edit
 		// would be ignored at the next start.
 		a.conf.AutoPaste, a.conf.NotifyOnComplete, a.conf.MaxChars = cand.AutoPaste, cand.NotifyOnComplete, cand.MaxChars
+		a.conf.IdleUnloadMinutes = cand.IdleUnloadMinutes
 		a.conf.explicitProfiles = cand.explicitProfiles
 	} else {
 		old := a.conf
@@ -258,6 +269,10 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 	}
 
 	a.confRevision++
+	if changedIdleUnload {
+		a.idleUnloadRev = a.confRevision
+		a.resetIdleTimer()
+	}
 	if changedProfiles {
 		a.profilesRev = a.confRevision
 	}
@@ -271,7 +286,7 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 		a.maxCharsRev = a.confRevision
 	}
 
-	set := map[string]any{"profiles": a.conf.Profiles, "hotkey": a.conf.Profiles[0].Hotkey, "auto_paste": a.conf.AutoPaste, "notify_on_complete": a.conf.NotifyOnComplete, "max_chars": a.conf.MaxChars}
+	set := map[string]any{"profiles": a.conf.Profiles, "hotkey": a.conf.Profiles[0].Hotkey, "auto_paste": a.conf.AutoPaste, "notify_on_complete": a.conf.NotifyOnComplete, "max_chars": a.conf.MaxChars, "idle_unload_minutes": a.conf.IdleUnloadMinutes}
 	if a.conf.Profiles[0].Languages != nil {
 		set["languages"] = a.conf.Profiles[0].Languages
 	}

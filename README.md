@@ -302,7 +302,8 @@ Right-click the tray icon:
 | --- | --- |
 | **Cancel translation** | Shown while a translation runs. |
 | **Recent translations** | The last 10, kept in memory only (never written to disk). Click one to copy its translation again; *Clear history* empties the list. |
-| **Settings...** | Opens a settings page in your browser: add, change and remove hotkeys (keys, a language pair or one target language each), auto-paste, the longest text to translate, the translation model (download a size, switch between installed ones) and the engine. Saved to `config.json`; see *Settings page*. |
+| **Settings...** | Opens a settings page in your browser: add, change and remove hotkeys (keys, a language pair or one target language each), auto-paste, the longest text to translate, idle model unloading, the translation model (download a size, switch between installed ones) and the engine. Saved to `config.json`; see *Settings page*. |
+| **Unload model** | Stops the server and unloads the model when no translation or server switch is in progress. |
 | **Paste automatically after translating** | Off by default. When on, Ctrl+V is typed for you, but only if the text was a fresh selection and the same window is still in front; otherwise the translation just waits in the clipboard. |
 | **Hotkey** | Pick another combination. If another program already owns it, the old one stays. |
 | **Languages** | The pair that is translated in both directions (default Japanese ↔ English). Takes effect at once. Other pairs: see `languages` below. |
@@ -359,6 +360,7 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 | `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko"}]`. A profile has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each). Takes the place of `hotkey` and `languages`; the tray menu edits the first profile. Up to 8 hotkeys on Windows; on Linux and macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
 | `port` | Local llama-server port, 1024-65534 (the app also uses `port + 1` as an instance lock) |
 | `max_chars` | Longer text is skipped |
+| `idle_unload_minutes` | Unload the model after this many idle minutes (0..1440; default `0` = never). Also editable on the Settings page. |
 | `gpu_layers` | Layers offloaded to GPU (`0` = CPU only) |
 | `model_file` | The model, e.g. `models/plamo-3-translate-8b-Q4_K_M.gguf`; `setup.ps1 -Model` sets it (see *Choosing the model size*) |
 | `server_file` / `fallback_server_file` | llama-server binaries (primary / CPU fallback) |
@@ -371,6 +373,8 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 > every download against a SHA-256 (the model files are pinned to one revision).
 
 ## Settings page
+
+Set **Unload model after idle** (`idle_unload_minutes`) and click *Save* to enable automatic unloading. Manual or automatic unloading frees RAM/VRAM. The next hotkey press reloads the model and translates, taking longer while the model loads.
 
 *Settings...* in the tray menu opens it in your browser (see *Privacy and network
 use* for how it is served). It edits:

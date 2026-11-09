@@ -27,10 +27,11 @@
     auto_paste: false,
     notify_on_complete: false,
     max_chars: false,
+    idle_unload_minutes: false,
   };
 
   function isDirty() {
-    return dirtyFields.profiles || dirtyFields.auto_paste || dirtyFields.notify_on_complete || dirtyFields.max_chars;
+    return dirtyFields.profiles || dirtyFields.auto_paste || dirtyFields.notify_on_complete || dirtyFields.max_chars || dirtyFields.idle_unload_minutes;
   }
 
   function markDirty() {
@@ -43,6 +44,7 @@
     dirtyFields.auto_paste = false;
     dirtyFields.notify_on_complete = false;
     dirtyFields.max_chars = false;
+    dirtyFields.idle_unload_minutes = false;
     dirty = false;
     setStatus('');
   }
@@ -88,6 +90,7 @@
       auto_paste: !!st.auto_paste,
       notify_on_complete: !!st.notify_on_complete,
       max_chars: st.max_chars || 4000,
+      idle_unload_minutes: st.idle_unload_minutes || 0,
       profiles: (st.profiles || []).map((p) => ({
         ctrl: !!p.ctrl, alt: !!p.alt, shift: !!p.shift, win: !!p.win, key: p.key || 'E',
         mode: p.target ? 'target' : 'pair',
@@ -104,8 +107,9 @@
     if (dirtyFields.auto_paste) changed.push('auto_paste');
     if (dirtyFields.notify_on_complete) changed.push('notify_on_complete');
     if (dirtyFields.max_chars) changed.push('max_chars');
+    if (dirtyFields.idle_unload_minutes) changed.push('idle_unload_minutes');
     if (changed.length === 0) {
-      changed.push('profiles', 'auto_paste', 'notify_on_complete', 'max_chars');
+      changed.push('profiles', 'auto_paste', 'notify_on_complete', 'max_chars', 'idle_unload_minutes');
     }
     return {
       base_revision: baseRevision,
@@ -113,6 +117,7 @@
       auto_paste: m.auto_paste,
       notify_on_complete: m.notify_on_complete,
       max_chars: m.max_chars,
+      idle_unload_minutes: m.idle_unload_minutes,
       profiles: m.profiles.map((p) => {
         const out = { ctrl: p.ctrl, alt: p.alt, shift: p.shift, win: p.win, key: p.key };
         if (p.mode === 'target') out.target = p.target; else out.languages = [p.a, p.b];
@@ -162,6 +167,7 @@
         if (notifyOnCompleteEl) notifyOnCompleteEl.checked = model.notify_on_complete;
         const maxCharsEl = $('max-chars');
         if (maxCharsEl) maxCharsEl.value = String(model.max_chars);
+        $('idle-unload-minutes').value = String(model.idle_unload_minutes);
         showBanner([]);
         setStatus('Reloaded settings from app', 'ok');
       },
@@ -584,6 +590,10 @@
       const maxCharsEl = $('max-chars');
       if (maxCharsEl) maxCharsEl.value = String(model.max_chars);
     }
+    if (!dirtyFields.idle_unload_minutes && st.idle_unload_minutes !== undefined) {
+      model.idle_unload_minutes = st.idle_unload_minutes;
+      $('idle-unload-minutes').value = String(model.idle_unload_minutes);
+    }
     dirty = isDirty();
     if (wasBusy && !appBusy()) setStatus(dirty ? 'Unsaved changes' : '');
     else if (!dirty) setStatus('');
@@ -655,6 +665,18 @@
       dirtyFields.max_chars = true;
       markDirty();
     }
+    const minutes = Number($('idle-unload-minutes').value);
+    if (!Number.isInteger(minutes) || minutes < 0 || minutes > 1440) {
+      setStatus('Not saved', 'bad');
+      showBanner(['Idle unload minutes must be a whole number from 0 to 1440 (0 means never).'], 'error');
+      $('idle-unload-minutes').focus();
+      return;
+    }
+    if (model.idle_unload_minutes !== minutes) {
+      model.idle_unload_minutes = minutes;
+      dirtyFields.idle_unload_minutes = true;
+      markDirty();
+    }
     if (!isDirty()) {
       // Nothing to send. Sending every field with an old revision would report a
       // conflict, or overwrite a change made in the tray, for edits that were never made.
@@ -692,6 +714,7 @@
     $('auto-paste').checked = model.auto_paste;
     $('notify-on-complete').checked = model.notify_on_complete;
     $('max-chars').value = String(model.max_chars);
+    $('idle-unload-minutes').value = String(model.idle_unload_minutes);
     const warnings = r.data.warnings || [];
     showBanner(warnings.length ? ['Saved, but note:'].concat(warnings) : []);
     setStatus('Saved', 'ok');
@@ -717,6 +740,7 @@
     $('auto-paste').checked = model.auto_paste;
     $('notify-on-complete').checked = model.notify_on_complete;
     $('max-chars').value = String(model.max_chars);
+    $('idle-unload-minutes').value = String(model.idle_unload_minutes);
     inactiveBanner(state.inactive);
     schedulePoll();
     return true;
@@ -754,6 +778,7 @@
       dirtyFields.max_chars = true;
       markDirty();
     });
+    $('idle-unload-minutes').addEventListener('input', () => { dirtyFields.idle_unload_minutes = true; markDirty(); });
     $('save').addEventListener('click', save);
     $('close').addEventListener('click', async () => {
       if (dirty && !confirm('Close without saving your changes?')) return;

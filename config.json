@@ -3,6 +3,7 @@
   "port": 18119,
   "poll_ms": 50,
   "max_chars": 4000,
+  "idle_unload_minutes": 0,
   "max_tokens": 2048,
   "context_tokens": 4096,
   "gpu_layers": 0,

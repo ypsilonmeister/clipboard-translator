@@ -42,8 +42,10 @@ type supervisor struct {
 	// a new one each time; it is never logged.
 	apiKey string
 
-	cmd  *exec.Cmd
-	done chan struct{} // closed when cmd has exited
+	onStarted func() // UI-thread callback after a successful start
+	starting  bool
+	cmd       *exec.Cmd
+	done      chan struct{} // closed when cmd has exited
 }
 
 // newAPIKey returns 32 random bytes as hex.
@@ -90,6 +92,8 @@ func (s *supervisor) serverArgs(gpuLayers int) []string {
 
 // start launches binary and blocks until the server answers /health.
 func (s *supervisor) start(binary string, gpuLayers int, label string) error {
+	s.starting = true
+	defer func() { s.starting = false }()
 	// Without the VC++ runtime every llama.cpp build dies at once with no output,
 	// so say so instead of starting a process that cannot work.
 	if !vcRuntimeAvailable(filepath.Dir(binary)) {
@@ -151,6 +155,9 @@ wait:
 		return err
 	}
 	s.cmd, s.done, s.apiKey = cmd, done, key
+	if s.onStarted != nil {
+		s.onStarted()
+	}
 	return nil
 }
 
