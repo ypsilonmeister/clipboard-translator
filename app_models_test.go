@@ -174,8 +174,61 @@ func TestSwitchModelFailureRestoresTheOldOneBeforeRestarting(t *testing.T) {
 	if after, _ := os.ReadFile(filepath.Join(a.dir, "config.json")); string(after) != string(before) {
 		t.Error("config.json must not change when the new model did not load")
 	}
-	if !strings.Contains(tray.lastNote(), "Could not load") {
+	if tray.lastNote() != err.Error() || !tray.lastError() {
 		t.Errorf("the user is not told: %q", tray.lastNote())
+	}
+	if tray.lastStatus() != a.readyTip {
+		t.Errorf("restored model tooltip: %q, want %q", tray.lastStatus(), a.readyTip)
+	}
+}
+
+func TestSwitchModelFailureWhenRestoreAlsoFails(t *testing.T) {
+	for _, source := range []string{"tray", "settings"} {
+		t.Run(source, func(t *testing.T) {
+			withModels(t, testEntry("bad", "bad-FAIL.gguf"))
+			a, tray, _ := newTestApp(t)
+			putModel(t, a.dir, modelCatalog[0])
+			if err := a.startServer(); err != nil {
+				t.Fatal(err)
+			}
+			oldConf, oldPaths, oldModel := a.conf.ModelFile, a.paths, a.sup.model
+			configPath := filepath.Join(a.dir, "config.json")
+			before, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The new model fails via its FAIL path; even the previously working
+			// model now exits at startup, so rollback cannot restore service.
+			t.Setenv("CT_TEST_FAKE_EXIT_CODE", "1")
+			if source == "tray" {
+				a.handleCommand(cmdModelBase)
+			} else {
+				req := newActionRequest("use_model", "bad", time.Minute)
+				a.startModelSwitch(req)
+				if rep := <-req.reply; rep.err != nil || rep.state.Busy == "" {
+					t.Fatalf("switch request: %+v", rep)
+				}
+			}
+			const want = "The translation server stopped. Restarting it..."
+			if tray.lastNote() != want || !tray.lastError() {
+				t.Errorf("recovery notification: %q (error=%v)", tray.lastNote(), tray.lastError())
+			}
+			if source == "settings" && a.settingsNotice != want {
+				t.Errorf("settings must report recovery, got %q", a.settingsNotice)
+			}
+			if tray.lastStatus() != "Clipboard Translator - server stopped, restarting..." {
+				t.Errorf("recovery tooltip: %q", tray.lastStatus())
+			}
+			if a.sup.Running() || healthy(a) {
+				t.Error("neither model should be running")
+			}
+			if a.conf.ModelFile != oldConf || a.paths != oldPaths || a.sup.model != oldModel {
+				t.Error("recovery must still target the previous model")
+			}
+			if after, err := os.ReadFile(configPath); err != nil || string(after) != string(before) {
+				t.Errorf("failed switch changed config.json: %v", err)
+			}
+		})
 	}
 }
 
