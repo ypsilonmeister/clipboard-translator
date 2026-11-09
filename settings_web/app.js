@@ -612,7 +612,22 @@
     lastServerNotice = currentNotice;
   }
 
+  // The quick start card: open on the first run or while no hotkey works, otherwise
+  // collapsed so it can be read again without taking space. The user's own
+  // open/close is kept across refreshes.
+  let guideTouched = false;
+  function renderGuide() {
+    const g = state && state.guide;
+    const box = $('guide');
+    if (!g || !box) return;
+    $('guide-intro').textContent = g.intro || '';
+    $('guide-steps').replaceChildren(...(g.steps || []).map((s) => h('li', { text: s })));
+    $('guide-extras').textContent = g.extras || '';
+    if (!guideTouched) box.open = !!(g.initial || !g.active);
+  }
+
   function renderAll() {
+    renderGuide();
     renderModels();
     renderEngines();
     renderBusy();
@@ -820,6 +835,7 @@
   }
 
   async function init() {
+    $('guide').addEventListener('toggle', () => { guideTouched = true; });
     $('add').addEventListener('click', () => {
       model.profiles.push({ ctrl: true, alt: true, shift: false, win: false, key: nextFreeKey(), mode: 'target', a: 'ja', b: 'en', target: 'en', output: 'replace', input: 'selection' });
       dirtyFields.profiles = true;

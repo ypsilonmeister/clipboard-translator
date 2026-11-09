@@ -156,8 +156,8 @@ func TestCancelFromMenu(t *testing.T) {
 	a.cancelCurrent = func() { cancelled = true }
 	a.readyTip = "ready"
 
-	if items := a.buildMenu(); items[1].ID != cmdCancel {
-		t.Fatalf("while translating, Cancel must follow Settings, got %+v", items[1])
+	if items := a.buildMenu(); items[2].ID != cmdCancel {
+		t.Fatalf("while translating, Cancel must follow Settings and Quick start, got %+v", items[2])
 	}
 	a.handleCommand(cmdCancel)
 	if !cancelled || a.translating || a.generation == g || tray.status != "Clipboard Translator - translation cancelled" {

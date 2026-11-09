@@ -124,6 +124,7 @@ func (a *app) settingsState() settingsState {
 		Inactive:       a.inactiveHotkeys(),
 		NoActiveHotkey: !a.anyHotkeyActive(),
 	}
+	st.Guide = a.quickstartGuide()
 	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste
 	st.NotifyOnComplete = a.conf.NotifyOnComplete

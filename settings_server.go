@@ -72,6 +72,7 @@ type settingsState struct {
 	WinKey         string           `json:"win_key"`  // what the Win modifier is called here
 	Inactive       []string         `json:"inactive"` // hotkeys that could not be registered, with the reason
 	NoActiveHotkey bool             `json:"no_active_hotkey"`
+	Guide          quickstartGuide  `json:"guide"`
 
 	Models           []modelState   `json:"models"`
 	CustomModel      string         `json:"custom_model,omitempty"` // model_file when it is not one of the models above

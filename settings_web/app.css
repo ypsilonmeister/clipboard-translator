@@ -64,6 +64,9 @@ code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 0.9
   padding: 18px 18px 16px;
   margin-bottom: 16px;
 }
+.guide summary { cursor: pointer; font-weight: 600; font-size: 1.1em; }
+.guide ol { margin: 8px 0 8px 1.4em; padding: 0; }
+.guide li { margin: 4px 0; }
 .hint { margin: 4px 0 0; color: var(--muted); font-size: 13.5px; }
 
 .banner {

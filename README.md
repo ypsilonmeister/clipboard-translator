@@ -289,8 +289,13 @@ need testing on real Linux hardware.
 ## Using it
 
 The app lives in the **system tray** (notification area; on Windows 11 it may be
-under the `^` arrow). A balloon says *Ready* once the model has loaded; the
-tooltip shows the state and, while loading or translating, the elapsed seconds.
+under the `^` arrow). The first time the model has loaded, a balloon says *Ready* and
+gives a three-step quick start with your actual hotkey (select text, press the hotkey,
+paste with `Ctrl+V`, or `Cmd+V` on macOS). It is shown once; later launches stay quiet.
+Read it again from **Quick start** in the tray menu or the card at the top of the Settings
+page. If the hotkey could not be registered, the balloon sends you to Settings to choose
+another one instead. The guide changes no setting (auto-paste stays off). The tooltip shows
+the state and, while loading or translating, the elapsed seconds.
 
 Select text in your language pair (Japanese or English unless you changed it, see
 `languages` below) and press `Ctrl+Alt+E`. When the translation is
@@ -304,6 +309,7 @@ Right-click the tray icon:
 | Item | What it does |
 | --- | --- |
 | **Settings...** | Opens a settings page in your browser: add, change and remove hotkeys (keys, a language pair or one target language each), auto-paste, completion notifications, the longest text to translate, idle model unloading, the translation model (download a size, switch between installed ones) and the engine. Saved to `config.json`; see *Settings page*. |
+| **Quick start** | Shows the select, hotkey, paste steps again with your current hotkey. |
 | **Cancel translation** | Shown while a translation runs. |
 | **Unload model** | Stops the server and unloads the model when no translation or server switch is in progress. |
 | **Translation model** | Shown when two or more models are installed to quickly switch between a fast and an accurate model. |
@@ -366,6 +372,7 @@ file is kept as `config.json.bak`.
 | --- | --- |
 | `hotkey` | Modifier(s) + one key: a letter A-Z, a digit 0-9, or a function key F1-F12, e.g. `Ctrl+Alt+E` or `Ctrl+F5` (on macOS `Cmd` / `Command` and `Option` also work) |
 | `auto_paste` | `true` types Ctrl+V after translating (default `false`) |
+| `quickstart_shown` | `true` once the first-run quick start has been shown (set by the app; set it to `false` to see the balloon again; default `false`) |
 | `notify_on_complete` | `true` shows a tray notification that the translation is ready in the clipboard (without showing text) when not auto-pasted (default `false`) |
 | `languages` | Two language codes translated in both directions, e.g. `["ja", "en"]` (default), `["en", "ko"]`, `["ja", "zh-hans"]`. Codes are the model's: `ja en ko zh-hans zh-hant ru th ar de fr es ...` (53 in all, see the [model card](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)). The direction is read from the script of the text, so the two languages must use different scripts (en ↔ de is refused for now). Japanese ↔ English is the main use; other languages are best effort. |
 | `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "bilingual"}]`. A profile has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each), and an optional `output` format: `"replace"` (default; key absent = replace) puts only the translation on the clipboard; `"bilingual"` puts the original text, a newline, and then the translation (`<source>\n<translated>`, with trailing CR/LF characters trimmed from the source before adding the newline). Translation history keeps Source and Translated separately; "Recent translations" copies the plain translation. An optional `input` says where the text comes from: `"selection"` (default) copies the current selection first (Ctrl+C, waiting up to 2 s on Windows for a slow page); `"clipboard"` translates what is already on the clipboard, sends no Ctrl+C, waits for nothing and never auto-pastes, which suits a page that copies slowly (copy yourself, then press the hotkey). Takes the place of `hotkey` and `languages`; Settings edits each profile. Up to 8 hotkeys on Windows and Linux; on macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
