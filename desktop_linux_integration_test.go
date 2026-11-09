@@ -669,4 +669,79 @@ func TestX11HotkeyRobustness(t *testing.T) {
 		// Restore detectable autorepeat
 		x11TestSetAutorepeatSupported(true)
 	})
+
+	// Subtest 7: Error messages mapping (Item 7)
+	t.Run("ErrorMessagesMapping", func(t *testing.T) {
+		// 1. Conflict error (-3)
+		x11TestConflictKey('e', uint32(x11ControlMask|x11Mod1Mask), true)
+		conflictActive := true
+		t.Cleanup(func() {
+			if conflictActive {
+				x11TestConflictKey('e', uint32(x11ControlMask|x11Mod1Mask), false)
+				conflictActive = false
+			}
+		})
+
+		_, err := newHotkey("Ctrl+Alt+E")
+		if err == nil {
+			t.Fatal("expected conflict error")
+		}
+		errMsg := err.Error()
+		if !strings.Contains(errMsg, "Ctrl+Alt+E") {
+			t.Errorf("error must contain hotkey spec, got: %s", errMsg)
+		}
+		if !strings.Contains(errMsg, "already used by another application") {
+			t.Errorf("error must mention 'already used by another application', got: %s", errMsg)
+		}
+		if !strings.Contains(errMsg, "Settings") {
+			t.Errorf("error must advise user action in Settings, got: %s", errMsg)
+		}
+
+		x11TestConflictKey('e', uint32(x11ControlMask|x11Mod1Mask), false)
+		conflictActive = false
+
+		// 2. Duplicate error
+		hk1, err := newHotkey("Ctrl+Alt+E")
+		if err != nil {
+			t.Fatalf("newHotkey hk1: %v", err)
+		}
+		t.Cleanup(func() { hk1.Close() })
+
+		_, errDup := newHotkey("Ctrl+Alt+E")
+		if errDup == nil {
+			t.Fatal("expected duplicate error")
+		}
+		dupMsg := errDup.Error()
+		if !strings.Contains(dupMsg, "Ctrl+Alt+E") || !strings.Contains(dupMsg, "already registered") {
+			t.Errorf("duplicate error must contain spec and 'already registered', got: %s", dupMsg)
+		}
+
+		// 3. Table full error (-1)
+		// Register hotkeys up to limit (8 total)
+		var hks []Hotkey
+		hks = append(hks, hk1)
+		specs := []string{"Ctrl+Alt+1", "Ctrl+Alt+2", "Ctrl+Alt+3", "Ctrl+Alt+4", "Ctrl+Alt+5", "Ctrl+Alt+6", "Ctrl+Alt+7"}
+		for _, sp := range specs {
+			h, err := newHotkey(sp)
+			if err != nil {
+				t.Fatalf("failed to register hotkey %s: %v", sp, err)
+			}
+			hks = append(hks, h)
+		}
+		t.Cleanup(func() {
+			for _, h := range hks {
+				h.Close()
+			}
+		})
+
+		// 9th registration attempt must fail with table full error
+		_, errFull := newHotkey("Ctrl+Alt+8")
+		if errFull == nil {
+			t.Fatal("expected table full error")
+		}
+		fullMsg := errFull.Error()
+		if !strings.Contains(fullMsg, "8") {
+			t.Errorf("table full error must mention limit (8), got: %s", fullMsg)
+		}
+	})
 }

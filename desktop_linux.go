@@ -85,12 +85,18 @@ func newHotkey(spec string) (Hotkey, error) {
 	}
 
 	res := C.ct_hotkey_grab(C.int(id), C.uint(normMods), C.uint(keycode))
-	if res <= 0 {
+	if res != 1 {
 		x11Registry.Unregister(id)
-		if res == -2 {
-			return nil, fmt.Errorf("hotkey %s is already registered", spec)
+		switch res {
+		case -1:
+			return nil, fmt.Errorf("cannot register hotkey %s: maximum number of hotkeys (%d) reached; unregister an unused profile in Settings", spec, maxHotkeys)
+		case -2:
+			return nil, fmt.Errorf("hotkey %s is already registered; choose a different key combination in Settings", spec)
+		case -3:
+			return nil, fmt.Errorf("could not grab %s on X11: already used by another application; choose a different key combination in Settings or disable the shortcut in the other app", spec)
+		default:
+			return nil, fmt.Errorf("cannot register hotkey %s: could not initialize X11 hotkey; check your X display session", spec)
 		}
-		return nil, fmt.Errorf("could not grab %s on X11 (already used by another app?)", spec)
 	}
 	return &linuxHotkey{id: id, spec: spec}, nil
 }
