@@ -189,7 +189,7 @@ function Invoke-ClipboardTranslatorInstaller {
         # setup.ps1 downloads exactly these into models\ (one model; the size is its -Model choice)
         # and one folder per backend into runtime\.
         $modelsDir = Join-Path $InstallDir 'models'
-        foreach ($name in @('plamo-3-translate-0.8b-Q4_K_M.gguf', 'plamo-3-translate-2b-Q4_K_M.gguf', 'plamo-3-translate-8b-Q4_K_M.gguf', 'chat_template.jinja')) {
+        foreach ($name in @('plamo-3-translate-0.8b-Q4_K_M.gguf', 'plamo-3-translate-2b-Q4_K_M.gguf', 'plamo-3-translate-8b-Q4_K_M.gguf', 'chat_template.jinja', 'chat_template.0.8b.jinja', 'chat_template.2b.jinja', 'chat_template.8b.jinja')) {
             Remove-Owned (Join-Path $modelsDir $name)
             Remove-Owned (Join-Path $modelsDir ($name + '.partial'))
         }

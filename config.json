@@ -10,7 +10,7 @@
   "translation_timeout_seconds": 180,
   "startup_timeout_seconds": 120,
   "model_file": "models/plamo-3-translate-2b-Q4_K_M.gguf",
-  "template_file": "models/chat_template.jinja",
+  "template_file": "models/chat_template.2b.jinja",
   "server_file": "runtime/cpu/llama-server.exe",
   "fallback_server_file": "runtime/cpu/llama-server.exe"
 }

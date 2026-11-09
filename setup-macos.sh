@@ -95,13 +95,39 @@ model_key = model_arg or next((k for k, m in MODELS.items() if m['file'].lower()
 model = MODELS[model_key]
 print(f'Model: PLaMo 3 Translate {model_key.upper()}', flush=True)
 hf = 'https://huggingface.co/pfnet/' + model['repo'] + '/resolve/' + model['revision'] + '/'
-for name, minimum, sha256 in [(model['file'], model['minimum'], model['sha256']), ('chat_template.jinja', 100, model['template_sha256'])]:
-    dest = root / 'models' / name
-    if not dest.exists():
-        print('Downloading ' + name, flush=True)
-        download(hf + name, dest, sha256)
-    if dest.stat().st_size < minimum:
-        raise RuntimeError('Incomplete file; remove it and retry: ' + str(dest))
+
+model_dest = root / 'models' / model['file']
+if not model_dest.exists():
+    print('Downloading ' + model['file'], flush=True)
+    download(hf + model['file'], model_dest, model['sha256'])
+if model_dest.stat().st_size < model['minimum']:
+    raise RuntimeError('Incomplete file; remove it and retry: ' + str(model_dest))
+
+template_dest = root / 'models' / f'chat_template.{model_key}.jinja'
+legacy_template = root / 'models' / 'chat_template.jinja'
+
+def file_sha256(path):
+    h = hashlib.sha256()
+    with path.open('rb') as f:
+        while chunk := f.read(1024 * 1024):
+            h.update(chunk)
+    return h.hexdigest().lower()
+
+need_template = True
+if template_dest.is_file():
+    if file_sha256(template_dest) == model['template_sha256'].lower():
+        need_template = False
+elif legacy_template.is_file():
+    if file_sha256(legacy_template) == model['template_sha256'].lower():
+        shutil.copyfile(legacy_template, template_dest)
+        need_template = False
+
+if need_template:
+    print('Downloading chat_template.jinja', flush=True)
+    download(hf + 'chat_template.jinja', template_dest, model['template_sha256'])
+
+if template_dest.stat().st_size < 100:
+    raise RuntimeError('Incomplete file; remove it and retry: ' + str(template_dest))
 
 # --- llama.cpp pinned release (managed by tools/bump_llama_pin.py) ---
 LLAMA_TAG = 'b12032'
@@ -153,8 +179,25 @@ if not metal.exists() and not metal.is_symlink():
     metal.symlink_to('cpu', target_is_directory=True)
 if not (metal / 'llama-server').is_file():
     raise RuntimeError('Metal runtime alias is incomplete; move runtime/metal aside and retry.')
+def is_custom_template(path):
+    if not path or not isinstance(path, str):
+        return False
+    p = path.replace('\\', '/')
+    leaf = Path(p).name.lower()
+    parent = Path(p).parent.as_posix()
+    if parent not in ('', '.', 'models'):
+        return True
+    if leaf == 'chat_template.jinja':
+        return False
+    if re.fullmatch(r'chat_template\.(0\.8b|2b|8b)\.jinja', leaf):
+        return False
+    return True
+
 if model_arg:
     config['model_file'] = 'models/' + model['file']
+    cur_tpl = config.get('template_file')
+    if not is_custom_template(cur_tpl):
+        config['template_file'] = f'models/chat_template.{model_key}.jinja'
 # Match Update-BackendConfig in setup.ps1: preserve a working user engine on re-runs.
 if explicit_backend or not server_present_at_start or not configured_server('server_file') or not backend_complete_at_start:
     config.update(server_file=f'runtime/{backend}/llama-server', fallback_server_file='runtime/cpu/llama-server', gpu_layers=0 if backend == 'cpu' else 99)

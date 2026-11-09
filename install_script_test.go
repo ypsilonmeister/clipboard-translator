@@ -107,6 +107,9 @@ func TestUninstallPreservesUnrelatedFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(modelsDir, "chat_template.jinja"), []byte("jinja"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(modelsDir, "chat_template.2b.jinja"), []byte("jinja"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// Setup can also install the other sizes (-Model); a leftover download is ours too.
 	for _, n := range []string{"plamo-3-translate-8b-Q4_K_M.gguf", "plamo-3-translate-0.8b-Q4_K_M.gguf.partial"} {
 		if err := os.WriteFile(filepath.Join(modelsDir, n), []byte("gguf"), 0o644); err != nil {
@@ -158,7 +161,7 @@ func TestUninstallPreservesUnrelatedFiles(t *testing.T) {
 	if content, err := os.ReadFile(otherModel); err != nil || string(content) != "someone else's model" {
 		t.Errorf("another tool's model was removed or changed: %v", err)
 	}
-	for _, n := range []string{"plamo-3-translate-2b-Q4_K_M.gguf", "plamo-3-translate-8b-Q4_K_M.gguf", "plamo-3-translate-0.8b-Q4_K_M.gguf.partial", "chat_template.jinja"} {
+	for _, n := range []string{"plamo-3-translate-2b-Q4_K_M.gguf", "plamo-3-translate-8b-Q4_K_M.gguf", "plamo-3-translate-0.8b-Q4_K_M.gguf.partial", "chat_template.jinja", "chat_template.2b.jinja"} {
 		if _, err := os.Stat(filepath.Join(modelsDir, n)); !os.IsNotExist(err) {
 			t.Errorf("our model file was not removed: %s", n)
 		}
