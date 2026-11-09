@@ -163,6 +163,15 @@ func x11TestHotkeyCheck(id int) bool {
 func x11TestKeysymToKeycode(sym uint64) uint32 {
 	return uint32(C.ct_keysym_to_keycode(C.ulong(sym)))
 }
+func x11TestSetKeyDown(id int, down bool) {
+	C.ct_test_set_key_down(C.int(id), C.int(boolInt(down)))
+}
+func x11TestGetKeyDown(id int) int {
+	return int(C.ct_test_get_key_down(C.int(id)))
+}
+func x11TestSetAutorepeatSupported(supported bool) {
+	C.ct_set_autorepeat_supported(C.int(boolInt(supported)))
+}
 func x11TestInstallForwardHandler() {
 	C.test_install_forward_handler()
 }
@@ -195,4 +204,7 @@ func x11TestGetSlotVariants(id int) (int, []uint32) {
 		res[i] = uint32(vars[i])
 	}
 	return n, res
+}
+func x11TestInjectAutorepeatPair(id int, timestamp uint64) {
+	C.ct_test_inject_autorepeat_pair(C.int(id), C.ulong(timestamp))
 }

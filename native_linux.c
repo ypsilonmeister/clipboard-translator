@@ -27,6 +27,7 @@ static HotkeyGrab grabs[MAX_HOTKEYS];
 static unsigned int num_mask, scroll_mask;
 static int grab_error;
 static XErrorHandler prev_error_handler;
+static Bool xkb_autorepeat_supported;
 static GtkStatusIcon *status_icon;
 static GtkWidget *current_menu, *control_window, *status_label;
 static int menu_requested;
@@ -42,10 +43,31 @@ int ct_init(void) {
     display = XOpenDisplay(NULL);
     if (display) {
         g_signal_connect(gtk_clipboard_get(GDK_SELECTION_PRIMARY), "owner-change", G_CALLBACK(primary_owner_change), NULL);
-        Bool supported;
-        XkbSetDetectableAutoRepeat(display, True, &supported);
+        XkbSetDetectableAutoRepeat(display, True, &xkb_autorepeat_supported);
     }
     return display != NULL;
+}
+
+void ct_set_autorepeat_supported(int supported) {
+    xkb_autorepeat_supported = supported ? True : False;
+}
+
+void ct_test_set_key_down(int id, int down) {
+    for (int i = 0; i < MAX_HOTKEYS; i++) {
+        if (grabs[i].id == id) {
+            grabs[i].key_down = down;
+            break;
+        }
+    }
+}
+
+int ct_test_get_key_down(int id) {
+    for (int i = 0; i < MAX_HOTKEYS; i++) {
+        if (grabs[i].id == id) {
+            return grabs[i].key_down;
+        }
+    }
+    return -1;
 }
 
 int ct_test_call_grab_error_handler(int matches_display, int request_code, int error_code) {
@@ -79,6 +101,31 @@ int ct_test_get_slot_variants(int id, unsigned int *variants, int max_var) {
         }
     }
     return -1;
+}
+
+void ct_test_inject_autorepeat_pair(int id, unsigned long timestamp) {
+    if (!display || !id) return;
+    for (int i = 0; i < MAX_HOTKEYS; i++) {
+        if (grabs[i].id == id) {
+            XEvent ev;
+            memset(&ev, 0, sizeof(ev));
+            ev.type = KeyPress;
+            ev.xkey.type = KeyPress;
+            ev.xkey.display = display;
+            ev.xkey.window = DefaultRootWindow(display);
+            ev.xkey.root = DefaultRootWindow(display);
+            ev.xkey.keycode = grabs[i].keycode;
+            ev.xkey.state = grabs[i].mods;
+            ev.xkey.time = (Time)timestamp;
+            ev.xkey.same_screen = True;
+            XPutBackEvent(display, &ev);
+
+            ev.type = KeyRelease;
+            ev.xkey.type = KeyRelease;
+            XPutBackEvent(display, &ev);
+            break;
+        }
+    }
 }
 
 
@@ -261,6 +308,18 @@ void ct_hotkey_pump(void) {
             update_lock_masks();
             continue;
         }
+        if (e.type == KeyRelease && !xkb_autorepeat_supported) {
+            if (XEventsQueued(display, QueuedAfterReading)) {
+                XEvent next_event;
+                XPeekEvent(display, &next_event);
+                if (next_event.type == KeyPress &&
+                    next_event.xkey.keycode == e.xkey.keycode &&
+                    next_event.xkey.time == e.xkey.time) {
+                    XNextEvent(display, &next_event);
+                    continue;
+                }
+            }
+        }
         if (e.type != KeyPress && e.type != KeyRelease) continue;
         unsigned int state_clean = e.xkey.state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask);
         for (int i = 0; i < MAX_HOTKEYS; i++) {
@@ -268,6 +327,14 @@ void ct_hotkey_pump(void) {
             if (grabs[i].keycode != e.xkey.keycode) continue;
             if (e.type == KeyPress) {
                 if (grabs[i].mods == state_clean) {
+                    if (grabs[i].key_down) {
+                        char keys[32];
+                        XQueryKeymap(display, keys);
+                        KeyCode kc = grabs[i].keycode;
+                        if (!(keys[kc / 8] & (1 << (kc % 8)))) {
+                            grabs[i].key_down = 0;
+                        }
+                    }
                     if (!grabs[i].key_down) {
                         grabs[i].fired = 1;
                         grabs[i].key_down = 1;

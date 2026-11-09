@@ -615,4 +615,58 @@ func TestX11HotkeyRobustness(t *testing.T) {
 			t.Errorf("slot 1 must be cleared after ungrab, got nvar=%d", nvarAfter)
 		}
 	})
+
+	// Subtest 5: Missed KeyRelease self-heal (Item 3)
+	t.Run("MissedKeyReleaseSelfHeal", func(t *testing.T) {
+		hk, err := newHotkey("Ctrl+Alt+E")
+		if err != nil {
+			t.Fatalf("newHotkey: %v", err)
+		}
+		t.Cleanup(func() { hk.Close() })
+
+		// Artificially simulate a missed KeyRelease by setting key_down = 1
+		x11TestSetKeyDown(hk.(*linuxHotkey).id, true)
+		if x11TestGetKeyDown(hk.(*linuxHotkey).id) != 1 {
+			t.Fatal("failed to set key_down")
+		}
+
+		// Now press the key combination. Since the physical key is currently up,
+		// the self-heal check in pump must detect it with XQueryKeymap, reset key_down,
+		// and fire the hotkey!
+		sendCombo(x11XK_Control_L, x11XK_Alt_L, 'e')
+		waitPressed(t, hk, true, "hotkey should fire via self-heal after missed KeyRelease")
+	})
+
+	// Subtest 6: Autorepeat fallback when detectable autorepeat is false (Item 6)
+	t.Run("AutorepeatFallbackWhenDetectableUnsupported", func(t *testing.T) {
+		hk, err := newHotkey("Ctrl+Alt+E")
+		if err != nil {
+			t.Fatalf("newHotkey: %v", err)
+		}
+		t.Cleanup(func() {
+			hk.Close()
+			x11TestSetAutorepeatSupported(true)
+		})
+
+		// Force detectable autorepeat to false to exercise fallback
+		x11TestSetAutorepeatSupported(false)
+
+		// Normal press should fire
+		sendCombo(x11XK_Control_L, x11XK_Alt_L, 'e')
+		waitPressed(t, hk, true, "normal press with fallback autorepeat should fire")
+		waitPressed(t, hk, false, "consumed")
+
+		// Inject synthetic auto-repeat pair (KeyRelease + KeyPress with same time)
+		hkID := hk.(*linuxHotkey).id
+		x11TestInjectAutorepeatPair(hkID, 98765)
+		x11TestHotkeyPump()
+
+		// The pair must be ignored by fallback, so check must be false
+		if x11TestHotkeyCheck(hkID) {
+			t.Error("autorepeat pair must be ignored by fallback pump")
+		}
+
+		// Restore detectable autorepeat
+		x11TestSetAutorepeatSupported(true)
+	})
 }
