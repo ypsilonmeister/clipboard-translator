@@ -221,6 +221,7 @@ func (a *app) switchModel(e modelEntry) error {
 	if wasFallback {
 		restore = a.startFallback
 	}
+	msg := fmt.Sprintf("Could not load %s (%v). It may need more memory than this PC has. The previous model is back in use; a smaller one may work.", e.Name, err)
 	if rerr := restore(); rerr != nil {
 		if errors.Is(rerr, errQuit) {
 			return rerr
@@ -229,10 +230,10 @@ func (a *app) switchModel(e modelEntry) error {
 		log.Printf("could not restore the previous model: %v", rerr)
 		a.cancelTransientStatus()
 		a.tray.SetStatus("Clipboard Translator - server stopped, restarting...")
+		msg = "The translation server stopped. Restarting it..."
 	} else {
 		a.refreshStatus()
 	}
-	msg := fmt.Sprintf("Could not load %s (%v). It may need more memory than this PC has. The previous model is back in use; a smaller one may work.", e.Name, err)
 	a.tray.Notify("Clipboard Translator", msg, true)
 	return errors.New(msg)
 }
