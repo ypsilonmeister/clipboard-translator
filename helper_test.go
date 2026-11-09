@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/testsupport"
 )
 
 // TestMain lets the test binary double as a fake llama-server: tests start it
@@ -23,7 +26,7 @@ func TestMain(m *testing.M) {
 		return
 	}
 	// No test may download a real model: model downloads only reach loopback.
-	downloadTransport = loopbackOnly{}
+	models.DownloadTransport = testsupport.LoopbackOnly()
 	// The fake server is a Go program: it does not need the VC++ runtime, whether or not the machine has it.
 	vcRuntimeAvailable = func(string) bool { return true }
 	os.Exit(m.Run())

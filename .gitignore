@@ -3,7 +3,7 @@
 dist/
 
 # Downloaded by Setup.cmd (large, third-party, own licenses)
-models/
+/models/
 runtime/
 
 # Runtime files

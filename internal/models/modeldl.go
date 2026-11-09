@@ -1,4 +1,4 @@
-package main
+package models
 
 import (
 	"context"
@@ -25,11 +25,11 @@ import (
 
 const modelHost = "https://huggingface.co"
 
-// downloadTransport replaces the HTTP transport; tests set one that only
+// DownloadTransport replaces the HTTP transport; tests set one that only
 // reaches loopback, so no test can contact the real host.
-var downloadTransport http.RoundTripper
+var DownloadTransport http.RoundTripper
 
-type downloadState struct {
+type DownloadState struct {
 	Key   string `json:"key"`
 	Phase string `json:"phase"` // checking, downloading, template, done, failed, cancelled
 	Done  int64  `json:"done"`
@@ -37,27 +37,28 @@ type downloadState struct {
 	Error string `json:"error,omitempty"`
 }
 
-func (s downloadState) running() bool {
+func (s DownloadState) Running() bool {
 	return s.Phase == "checking" || s.Phase == "downloading" || s.Phase == "template"
 }
 
-type downloadManager struct {
+type Manager struct {
 	dir     string
 	baseURL string
+	version string // for the User-Agent
 	client  *http.Client
-	events  chan downloadState // final states, for the main loop
+	events  chan DownloadState // final states, for the main loop
 
 	mu       sync.Mutex
-	state    downloadState
+	state    DownloadState
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	deleting map[string]bool
 }
 
-func newDownloadManager(dir string) *downloadManager {
-	m := &downloadManager{dir: dir, baseURL: modelHost, events: make(chan downloadState, 4), deleting: make(map[string]bool)}
+func NewManager(dir, version string) *Manager {
+	m := &Manager{dir: dir, version: version, baseURL: modelHost, events: make(chan DownloadState, 4), deleting: make(map[string]bool)}
 	m.client = &http.Client{
-		Transport: downloadTransport,
+		Transport: DownloadTransport,
 		// Hugging Face answers with a redirect to its CDN, a different host, so
 		// hosts may change; only a step down from https to http is refused.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -73,25 +74,29 @@ func newDownloadManager(dir string) *downloadManager {
 	return m
 }
 
+// Events delivers the final state of each download, for the main loop. The
+// channel is buffered and never closed.
+func (m *Manager) Events() <-chan DownloadState { return m.events }
+
 // State is a copy of the current or last download (Key is empty before the first).
-func (m *downloadManager) State() downloadState {
+func (m *Manager) State() DownloadState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.state
 }
 
 // Downloading reports whether key is being downloaded now.
-func (m *downloadManager) Downloading(key string) bool {
+func (m *Manager) Downloading(key string) bool {
 	s := m.State()
-	return s.Key == key && s.running()
+	return s.Key == key && s.Running()
 }
 
 // ClearKey clears the recorded state if it belongs to key and is not running.
-func (m *downloadManager) ClearKey(key string) {
+func (m *Manager) ClearKey(key string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.state.Key == key && !m.state.running() {
-		m.state = downloadState{}
+	if m.state.Key == key && !m.state.Running() {
+		m.state = DownloadState{}
 	}
 }
 
@@ -99,14 +104,14 @@ func (m *downloadManager) ClearKey(key string) {
 // while the reservation is held. If key is currently being downloaded, ReserveDelete
 // returns an error. The returned release function must be called when deletion
 // completes.
-func (m *downloadManager) ReserveDelete(key string) (func(), error) {
-	e, ok := modelByKey(key)
+func (m *Manager) ReserveDelete(key string) (func(), error) {
+	e, ok := ByKey(key)
 	if !ok {
 		return nil, fmt.Errorf("unknown model %q", key)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.state.Key == key && m.state.running() {
+	if m.state.Key == key && m.state.Running() {
 		return nil, fmt.Errorf("%s is currently being downloaded", e.Name)
 	}
 	if m.deleting == nil {
@@ -129,12 +134,12 @@ func (m *downloadManager) ReserveDelete(key string) (func(), error) {
 
 // Start downloads missing installation files in the background, one model at
 // a time. A model with both its GGUF and the shared template is refused.
-func (m *downloadManager) Start(key string) error {
-	e, ok := modelByKey(key)
+func (m *Manager) Start(key string) error {
+	e, ok := ByKey(key)
 	if !ok {
 		return fmt.Errorf("unknown model %q", key)
 	}
-	if e.installed(m.dir) && e.templateInstalled(m.dir) {
+	if e.Installed(m.dir) && e.TemplateInstalled(m.dir) {
 		return fmt.Errorf("%s is already installed", e.Name)
 	}
 	m.mu.Lock()
@@ -142,12 +147,12 @@ func (m *downloadManager) Start(key string) error {
 	if m.deleting != nil && m.deleting[key] {
 		return fmt.Errorf("%s is currently being deleted; try again in a moment", e.Name)
 	}
-	if m.state.running() {
+	if m.state.Running() {
 		return errors.New("another model is being downloaded; wait for it or cancel it first")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
-	m.state = downloadState{Key: key, Phase: "checking", Total: e.Bytes}
+	m.state = DownloadState{Key: key, Phase: "checking", Total: e.Bytes}
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -159,7 +164,7 @@ func (m *downloadManager) Start(key string) error {
 
 // Cancel stops the running download. The partial file stays, so the next
 // download of that model continues where this one stopped.
-func (m *downloadManager) Cancel() {
+func (m *Manager) Cancel() {
 	m.mu.Lock()
 	cancel := m.cancel
 	m.mu.Unlock()
@@ -169,18 +174,25 @@ func (m *downloadManager) Cancel() {
 }
 
 // Close cancels a running download and waits until its file is closed.
-func (m *downloadManager) Close() {
+func (m *Manager) Close() {
 	m.Cancel()
 	m.wg.Wait()
 }
 
-func (m *downloadManager) set(f func(*downloadState)) {
+// SetBaseURL points the manager at another host. Tests use it to reach a fake one.
+func (m *Manager) SetBaseURL(u string) { m.baseURL = u }
+
+// SetState overwrites the current state without starting anything. It exists
+// so that tests of other packages can stage "a download is running".
+func (m *Manager) SetState(s DownloadState) { m.set(func(cur *DownloadState) { *cur = s }) }
+
+func (m *Manager) set(f func(*DownloadState)) {
 	m.mu.Lock()
 	f(&m.state)
 	m.mu.Unlock()
 }
 
-func (m *downloadManager) finish(key string, err error) {
+func (m *Manager) finish(key string, err error) {
 	final := m.State()
 	switch {
 	case err == nil:
@@ -191,14 +203,14 @@ func (m *downloadManager) finish(key string, err error) {
 		final.Phase, final.Error = "failed", err.Error()
 		log.Printf("model download %s: %v", key, err)
 	}
-	m.set(func(s *downloadState) { *s = final })
+	m.set(func(s *DownloadState) { *s = final })
 	select {
 	case m.events <- final:
 	default:
 	}
 }
 
-func (m *downloadManager) run(ctx context.Context, e modelEntry) {
+func (m *Manager) run(ctx context.Context, e Entry) {
 	if err := os.MkdirAll(filepath.Join(m.dir, "models"), 0o755); err != nil {
 		m.finish(e.Key, err)
 		return
@@ -206,15 +218,15 @@ func (m *downloadManager) run(ctx context.Context, e modelEntry) {
 	base := fmt.Sprintf("%s/pfnet/%s/resolve/%s/", m.baseURL, e.Repo, e.Revision)
 	// A previous attempt may have verified the GGUF before the template failed.
 	// Keep that file and resume only the missing part of the installation.
-	if !e.installed(m.dir) {
-		if err := m.fetch(ctx, e, base+e.File, e.path(m.dir), e.Sha256, true); err != nil {
+	if !e.Installed(m.dir) {
+		if err := m.fetch(ctx, e, base+e.File, e.Path(m.dir), e.Sha256, true); err != nil {
 			m.finish(e.Key, err)
 			return
 		}
 	}
-	if !e.templateInstalled(m.dir) {
-		m.set(func(s *downloadState) { s.Phase = "template" })
-		tpl := e.templatePath(m.dir)
+	if !e.TemplateInstalled(m.dir) {
+		m.set(func(s *DownloadState) { s.Phase = "template" })
+		tpl := e.TemplatePath(m.dir)
 		if err := m.fetch(ctx, e, base+"chat_template.jinja", tpl, e.TemplateSha256, false); err != nil {
 			m.finish(e.Key, err)
 			return
@@ -225,13 +237,13 @@ func (m *downloadManager) run(ctx context.Context, e modelEntry) {
 
 // fetch downloads url to dest through dest+".partial", continuing a partial file
 // from an earlier attempt, and renames it only after its SHA-256 matches want.
-func (m *downloadManager) fetch(ctx context.Context, e modelEntry, url, dest, want string, track bool) error {
+func (m *Manager) fetch(ctx context.Context, e Entry, url, dest, want string, track bool) error {
 	partial := dest + ".partial"
 	h := sha256.New()
 	var have int64
 	if info, err := os.Stat(partial); err == nil && info.Mode().IsRegular() {
 		if track {
-			m.set(func(s *downloadState) { s.Phase = "checking" })
+			m.set(func(s *DownloadState) { s.Phase = "checking" })
 		}
 		n, err := hashFile(ctx, partial, h)
 		if err != nil {
@@ -240,14 +252,14 @@ func (m *downloadManager) fetch(ctx context.Context, e modelEntry, url, dest, wa
 		have = n
 	}
 	if track {
-		m.set(func(s *downloadState) { s.Phase, s.Done = "downloading", have })
+		m.set(func(s *DownloadState) { s.Phase, s.Done = "downloading", have })
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "ClipboardTranslator/"+version)
+	req.Header.Set("User-Agent", "ClipboardTranslator/"+m.version)
 	if have > 0 {
 		req.Header.Set("Range", "bytes="+strconv.FormatInt(have, 10)+"-")
 	}
@@ -292,7 +304,7 @@ func (m *downloadManager) fetch(ctx context.Context, e modelEntry, url, dest, wa
 		return fmt.Errorf("the model host answered HTTP %d", resp.StatusCode)
 	}
 	if track {
-		m.set(func(s *downloadState) { s.Done, s.Total = have, total })
+		m.set(func(s *DownloadState) { s.Done, s.Total = have, total })
 	}
 
 	f, err := os.OpenFile(partial, flags, 0o644)
@@ -314,7 +326,7 @@ func (m *downloadManager) fetch(ctx context.Context, e modelEntry, url, dest, wa
 			h.Write(buf[:n])
 			have += int64(n)
 			if track {
-				m.set(func(s *downloadState) { s.Done = have })
+				m.set(func(s *DownloadState) { s.Done = have })
 			}
 		}
 		if rerr != nil {
@@ -344,7 +356,7 @@ func (m *downloadManager) fetch(ctx context.Context, e modelEntry, url, dest, wa
 
 // verifyAndMove gives the downloaded file its final name only if its SHA-256 is
 // the pinned one. A file that does not match is deleted.
-func (m *downloadManager) verifyAndMove(e modelEntry, partial, dest, want string, h hash.Hash) error {
+func (m *Manager) verifyAndMove(e Entry, partial, dest, want string, h hash.Hash) error {
 	if got := hex.EncodeToString(h.Sum(nil)); !strings.EqualFold(got, want) {
 		_ = os.Remove(partial)
 		return fmt.Errorf("the downloaded %s does not match the expected SHA-256 and was deleted; try again", filepath.Base(dest))

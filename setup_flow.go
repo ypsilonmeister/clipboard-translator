@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
 
 // embeddedSetup is the setup.ps1 of this version, carried inside the exe so a
@@ -74,9 +76,9 @@ func resolvePaths(dir string, c Config) (appPaths, error) {
 	if p.template, err = resolve("template_file", c.TemplateFile); err != nil {
 		return p, err
 	}
-	if !isCustomTemplate(c.TemplateFile) {
-		if m, ok := modelForFile(c.ModelFile); ok {
-			if tplPath, ok := m.installedTemplatePath(dir); ok {
+	if !models.IsCustomTemplate(c.TemplateFile) {
+		if m, ok := models.ForFile(c.ModelFile); ok {
+			if tplPath, ok := m.InstalledTemplatePath(dir); ok {
 				p.template = tplPath
 			}
 		}
@@ -120,13 +122,13 @@ func (p appPaths) missingFor(c Config, dir string) []string {
 	if checkFile(p.model) != nil {
 		out = append(out, p.model)
 	}
-	if isCustomTemplate(c.TemplateFile) {
+	if models.IsCustomTemplate(c.TemplateFile) {
 		if checkFile(p.template) != nil {
 			out = append(out, p.template)
 		}
 	} else {
-		m, known := modelForFile(c.ModelFile)
-		if !known || !m.templateInstalled(dir) {
+		m, known := models.ForFile(c.ModelFile)
+		if !known || !m.TemplateInstalled(dir) {
 			out = append(out, p.template)
 		}
 	}

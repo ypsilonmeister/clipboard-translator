@@ -6,6 +6,8 @@ import (
 	"log"
 	"path/filepath"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
 
 // Command IDs of the app-specific tray menu items.
@@ -19,7 +21,7 @@ const (
 	cmdSettings     = firstAppCommand + 8
 	cmdUnloadModel  = firstAppCommand + 10
 	cmdQuickstart   = firstAppCommand + 11
-	cmdModelBase    = firstAppCommand + 100 // + index into modelCatalog
+	cmdModelBase    = firstAppCommand + 100 // + index into models.Catalog
 	cmdHistoryBase  = firstAppCommand + 300 // + index into history (newest first)
 )
 
@@ -54,8 +56,8 @@ func (a *app) buildMenu() []MenuItem {
 	items = append(items, MenuItem{ID: cmdUnloadModel, Label: "Unload model", Disabled: !a.canUnloadModel()})
 	var modelSub []MenuItem
 	modelBusy := a.busy()
-	for i, m := range modelCatalog {
-		if !m.installed(a.dir) {
+	for i, m := range models.Catalog {
+		if !m.Installed(a.dir) {
 			continue
 		}
 		modelSub = append(modelSub, MenuItem{
@@ -102,7 +104,7 @@ func (a *app) handleCommand(id int) {
 	switch {
 	case id >= cmdHistoryBase:
 		a.copyFromHistory(id - cmdHistoryBase)
-	case id >= cmdModelBase && id < cmdModelBase+len(modelCatalog):
+	case id >= cmdModelBase && id < cmdModelBase+len(models.Catalog):
 		a.switchModelFromMenu(id - cmdModelBase)
 	case id == cmdUnloadModel:
 		a.unloadModel()
@@ -150,15 +152,15 @@ func (a *app) openConfigFile() {
 	}
 }
 
-// switchModelFromMenu switches to modelCatalog[idx] from the tray menu.
+// switchModelFromMenu switches to models.Catalog[idx] from the tray menu.
 func (a *app) switchModelFromMenu(idx int) {
 	if a.busy() {
 		return
 	}
-	if idx < 0 || idx >= len(modelCatalog) {
+	if idx < 0 || idx >= len(models.Catalog) {
 		return
 	}
-	target := modelCatalog[idx]
+	target := models.Catalog[idx]
 	if a.isModelActive(target) {
 		return
 	}

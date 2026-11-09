@@ -1,4 +1,4 @@
-package main
+package models
 
 import (
 	"crypto/sha256"
@@ -9,11 +9,11 @@ import (
 	"strings"
 )
 
-// modelEntry is one model the app can install. The values are pinned to one
+// Entry is one model the app can install. The values are pinned to one
 // Hugging Face commit and SHA-256 each, exactly as in setup.ps1, setup.sh and
 // setup-macos.sh (a test compares them with setup.ps1): to update a model, bump
 // Revision, Sha256 and TemplateSha256 together in all of them.
-type modelEntry struct {
+type Entry struct {
 	Key, Name, Note string
 	File, Repo      string
 	Revision        string
@@ -25,7 +25,7 @@ type modelEntry struct {
 }
 
 // Only Q4_K_M is offered, and not the 31B model (about 20 GB).
-var modelCatalog = []modelEntry{
+var Catalog = []Entry{
 	{Key: "0.8b", Name: "PLaMo 3 Translate 0.8B", Note: "Smallest and fastest.",
 		File: "plamo-3-translate-0.8b-Q4_K_M.gguf", Repo: "plamo-3-translate-0.8b-GGUF",
 		Revision:       "0c4af2b003fdd94b6868aa955414c1c86ee96997",
@@ -50,67 +50,67 @@ var modelCatalog = []modelEntry{
 		SizeLabel:      "5.3 GB", MinBytes: 4 << 30, Bytes: 5280444832},
 }
 
-func modelByKey(key string) (modelEntry, bool) {
-	for _, m := range modelCatalog {
+func ByKey(key string) (Entry, bool) {
+	for _, m := range Catalog {
 		if m.Key == key {
 			return m, true
 		}
 	}
-	return modelEntry{}, false
+	return Entry{}, false
 }
 
-// modelForFile finds the catalog entry whose file is the one a model_file value
+// ForFile finds the catalog entry whose file is the one a model_file value
 // names (either slash, any case).
-func modelForFile(modelFile string) (modelEntry, bool) {
+func ForFile(modelFile string) (Entry, bool) {
 	leaf := modelFile[strings.LastIndexAny(modelFile, `/\`)+1:]
-	for _, m := range modelCatalog {
+	for _, m := range Catalog {
 		if strings.EqualFold(m.File, leaf) {
 			return m, true
 		}
 	}
-	return modelEntry{}, false
+	return Entry{}, false
 }
 
-func (m modelEntry) path(dir string) string { return filepath.Join(dir, "models", m.File) }
+func (m Entry) Path(dir string) string { return filepath.Join(dir, "models", m.File) }
 
 // installed reports whether the model's file is in dir\models and complete
 // enough to be one.
-func (m modelEntry) installed(dir string) bool {
-	info, err := os.Stat(m.path(dir))
+func (m Entry) Installed(dir string) bool {
+	info, err := os.Stat(m.Path(dir))
 	return err == nil && info.Mode().IsRegular() && info.Size() >= m.MinBytes
 }
 
-func isRemovableFile(info os.FileInfo) bool {
+func IsRemovableFile(info os.FileInfo) bool {
 	return !info.IsDir() && info.Mode()&os.ModeSymlink == 0
 }
 
 // partialInfo reports whether a .partial file exists for the model, and its size.
-func (m modelEntry) partialInfo(dir string) (bool, int64) {
-	info, err := os.Lstat(m.path(dir) + ".partial")
-	if err == nil && isRemovableFile(info) {
+func (m Entry) PartialInfo(dir string) (bool, int64) {
+	info, err := os.Lstat(m.Path(dir) + ".partial")
+	if err == nil && IsRemovableFile(info) {
 		return true, info.Size()
 	}
 	return false, 0
 }
 
 // fileInfo reports whether the model file exists, and its size.
-func (m modelEntry) fileInfo(dir string) (bool, int64) {
-	info, err := os.Lstat(m.path(dir))
-	if err == nil && isRemovableFile(info) {
+func (m Entry) FileInfo(dir string) (bool, int64) {
+	info, err := os.Lstat(m.Path(dir))
+	if err == nil && IsRemovableFile(info) {
 		return true, info.Size()
 	}
 	return false, 0
 }
 
-func (m modelEntry) templateFile() string { return "chat_template." + m.Key + ".jinja" }
+func (m Entry) TemplateFile() string { return "chat_template." + m.Key + ".jinja" }
 
-func (m modelEntry) templatePath(dir string) string {
-	return filepath.Join(dir, "models", m.templateFile())
+func (m Entry) TemplatePath(dir string) string {
+	return filepath.Join(dir, "models", m.TemplateFile())
 }
 
-// verifyFileSha256 checks whether path is a regular file whose SHA-256 digest
+// VerifyFileSha256 checks whether path is a regular file whose SHA-256 digest
 // matches expected (case-insensitive).
-func verifyFileSha256(path, expected string) bool {
+func VerifyFileSha256(path, expected string) bool {
 	f, err := os.Open(path)
 	if err != nil {
 		return false
@@ -128,31 +128,31 @@ func verifyFileSha256(path, expected string) bool {
 }
 
 // installedTemplatePath returns the path to the template for m if one exists and
-// matches m.TemplateSha256. It checks m.templatePath(dir) first, and falls back to
+// matches m.TemplateSha256. It checks m.TemplatePath(dir) first, and falls back to
 // models/chat_template.jinja for existing installs.
-func (m modelEntry) installedTemplatePath(dir string) (string, bool) {
-	primary := m.templatePath(dir)
-	if verifyFileSha256(primary, m.TemplateSha256) {
+func (m Entry) InstalledTemplatePath(dir string) (string, bool) {
+	primary := m.TemplatePath(dir)
+	if VerifyFileSha256(primary, m.TemplateSha256) {
 		return primary, true
 	}
 	legacy := filepath.Join(dir, "models", "chat_template.jinja")
-	if verifyFileSha256(legacy, m.TemplateSha256) {
+	if VerifyFileSha256(legacy, m.TemplateSha256) {
 		return legacy, true
 	}
 	return "", false
 }
 
-// templateInstalled reports whether a template matching m.TemplateSha256 is present
+// TemplateInstalled reports whether a template matching m.TemplateSha256 is present
 // in dir\models (either chat_template.<key>.jinja or the legacy chat_template.jinja).
-func (m modelEntry) templateInstalled(dir string) bool {
-	_, ok := m.installedTemplatePath(dir)
+func (m Entry) TemplateInstalled(dir string) bool {
+	_, ok := m.InstalledTemplatePath(dir)
 	return ok
 }
 
-// isCustomTemplate reports whether templateFile is a custom template path set by
+// IsCustomTemplate reports whether templateFile is a custom template path set by
 // the user rather than a standard or legacy managed template file. Custom templates
 // are left alone and not hashed against catalog pins.
-func isCustomTemplate(templateFile string) bool {
+func IsCustomTemplate(templateFile string) bool {
 	t := strings.TrimSpace(templateFile)
 	if t == "" {
 		return false
@@ -166,17 +166,17 @@ func isCustomTemplate(templateFile string) bool {
 	if base == "chat_template.jinja" {
 		return false
 	}
-	for _, m := range modelCatalog {
-		if base == strings.ToLower(m.templateFile()) {
+	for _, m := range Catalog {
+		if base == strings.ToLower(m.TemplateFile()) {
 			return false
 		}
 	}
 	return true
 }
 
-func templateInstalled(dir string) bool {
-	if len(modelCatalog) > 0 {
-		return modelCatalog[0].templateInstalled(dir)
+func TemplateInstalled(dir string) bool {
+	if len(Catalog) > 0 {
+		return Catalog[0].TemplateInstalled(dir)
 	}
 	return false
 }

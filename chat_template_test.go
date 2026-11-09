@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
 
 func TestChatTemplateFreshInstall(t *testing.T) {
@@ -15,10 +17,10 @@ func TestChatTemplateFreshInstall(t *testing.T) {
 	}
 
 	a, _, _ := newTestApp(t)
-	m2b := modelCatalog[1]
+	m2b := models.Catalog[1]
 	putModel(t, a.dir, m2b)
 	a.conf.ModelFile = "models/" + m2b.File
-	a.conf.TemplateFile = "models/" + m2b.templateFile()
+	a.conf.TemplateFile = "models/" + m2b.TemplateFile()
 
 	// Before template is present: missingFor must report it and startServer must fail.
 	paths, err := resolvePaths(a.dir, a.conf)
@@ -41,12 +43,12 @@ func TestChatTemplateFreshInstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(a.dir, "models", m2b.templateFile()), tplBytes, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(a.dir, "models", m2b.TemplateFile()), tplBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Now template is installed:
-	if !m2b.templateInstalled(a.dir) {
+	if !m2b.TemplateInstalled(a.dir) {
 		t.Fatal("templateInstalled must be true after writing pinned template")
 	}
 	paths, err = resolvePaths(a.dir, a.conf)
@@ -65,13 +67,13 @@ func TestChatTemplateFreshInstall(t *testing.T) {
 	if err := a.startServer(); err != nil {
 		t.Fatalf("startServer failed: %v", err)
 	}
-	if !verifyFileSha256(a.sup.template, m2b.TemplateSha256) {
+	if !models.VerifyFileSha256(a.sup.template, m2b.TemplateSha256) {
 		t.Errorf("running template sha256 mismatch")
 	}
 
 	// A corrupted template must prevent server start:
 	a.sup.Stop()
-	if err := os.WriteFile(filepath.Join(a.dir, "models", m2b.templateFile()), []byte("corrupted template"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(a.dir, "models", m2b.TemplateFile()), []byte("corrupted template"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.startServer(); err == nil || !strings.Contains(err.Error(), "does not match expected SHA-256") {
@@ -81,7 +83,7 @@ func TestChatTemplateFreshInstall(t *testing.T) {
 
 func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 	a, _, _ := newTestApp(t)
-	m2b := modelCatalog[1]
+	m2b := models.Catalog[1]
 	putModel(t, a.dir, m2b)
 	a.conf.ModelFile = "models/" + m2b.File
 	a.conf.TemplateFile = "models/chat_template.jinja" // legacy config setting
@@ -97,7 +99,7 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 	}
 
 	// 1. Old 2B template must NOT count as installed
-	if m2b.templateInstalled(a.dir) {
+	if m2b.TemplateInstalled(a.dir) {
 		t.Fatal("templateInstalled must be false for old 2B pin")
 	}
 	paths, err := resolvePaths(a.dir, a.conf)
@@ -122,12 +124,12 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(a.dir, "models", m2b.templateFile()), newTpl, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(a.dir, "models", m2b.TemplateFile()), newTpl, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Now m2b.templateInstalled is true
-	if !m2b.templateInstalled(a.dir) {
+	if !m2b.TemplateInstalled(a.dir) {
 		t.Fatal("templateInstalled must be true after new template is placed")
 	}
 	// resolvePaths automatically picks the verified primary template even if conf has legacy path
@@ -135,8 +137,8 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if paths.template != filepath.Join(a.dir, "models", m2b.templateFile()) {
-		t.Fatalf("resolvePaths must pick %s, got %s", m2b.templateFile(), paths.template)
+	if paths.template != filepath.Join(a.dir, "models", m2b.TemplateFile()) {
+		t.Fatalf("resolvePaths must pick %s, got %s", m2b.TemplateFile(), paths.template)
 	}
 	a.paths = paths
 	a.sup.template = paths.template
@@ -147,11 +149,11 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 	// 4. Test existing install with matching legacy template:
 	// If models/chat_template.jinja HAS the matching hash, it is used
 	a.sup.Stop()
-	_ = os.Remove(filepath.Join(a.dir, "models", m2b.templateFile()))
+	_ = os.Remove(filepath.Join(a.dir, "models", m2b.TemplateFile()))
 	if err := os.WriteFile(legacyPath, newTpl, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !m2b.templateInstalled(a.dir) {
+	if !m2b.TemplateInstalled(a.dir) {
 		t.Fatal("templateInstalled must be true when legacy template has matching hash")
 	}
 	paths, err = resolvePaths(a.dir, a.conf)
@@ -170,9 +172,9 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 
 func TestChatTemplateModelSwitch(t *testing.T) {
 	a, _, _ := newTestApp(t)
-	m08 := modelCatalog[0]
-	m2b := modelCatalog[1]
-	m8b := modelCatalog[2]
+	m08 := models.Catalog[0]
+	m2b := models.Catalog[1]
+	m8b := models.Catalog[2]
 
 	putModel(t, a.dir, m08)
 	putModel(t, a.dir, m2b)
@@ -187,20 +189,20 @@ func TestChatTemplateModelSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(filepath.Join(a.dir, "models", m08.templateFile()), tpl08Bytes, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(a.dir, "models", m08.TemplateFile()), tpl08Bytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(a.dir, "models", m2b.templateFile()), tpl2bBytes, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(a.dir, "models", m2b.TemplateFile()), tpl2bBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// 8b shares the same template hash as 0.8b
-	if err := os.WriteFile(filepath.Join(a.dir, "models", m8b.templateFile()), tpl08Bytes, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(a.dir, "models", m8b.TemplateFile()), tpl08Bytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Start on 2B
 	a.conf.ModelFile = "models/" + m2b.File
-	a.conf.TemplateFile = "models/" + m2b.templateFile()
+	a.conf.TemplateFile = "models/" + m2b.TemplateFile()
 	paths, err := resolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +213,7 @@ func TestChatTemplateModelSwitch(t *testing.T) {
 	if err := a.startServer(); err != nil {
 		t.Fatalf("startServer on 2B failed: %v", err)
 	}
-	if !verifyFileSha256(a.sup.template, m2b.TemplateSha256) {
+	if !models.VerifyFileSha256(a.sup.template, m2b.TemplateSha256) {
 		t.Fatalf("2B template sha mismatch")
 	}
 
@@ -228,7 +230,7 @@ func TestChatTemplateModelSwitch(t *testing.T) {
 	if a.sup.template != filepath.Join(a.dir, "models", "chat_template.0.8b.jinja") {
 		t.Errorf("sup.template = %q, want ...chat_template.0.8b.jinja", a.sup.template)
 	}
-	if !verifyFileSha256(a.sup.template, m08.TemplateSha256) {
+	if !models.VerifyFileSha256(a.sup.template, m08.TemplateSha256) {
 		t.Errorf("running 0.8B template sha mismatch")
 	}
 
@@ -251,7 +253,7 @@ func TestChatTemplateModelSwitch(t *testing.T) {
 	if a.conf.TemplateFile != "models/chat_template.8b.jinja" {
 		t.Errorf("conf.TemplateFile = %q, want models/chat_template.8b.jinja", a.conf.TemplateFile)
 	}
-	if !verifyFileSha256(a.sup.template, m8b.TemplateSha256) {
+	if !models.VerifyFileSha256(a.sup.template, m8b.TemplateSha256) {
 		t.Errorf("running 8B template sha mismatch")
 	}
 
@@ -265,15 +267,15 @@ func TestChatTemplateModelSwitch(t *testing.T) {
 	if a.conf.TemplateFile != "models/chat_template.2b.jinja" {
 		t.Errorf("conf.TemplateFile = %q, want models/chat_template.2b.jinja", a.conf.TemplateFile)
 	}
-	if !verifyFileSha256(a.sup.template, m2b.TemplateSha256) {
+	if !models.VerifyFileSha256(a.sup.template, m2b.TemplateSha256) {
 		t.Errorf("running 2B template sha mismatch")
 	}
 }
 
 func TestChatTemplateSwitchRefusesMismatchedTemplate(t *testing.T) {
 	a, _, _ := newTestApp(t)
-	m08 := modelCatalog[0]
-	m2b := modelCatalog[1]
+	m08 := models.Catalog[0]
+	m2b := models.Catalog[1]
 
 	putModel(t, a.dir, m08)
 	putModel(t, a.dir, m2b)
@@ -282,17 +284,17 @@ func TestChatTemplateSwitchRefusesMismatchedTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(a.dir, "models", m2b.templateFile()), tpl2bBytes, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(a.dir, "models", m2b.TemplateFile()), tpl2bBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Write bad template for 0.8B
-	if err := os.WriteFile(filepath.Join(a.dir, "models", m08.templateFile()), []byte("bad template hash"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(a.dir, "models", m08.TemplateFile()), []byte("bad template hash"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	a.conf.ModelFile = "models/" + m2b.File
-	a.conf.TemplateFile = "models/" + m2b.templateFile()
+	a.conf.TemplateFile = "models/" + m2b.TemplateFile()
 	paths, _ := resolvePaths(a.dir, a.conf)
 	a.paths = paths
 	a.sup.model = paths.model
@@ -320,8 +322,8 @@ func TestChatTemplateSwitchRefusesMismatchedTemplate(t *testing.T) {
 
 func TestChatTemplateCustomTemplatePreserved(t *testing.T) {
 	a, _, _ := newTestApp(t)
-	m08 := modelCatalog[0]
-	m2b := modelCatalog[1]
+	m08 := models.Catalog[0]
+	m2b := models.Catalog[1]
 	putModel(t, a.dir, m08)
 	putModel(t, a.dir, m2b)
 
@@ -332,8 +334,8 @@ func TestChatTemplateCustomTemplatePreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !isCustomTemplate(customRel) {
-		t.Fatalf("isCustomTemplate(%q) must be true", customRel)
+	if !models.IsCustomTemplate(customRel) {
+		t.Fatalf("models.IsCustomTemplate(%q) must be true", customRel)
 	}
 
 	a.conf.ModelFile = "models/" + m2b.File

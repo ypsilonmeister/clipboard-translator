@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
 
 // The settings page is a small web page served by the app on 127.0.0.1 for as
@@ -76,15 +77,15 @@ type settingsState struct {
 	NoActiveHotkey bool             `json:"no_active_hotkey"`
 	Guide          quickstartGuide  `json:"guide"`
 
-	Models           []modelState   `json:"models"`
-	CustomModel      string         `json:"custom_model,omitempty"` // model_file when it is not one of the models above
-	Engines          []engineState  `json:"engines"`
-	ConfiguredEngine string         `json:"configured_engine,omitempty"`
-	RunningEngine    string         `json:"running_engine,omitempty"`
-	Download         *downloadState `json:"download,omitempty"`
-	Busy             string         `json:"busy,omitempty"`   // what the app is doing now (loading a model ...)
-	Notice           string         `json:"notice,omitempty"` // why the last switch did not work
-	LicenseURL       string         `json:"license_url"`
+	Models           []modelState          `json:"models"`
+	CustomModel      string                `json:"custom_model,omitempty"` // model_file when it is not one of the models above
+	Engines          []engineState         `json:"engines"`
+	ConfiguredEngine string                `json:"configured_engine,omitempty"`
+	RunningEngine    string                `json:"running_engine,omitempty"`
+	Download         *models.DownloadState `json:"download,omitempty"`
+	Busy             string                `json:"busy,omitempty"`   // what the app is doing now (loading a model ...)
+	Notice           string                `json:"notice,omitempty"` // why the last switch did not work
+	LicenseURL       string                `json:"license_url"`
 }
 
 type modelState struct {
@@ -148,7 +149,7 @@ type settingsServer struct {
 	ln    net.Listener
 	srv   *http.Server
 	ask   func(settingsRequest) settingsReply
-	dl    *downloadManager // owned by the app: a download outlives this server
+	dl    *models.Manager // owned by the app: a download outlives this server
 	idle  time.Duration
 
 	mu    sync.Mutex
@@ -159,7 +160,7 @@ type settingsServer struct {
 
 // startSettingsServer listens on a free loopback port. The server closes itself
 // after idle without a request (the page pings while it is open).
-func startSettingsServer(ask func(settingsRequest) settingsReply, dl *downloadManager, idle time.Duration) (*settingsServer, error) {
+func startSettingsServer(ask func(settingsRequest) settingsReply, dl *models.Manager, idle time.Duration) (*settingsServer, error) {
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {
 		return nil, err

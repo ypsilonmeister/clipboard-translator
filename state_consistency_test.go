@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
 
 // Issue #60: a settings page save that changes neither hotkeys nor languages
@@ -291,10 +292,10 @@ func TestChoosingTheRunningFallbackKeepsItWithoutRestart(t *testing.T) {
 func TestSwitchModelOnCPUFallbackUsesFallbackAndKeepsFallbackState(t *testing.T) {
 	withModels(t, testEntry("a", "a.gguf"), testEntry("b", "b.gguf"))
 	a := startOnFallback(t)
-	putModel(t, a.dir, modelCatalog[1])
+	putModel(t, a.dir, models.Catalog[1])
 	oldPid := a.sup.cmd.Process.Pid
 
-	if err := a.switchModel(modelCatalog[1]); err != nil {
+	if err := a.switchModel(models.Catalog[1]); err != nil {
 		t.Fatalf("switching model on CPU fallback failed: %v", err)
 	}
 	if !healthy(a) || a.sup.cmd.Process.Pid == oldPid {
@@ -327,10 +328,10 @@ func TestSwitchModelOnCPUFallbackUsesFallbackAndKeepsFallbackState(t *testing.T)
 func TestSwitchModelOnCPUFallbackFailureRestoresFallbackWithoutTouchingGPU(t *testing.T) {
 	withModels(t, testEntry("a", "a.gguf"), testEntry("bad", "bad-FAIL.gguf"))
 	a := startOnFallback(t)
-	putModel(t, a.dir, modelCatalog[1])
+	putModel(t, a.dir, models.Catalog[1])
 	oldModel := a.sup.model
 
-	err := a.switchModel(modelCatalog[1])
+	err := a.switchModel(models.Catalog[1])
 	if err == nil || !strings.Contains(err.Error(), "previous model is back") {
 		t.Fatalf("expected error indicating previous model is back, got: %v", err)
 	}
@@ -356,8 +357,8 @@ func TestSettingsStateDoesNotReportTargetModelAsActiveWhileSwitching(t *testing.
 	t.Setenv("CT_TEST_FAKE_SERVER_DELAY", "200")
 	withModels(t, testEntry("a", "a.gguf"), testEntry("b", "b.gguf"))
 	a, _, _ := newTestApp(t)
-	putModel(t, a.dir, modelCatalog[0])
-	putModel(t, a.dir, modelCatalog[1])
+	putModel(t, a.dir, models.Catalog[0])
+	putModel(t, a.dir, models.Catalog[1])
 	a.conf.ModelFile = "models/a.gguf"
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
@@ -379,7 +380,7 @@ func TestSettingsStateDoesNotReportTargetModelAsActiveWhileSwitching(t *testing.
 		return origUI(label, elapsed)
 	}
 
-	if err := a.switchModel(modelCatalog[1]); err != nil {
+	if err := a.switchModel(models.Catalog[1]); err != nil {
 		t.Fatalf("switchModel failed: %v", err)
 	}
 	if checked == 0 {

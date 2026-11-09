@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print pinned model information from models.go for workflow and scripts.
+"""Print pinned model information from internal/models/models.go for workflow and scripts.
 
 Usage:
     python3 tools/print_model_pin.py 0.8b
@@ -42,9 +42,9 @@ def validate_model_info(info):
 
 
 def parse_models_go(content):
-    """Extract model entries from models.go text."""
+    """Extract model entries from internal/models/models.go text."""
     catalog = {}
-    # Find struct literals in modelCatalog = []modelEntry{ ... }
+    # Find struct literals in Catalog = []Entry{ ... }
     entry_re = re.compile(r'\{Key:\s*"([^"]+)",(?:[^{}]|\n)*?\}', re.MULTILINE)
     field_re = lambda name: re.compile(rf'{name}:\s*"([^"]+)"')
 
@@ -81,14 +81,14 @@ def parse_models_go(content):
 
 
 def get_model_info(root_dir, key):
-    models_path = Path(root_dir) / 'models.go'
+    models_path = Path(root_dir) / 'internal' / 'models' / 'models.go'
     if not models_path.is_file():
         raise FileNotFoundError(f'{models_path} not found')
     catalog = parse_models_go(models_path.read_text(encoding='utf-8'))
     norm_key = key.lower().strip()
     if norm_key not in catalog:
         available = ', '.join(sorted(catalog.keys()))
-        raise KeyError(f'Model {key!r} not found in models.go (available: {available})')
+        raise KeyError(f'Model {key!r} not found in internal/models/models.go (available: {available})')
     info = catalog[norm_key]
     validate_model_info(info)
     return info

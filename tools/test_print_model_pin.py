@@ -49,7 +49,8 @@ class PrintModelPinTests(unittest.TestCase):
     def test_get_model_info_from_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / 'models.go').write_text(FIXTURE_MODELS_GO, encoding='utf-8')
+            (root / 'internal' / 'models').mkdir(parents=True)
+            (root / 'internal' / 'models' / 'models.go').write_text(FIXTURE_MODELS_GO, encoding='utf-8')
 
             info = pmp.get_model_info(root, '0.8B')
             self.assertEqual(info['key'], '0.8b')
@@ -60,7 +61,8 @@ class PrintModelPinTests(unittest.TestCase):
     def test_main_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / 'models.go').write_text(FIXTURE_MODELS_GO, encoding='utf-8')
+            (root / 'internal' / 'models').mkdir(parents=True)
+            (root / 'internal' / 'models' / 'models.go').write_text(FIXTURE_MODELS_GO, encoding='utf-8')
 
             with mock.patch('print_model_pin.Path.resolve') as mock_resolve:
                 mock_resolve.return_value = root / 'tools' / 'print_model_pin.py'
