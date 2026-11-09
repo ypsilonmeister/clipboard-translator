@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // app ties the tray, the llama-server supervisor, the clipboard and the hotkey
@@ -64,6 +65,11 @@ type app struct {
 	foreground     func() uintptr                                        // foregroundWindow, replaceable in tests
 	paste          func(target uintptr) error                            // pasteIntoForeground, replaceable in tests
 	capture        func(cb Clipboard, win uintptr) (string, bool, error) // captureSelectedText, replaceable in tests
+
+	statusResetAt  time.Time
+	lastSkipReason skipReason
+	lastSkipNotify time.Time
+	now            func() time.Time // time.Now, replaceable in tests
 }
 
 type extraHotkey struct {
@@ -99,6 +105,7 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 		foreground: foregroundWindow,
 		paste:      pasteIntoForeground,
 		capture:    captureSelectedText,
+		now:        time.Now,
 	}
 	tray.SetMenu(a.buildMenu)
 	a.sup = &supervisor{
@@ -228,6 +235,7 @@ func (a *app) restartServer() bool {
 		}
 		wait := restartBackoff(a.limiter.Attempt())
 		log.Printf("restarting the server in %s (attempt %d of %d)", wait, a.limiter.Attempt(), a.limiter.max)
+		a.cancelTransientStatus()
 		a.tray.SetStatus("Clipboard Translator - server stopped, restarting...")
 		a.tray.Notify("Clipboard Translator", "The translation server stopped. Restarting it...", true)
 		if a.sleepPumping(wait) {
@@ -245,6 +253,7 @@ func (a *app) restartServer() bool {
 		log.Printf("restart failed: %v", err)
 	}
 	log.Print("server restarted; ready")
+	a.cancelTransientStatus()
 	a.tray.SetStatus(a.readyTip)
 	a.tray.Notify("Clipboard Translator", "The translation server is back. Ready.", false)
 	return true
@@ -260,6 +269,7 @@ func (a *app) recoverServer() bool {
 
 // run starts the server and then serves hotkey presses until the user quits.
 func (a *app) run() {
+	a.cancelTransientStatus()
 	a.tray.SetStatus("Clipboard Translator - loading model...")
 	defer a.sup.Stop()
 	if err := a.startServer(); err != nil {
@@ -460,6 +470,7 @@ func (a *app) serve(cb Clipboard) {
 				continue
 			}
 			a.tickTranslationStatus()
+			a.tickTransientStatus()
 			if pressed {
 				a.startTranslation(pressedProfile)
 			}
@@ -506,12 +517,52 @@ func (a *app) cancelTranslation() {
 	}
 }
 
+func (a *app) timeNow() time.Time {
+	if a.now != nil {
+		return a.now()
+	}
+	return time.Now()
+}
+
+func (a *app) setTransientStatus(status string) {
+	a.tray.SetStatus(status)
+	a.statusResetAt = a.timeNow().Add(8 * time.Second)
+}
+
+func (a *app) cancelTransientStatus() {
+	a.statusResetAt = time.Time{}
+}
+
+func (a *app) tickTransientStatus() {
+	if a.translating {
+		return
+	}
+	if !a.statusResetAt.IsZero() && !a.timeNow().Before(a.statusResetAt) {
+		a.statusResetAt = time.Time{}
+		a.tray.SetStatus(a.readyTip)
+	}
+}
+
+func (a *app) shouldNotifySkip(reason skipReason) bool {
+	if reason != skipTooLong {
+		return false
+	}
+	now := a.timeNow()
+	if a.lastSkipReason == reason && now.Sub(a.lastSkipNotify) < 15*time.Second {
+		return false
+	}
+	a.lastSkipReason = reason
+	a.lastSkipNotify = now
+	return true
+}
+
 // abortTranslation cancels the request in flight and makes sure its result,
 // should it still arrive, is ignored.
 func (a *app) abortTranslation() {
 	a.cancelTranslation()
 	a.generation++
 	a.translating = false
+	a.cancelTransientStatus()
 }
 
 // tickTranslationStatus keeps the tooltip's elapsed seconds current.
@@ -519,7 +570,7 @@ func (a *app) tickTranslationStatus() {
 	if !a.translating {
 		return
 	}
-	if sec := int(time.Since(a.translateStart) / time.Second); sec != a.lastTranslSec {
+	if sec := int(a.timeNow().Sub(a.translateStart) / time.Second); sec != a.lastTranslSec {
 		a.lastTranslSec = sec
 		a.tray.SetStatus(fmt.Sprintf("Clipboard Translator - translating... (%ds)", sec))
 	}
@@ -535,6 +586,7 @@ func (a *app) startTranslation(index int) {
 	source, fromSelection, err := a.capture(a.cb, win)
 	if err != nil {
 		log.Printf("cannot capture selection: %v", err)
+		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
 		if errors.Is(err, errCaptureModifiersHeld) || errors.Is(err, errCaptureFocusChanged) {
 			// Say so: translating the old clipboard text instead would be a silent wrong answer.
@@ -542,15 +594,21 @@ func (a *app) startTranslation(index int) {
 		}
 		return
 	}
-	direction, ok := profile.direction(source, a.conf.MaxChars)
-	if !ok {
-		log.Print("skipped: empty, unsupported, URL, or too long")
-		a.tray.SetStatus(a.readyTip)
+	reason, direction := profile.check(source, a.conf.MaxChars)
+	if reason != skipNone {
+		count := utf8.RuneCountInString(source)
+		msg := skipMessage(reason, count, a.conf.MaxChars, profile.label())
+		log.Printf("skipped (%s): %s", reason, msg)
+		a.setTransientStatus(skipStatus(reason, profile.label()))
+		if a.shouldNotifySkip(reason) {
+			a.tray.Notify("Clipboard Translator", msg, true)
+		}
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.conf.TranslationTimeoutSec)*time.Second)
 	a.cancelCurrent = cancel
-	a.translating, a.translateStart, a.lastTranslSec = true, time.Now(), 0
+	a.cancelTransientStatus()
+	a.translating, a.translateStart, a.lastTranslSec = true, a.timeNow(), 0
 	g := a.generation
 	key := a.sup.apiKey // read here: the supervisor belongs to this thread
 	from := direction.Source
@@ -576,20 +634,22 @@ func (a *app) handleResult(res result) {
 		return
 	}
 	a.translating = false
-	a.tray.SetStatus(a.readyTip)
 	if res.err != nil {
 		if !errors.Is(res.err, context.Canceled) {
 			log.Printf("translation failed: %v", res.err)
 			msg := "See translator.log for details."
 			if errors.Is(res.err, errTruncated) {
-				msg = "The translation was cut off at the token limit, so the clipboard was left unchanged. Select less text, or raise max_tokens / context_tokens in config.json."
+				msg = "The translation was cut off at the token limit, so no translation was put on the clipboard. Select less text, or raise max_tokens / context_tokens in config.json."
 			}
 			a.tray.Notify("Translation failed", msg, true)
 		}
+		a.cancelTransientStatus()
+		a.tray.SetStatus(a.readyTip)
 		return
 	}
 	if res.translated == res.original {
 		log.Print("translation unchanged; clipboard left intact")
+		a.setTransientStatus("Clipboard Translator - translation is the same as the source; the clipboard still holds the source")
 		return
 	}
 	// A sequence number is not a reliable test for a text change:
@@ -598,10 +658,14 @@ func (a *app) handleResult(res result) {
 	applied, err := applyTranslation(a.cb, res.original, res.translated)
 	if err != nil {
 		log.Printf("clipboard check/write failed: %v", err)
+		a.tray.SetStatus(a.readyTip)
+		a.tray.Notify("Clipboard Translator", "Could not write translation to the clipboard: "+err.Error(), true)
 		return
 	}
 	if !applied {
 		log.Print("clipboard text changed during translation; result discarded (new clipboard preserved)")
+		a.tray.SetStatus(a.readyTip)
+		a.tray.Notify("Clipboard Translator", "The clipboard changed while translating, so the result was dropped and the new clipboard text was kept.", false)
 		return
 	}
 	a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
@@ -612,6 +676,7 @@ func (a *app) handleResult(res result) {
 		// target pasteWithFocus must still find in front right before Ctrl+V.
 		if err := a.paste(res.window); err != nil {
 			log.Printf("auto-paste failed: %v", err)
+			a.tray.SetStatus("Clipboard Translator - translation ready (" + pasteShortcut() + ")")
 			a.tray.Notify("Clipboard Translator", "Translation ready, but it could not be pasted ("+err.Error()+"). Press "+pasteShortcut()+".", true)
 			return
 		}
@@ -625,7 +690,7 @@ func (a *app) handleResult(res result) {
 		log.Print("translation ready in clipboard (", pasteShortcut(), " to paste)")
 		a.tray.SetStatus("Clipboard Translator - translation ready (" + pasteShortcut() + ")")
 	}
-	if a.conf.NotifyOnComplete && action != pasteNow {
+	if a.conf.NotifyOnComplete && action == pasteNone {
 		title, msg := completionNotification()
 		a.tray.Notify(title, msg, false)
 	}

@@ -391,7 +391,7 @@ Everything else stays in `config.json`.
 - Some apps block the synthetic Ctrl+C used to read the selection.
 - Reading the selection changes the clipboard. The translation only replaces it
   if the clipboard text is still the text that was captured.
-- One language pair per hotkey; the two languages must use different scripts (en ↔ de, or Simplified ↔ Traditional Chinese, cannot be told apart from the text; give each its own `target` profile instead). With Japanese and Chinese in one pair, text with only Han characters is read as Chinese; kana makes it Japanese. URLs are not translated.
+- One language pair per hotkey; the two languages must use different scripts (en ↔ de, or Simplified ↔ Traditional Chinese, cannot be told apart from the text; give each its own `target` profile instead). With Japanese and Chinese in one pair, text with only Han characters is read as Chinese; kana makes it Japanese. URLs are not translated. When text cannot be translated (empty selection, URL-only, wrong language pair), the tray tooltip shows why; text over the character limit also shows a notification.
 - A GPU backend can fail (too little VRAM, old driver, missing DLLs); the app
   then falls back to the CPU build. See `server.log` and `translator.log`.
 - The exe is not code-signed, so a zip downloaded in a browser may trigger a

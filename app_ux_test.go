@@ -91,9 +91,14 @@ func TestHandleResultAutoPaste(t *testing.T) {
 	a.paste = func(uintptr) error { return errors.New("keys held") }
 	cb.text = "d"
 	g = pending(a)
+	tray.status = "Clipboard Translator - translating... (1s)"
 	a.handleResult(result{original: "d", translated: "D", generation: g, window: 100, fromSelection: true})
 	if !strings.Contains(tray.lastNote(), "could not be pasted") || cb.text != "D" {
 		t.Fatalf("note=%q clipboard=%q", tray.lastNote(), cb.text)
+	}
+	wantStatus := "Clipboard Translator - translation ready (" + pasteShortcut() + ")"
+	if tray.status != wantStatus {
+		t.Fatalf("failed auto-paste status = %q, want %q", tray.status, wantStatus)
 	}
 }
 
@@ -153,8 +158,13 @@ func TestCancelFromMenu(t *testing.T) {
 		t.Fatalf("while translating, Cancel must be the first menu item, got %+v", items[0])
 	}
 	a.handleCommand(cmdCancel)
-	if !cancelled || a.translating || a.generation == g || tray.status != "ready" {
+	if !cancelled || a.translating || a.generation == g || tray.status != "Clipboard Translator - translation cancelled" {
 		t.Fatalf("cancelled=%v translating=%v generation=%d (was %d) status=%q", cancelled, a.translating, a.generation, g, tray.status)
+	}
+	a.now = func() time.Time { return time.Now().Add(9 * time.Second) }
+	a.tickTransientStatus()
+	if tray.status != "ready" {
+		t.Fatalf("status must reset to readyTip after 8s, got %q", tray.status)
 	}
 	for _, it := range a.buildMenu() {
 		if it.ID == cmdCancel {
@@ -335,9 +345,11 @@ func TestHandleResultNotifyOnComplete(t *testing.T) {
 		}
 	}
 
-	// 4. auto-paste on but window changed (action == pasteWindowChanged): completion notification is shown.
+	// 4. auto-paste on but window changed (action == pasteWindowChanged): exactly one notification (no double notification).
 	*fg = 200
 	cb.text = "orange"
+	tray.notes = nil
+	tray.titles = nil
 	g = pending(a)
 	a.handleResult(result{
 		original:      "orange",
@@ -347,9 +359,17 @@ func TestHandleResultNotifyOnComplete(t *testing.T) {
 		window:        100,
 		fromSelection: true,
 	})
-	assertGenericNotification(t, "orange", "みかん")
+	if len(tray.notes) != 1 {
+		t.Fatalf("pasteWindowChanged must show exactly 1 notification, got %d: %v", len(tray.notes), tray.notes)
+	}
+	if !strings.Contains(tray.lastNote(), "active window changed") {
+		t.Fatalf("note = %q, want active window changed", tray.lastNote())
+	}
+	if tray.lastTitle() == wantTitle {
+		t.Fatalf("generic completion notification must not fire in pasteWindowChanged")
+	}
 
-	// 5. clipboard text changed during translation: result discarded, no completion notification.
+	// 5. clipboard text changed during translation: result discarded notification shown, but no completion notification.
 	tray.notes = nil
 	tray.titles = nil
 	cb.text = "user copied something else"
@@ -362,8 +382,14 @@ func TestHandleResultNotifyOnComplete(t *testing.T) {
 		window:        100,
 		fromSelection: true,
 	})
-	if len(tray.titles) != 0 {
-		t.Fatalf("clipboard changed during translation must not notify completion, got %v", tray.titles)
+	if len(tray.notes) != 1 {
+		t.Fatalf("discarded outcome must show exactly 1 notification, got %d: %v", len(tray.notes), tray.notes)
+	}
+	if !strings.Contains(tray.lastNote(), "clipboard changed while translating") {
+		t.Fatalf("note = %q, want clipboard changed notification", tray.lastNote())
+	}
+	if tray.lastTitle() == wantTitle {
+		t.Fatalf("generic completion notification must not fire on discarded result")
 	}
 	if cb.text != "user copied something else" {
 		t.Fatalf("clipboard must be kept intact, got %q", cb.text)
@@ -404,5 +430,455 @@ func TestHistoryMenuCopiesAndClears(t *testing.T) {
 	a.handleCommand(cmdHistoryClear)
 	if len(a.hist.Items()) != 0 {
 		t.Fatal("history not cleared")
+	}
+}
+
+func TestSkipReasonClassification(t *testing.T) {
+	pairProfile := Profile{Languages: []string{"ja", "en"}}
+	targetProfile := Profile{Target: "ko"}
+
+	cases := []struct {
+		name     string
+		p        Profile
+		input    string
+		maxChars int
+		want     skipReason
+	}{
+		{"empty string", pairProfile, "", 100, skipEmpty},
+		{"whitespace only", pairProfile, "   \n\t  ", 100, skipEmpty},
+		{"too long pair", pairProfile, "こんにちは", 2, skipTooLong},
+		{"too long target", targetProfile, strings.Repeat("a", 101), 100, skipTooLong},
+		{"url https", pairProfile, "https://example.com/test", 100, skipURL},
+		{"url http", targetProfile, "http://example.com", 100, skipURL},
+		{"digits and symbols only for pair", pairProfile, "12345 !?", 100, skipNoTranslatableText},
+		{"digits and symbols only for target", targetProfile, "12345 !?", 100, skipNoTranslatableText},
+		{"unsupported script for pair", pairProfile, "Привет мир", 100, skipNoTranslatableText},
+		{"valid ja in pair", pairProfile, "こんにちは", 100, skipNone},
+		{"valid en in pair", pairProfile, "Hello world", 100, skipNone},
+		{"valid text for target", targetProfile, "Guten Tag", 100, skipNone},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.p.skipReason(tc.input, tc.maxChars)
+			if got != tc.want {
+				t.Fatalf("skipReason(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+			_, ok := tc.p.direction(tc.input, tc.maxChars)
+			if ok != (tc.want == skipNone) {
+				t.Fatalf("direction ok=%v, want %v", ok, tc.want == skipNone)
+			}
+		})
+	}
+}
+
+func TestSkipMessageText(t *testing.T) {
+	for _, tc := range []struct {
+		reason skipReason
+		count  int
+		limit  int
+		label  string
+		want   string
+	}{
+		{
+			reason: skipEmpty,
+			count:  0,
+			limit:  4000,
+			label:  "Japanese ↔ English",
+			want:   "Nothing to translate: no text was selected or copied.",
+		},
+		{
+			reason: skipTooLong,
+			count:  4213,
+			limit:  4000,
+			label:  "Japanese ↔ English",
+			want:   "Nothing was translated: the selection is 4213 characters, over the 4000-character limit. Select less text or raise the limit in Settings (Longest text).",
+		},
+		{
+			reason: skipURL,
+			count:  25,
+			limit:  4000,
+			label:  "Japanese ↔ English",
+			want:   "Nothing was translated: the selection is just a URL.",
+		},
+		{
+			reason: skipNoTranslatableText,
+			count:  10,
+			limit:  4000,
+			label:  "Japanese ↔ English",
+			want:   "Nothing was translated: this hotkey translates Japanese ↔ English.",
+		},
+		{
+			reason: skipNoTranslatableText,
+			count:  10,
+			limit:  4000,
+			label:  "to Korean",
+			want:   "Nothing was translated: this hotkey translates to Korean.",
+		},
+	} {
+		msg := skipMessage(tc.reason, tc.count, tc.limit, tc.label)
+		if msg != tc.want {
+			t.Errorf("skipMessage(%v) = %q, want %q", tc.reason, msg, tc.want)
+		}
+	}
+}
+
+func TestStartTranslationTooLongNotificationAndThrottle(t *testing.T) {
+	a, tray, _, _, _ := uxApp(t)
+	a.conf.MaxChars = 10
+	longText := "123456789012" // 12 chars > 10 limit
+	a.capture = func(Clipboard, uintptr) (string, bool, error) {
+		return longText, true, nil
+	}
+	currentTime := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return currentTime }
+
+	// 1. First too-long request: notification shown, error flag set, limit and count included.
+	a.startTranslation(0)
+	if len(tray.notes) != 1 {
+		t.Fatalf("first too-long press must show 1 notification, got %d", len(tray.notes))
+	}
+	if !tray.lastError() {
+		t.Fatal("too-long notification must have isError = true")
+	}
+	note := tray.lastNote()
+	if !strings.Contains(note, "12") || !strings.Contains(note, "10") {
+		t.Fatalf("notification must contain count 12 and limit 10, got %q", note)
+	}
+	if strings.Contains(note, longText) {
+		t.Fatalf("notification must not contain source text, got %q", note)
+	}
+	if tray.status != "Clipboard Translator - text is too long" {
+		t.Fatalf("status = %q, want 'Clipboard Translator - text is too long'", tray.status)
+	}
+
+	// 2. Second too-long request within throttle window (e.g. 5 seconds later):
+	// status still updated, but NO new notification.
+	currentTime = currentTime.Add(5 * time.Second)
+	tray.status = "untouched"
+	a.startTranslation(0)
+	if len(tray.notes) != 1 {
+		t.Fatalf("throttled too-long press must not send another notification, got %d", len(tray.notes))
+	}
+	if tray.status != "Clipboard Translator - text is too long" {
+		t.Fatalf("status must still be updated while throttled, got %q", tray.status)
+	}
+
+	// 3. Third request after 16 seconds (outside 15s throttle window): new notification.
+	currentTime = currentTime.Add(11 * time.Second) // 5 + 11 = 16 seconds after first
+	a.startTranslation(0)
+	if len(tray.notes) != 2 {
+		t.Fatalf("too-long request after throttle window must notify, got %d notes", len(tray.notes))
+	}
+}
+
+func TestStartTranslationRoutineSkips(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		text       string
+		wantStatus string
+	}{
+		{"empty selection", "", "Clipboard Translator - nothing to translate (empty selection)"},
+		{"whitespace selection", "   ", "Clipboard Translator - nothing to translate (empty selection)"},
+		{"url only", "https://example.com/foo", "Clipboard Translator - nothing to translate (URL only)"},
+		{"digits/symbols only", "12345", "Clipboard Translator - nothing to translate (not Japanese ↔ English)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, tray, _, _, _ := uxApp(t)
+			a.capture = func(Clipboard, uintptr) (string, bool, error) {
+				return tc.text, true, nil
+			}
+			a.startTranslation(0)
+			if len(tray.notes) != 0 {
+				t.Fatalf("routine skip must not notify, got %v", tray.notes)
+			}
+			if tray.status != tc.wantStatus {
+				t.Fatalf("status = %q, want %q", tray.status, tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestTransientStatusReset(t *testing.T) {
+	a, tray, _, _, _ := uxApp(t)
+	a.readyTip = "Clipboard Translator - ready"
+	currentTime := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return currentTime }
+
+	a.setTransientStatus("Clipboard Translator - nothing to translate (empty selection)")
+	if tray.status != "Clipboard Translator - nothing to translate (empty selection)" {
+		t.Fatalf("initial transient status = %q", tray.status)
+	}
+
+	// 4 seconds later: still within 8s timeout, not reset yet.
+	currentTime = currentTime.Add(4 * time.Second)
+	a.tickTransientStatus()
+	if tray.status != "Clipboard Translator - nothing to translate (empty selection)" {
+		t.Fatalf("status after 4s = %q, should not reset yet", tray.status)
+	}
+
+	// 8.1 seconds later: expired, resets to readyTip.
+	currentTime = currentTime.Add(4100 * time.Millisecond)
+	a.tickTransientStatus()
+	if tray.status != a.readyTip {
+		t.Fatalf("status after 8.1s = %q, want %q", tray.status, a.readyTip)
+	}
+
+	// If translating, transient status must not overwrite translating status.
+	a.setTransientStatus("Clipboard Translator - nothing to translate (empty selection)")
+	a.translating = true
+	currentTime = currentTime.Add(10 * time.Second)
+	a.tickTransientStatus()
+	if tray.status != "Clipboard Translator - nothing to translate (empty selection)" {
+		t.Fatalf("tickTransientStatus must not touch status while translating, got %q", tray.status)
+	}
+}
+
+func TestHandleResultUnchangedOutcome(t *testing.T) {
+	a, tray, cb, _, _ := uxApp(t)
+	cb.text = "Hello world"
+	g := pending(a)
+	a.handleResult(result{
+		original:   "Hello world",
+		translated: "Hello world",
+		generation: g,
+	})
+	if len(tray.notes) != 0 {
+		t.Fatalf("unchanged translation must not notify, got %v", tray.notes)
+	}
+	wantStatus := "Clipboard Translator - translation is the same as the source; the clipboard still holds the source"
+	if tray.status != wantStatus {
+		t.Fatalf("status = %q, want %q", tray.status, wantStatus)
+	}
+	if cb.text != "Hello world" {
+		t.Fatalf("clipboard changed: %q", cb.text)
+	}
+	if len(a.hist.Items()) != 0 {
+		t.Fatal("unchanged translation must not be added to history")
+	}
+}
+
+func TestHandleResultDiscardedOutcome(t *testing.T) {
+	a, tray, cb, _, _ := uxApp(t)
+	cb.text = "brand new clipboard text"
+	g := pending(a)
+	a.handleResult(result{
+		original:   "old selection",
+		translated: "old translation",
+		generation: g,
+	})
+	if len(tray.notes) != 1 {
+		t.Fatalf("discarded result must show 1 notification, got %d", len(tray.notes))
+	}
+	if tray.lastError() {
+		t.Fatal("discarded notification must be non-error (isError = false)")
+	}
+	note := tray.lastNote()
+	if !strings.Contains(note, "clipboard changed while translating") {
+		t.Fatalf("note = %q, want clipboard changed message", note)
+	}
+	if cb.text != "brand new clipboard text" {
+		t.Fatalf("new clipboard must be preserved, got %q", cb.text)
+	}
+	if len(a.hist.Items()) != 0 {
+		t.Fatal("discarded translation must not be added to history")
+	}
+}
+
+func TestHandleResultClipboardWriteError(t *testing.T) {
+	a, tray, cb, _, _ := uxApp(t)
+	cb.err = errors.New("clipboard locked by another process")
+	cb.text = "source"
+	g := pending(a)
+	a.handleResult(result{
+		original:   "source",
+		translated: "translated",
+		generation: g,
+	})
+	if len(tray.notes) != 1 {
+		t.Fatalf("write error must show 1 notification, got %d", len(tray.notes))
+	}
+	if !tray.lastError() {
+		t.Fatal("write error notification must be an error (isError = true)")
+	}
+	if !strings.Contains(tray.lastNote(), "clipboard locked") {
+		t.Fatalf("notification must contain the error, got %q", tray.lastNote())
+	}
+}
+
+func TestHandleResultStaleGenerationProducesNothing(t *testing.T) {
+	a, tray, cb, _, _ := uxApp(t)
+	cb.text = "source"
+	tray.status = "idle status"
+	a.generation = 5
+	a.handleResult(result{
+		original:   "source",
+		translated: "translated",
+		generation: 4, // stale
+	})
+	if len(tray.notes) != 0 {
+		t.Fatalf("stale generation must not notify, got %v", tray.notes)
+	}
+	if tray.status != "idle status" {
+		t.Fatalf("stale generation must not change status, got %q", tray.status)
+	}
+	if cb.text != "source" {
+		t.Fatalf("stale generation must not touch clipboard, got %q", cb.text)
+	}
+}
+
+func TestOutcomeMessagesDoNotLeakText(t *testing.T) {
+	source := "SuperSecretSourceText12345"
+	translated := "SuperSecretTranslatedText67890"
+
+	messages := []string{
+		skipMessage(skipEmpty, 0, 4000, "Japanese ↔ English"),
+		skipMessage(skipTooLong, 5000, 4000, "Japanese ↔ English"),
+		skipMessage(skipURL, 20, 4000, "Japanese ↔ English"),
+		skipMessage(skipNoTranslatableText, 10, 4000, "Japanese ↔ English"),
+		skipStatus(skipEmpty, "Japanese ↔ English"),
+		skipStatus(skipTooLong, "Japanese ↔ English"),
+		skipStatus(skipURL, "Japanese ↔ English"),
+		skipStatus(skipNoTranslatableText, "Japanese ↔ English"),
+		"Clipboard Translator - translation cancelled",
+		"Clipboard Translator - translation is the same as the source; the clipboard still holds the source",
+		"The clipboard changed while translating, so the result was dropped and the new clipboard text was kept.",
+		"The translation was cut off at the token limit, so no translation was put on the clipboard. Select less text, or raise max_tokens / context_tokens in config.json.",
+	}
+
+	for _, msg := range messages {
+		if strings.Contains(msg, source) {
+			t.Fatalf("message %q must not leak source %q", msg, source)
+		}
+		if strings.Contains(msg, translated) {
+			t.Fatalf("message %q must not leak translated %q", msg, translated)
+		}
+	}
+}
+
+func TestHandleResultAutoPasteFailureLeavesReadyStatus(t *testing.T) {
+	a, tray, cb, _, _ := uxApp(t)
+	a.conf.AutoPaste = true
+	a.paste = func(uintptr) error { return errors.New("cannot paste into window") }
+	cb.text = "source"
+	tray.status = "Clipboard Translator - translating... (3s)"
+	g := pending(a)
+	a.handleResult(result{
+		original:      "source",
+		translated:    "translation",
+		generation:    g,
+		window:        100,
+		fromSelection: true,
+	})
+	wantStatus := "Clipboard Translator - translation ready (" + pasteShortcut() + ")"
+	if tray.status != wantStatus {
+		t.Fatalf("status = %q, want %q", tray.status, wantStatus)
+	}
+	if strings.Contains(tray.status, "translating") {
+		t.Fatalf("failed auto-paste must not leave status on translating, got %q", tray.status)
+	}
+	if cb.text != "translation" {
+		t.Fatalf("translation must stay on clipboard, got %q", cb.text)
+	}
+}
+
+func TestHandleResultCanceledResetsStatus(t *testing.T) {
+	a, tray, _, _, _ := uxApp(t)
+	tray.status = "Clipboard Translator - translating... (2s)"
+	a.readyTip = "Clipboard Translator (ready)"
+	g := pending(a)
+	a.handleResult(result{
+		err:        context.Canceled,
+		generation: g,
+	})
+	if tray.status != a.readyTip {
+		t.Fatalf("canceled result with matching generation must reset status to %q, got %q", a.readyTip, tray.status)
+	}
+	if len(tray.notes) != 0 {
+		t.Fatalf("canceled result must not show notification, got %v", tray.notes)
+	}
+}
+
+func TestStartTranslationSupersedingDoesNotShowCancelled(t *testing.T) {
+	a, tray, cb, _, _ := uxApp(t)
+	cb.text = "first selection"
+	g := pending(a)
+	tray.statuses = nil
+	tray.status = "Clipboard Translator - translating... (1s)"
+
+	var statusDuringCapture string
+	a.capture = func(cb Clipboard, win uintptr) (string, bool, error) {
+		statusDuringCapture = tray.status
+		return "second text to translate", true, nil
+	}
+	a.conf.Profiles = []Profile{{Languages: []string{"ja", "en"}}}
+	a.startTranslation(0)
+
+	if statusDuringCapture == "Clipboard Translator - translation cancelled" {
+		t.Fatalf("superseding translation must not show cancelled status during capture, got %q", statusDuringCapture)
+	}
+	for _, s := range tray.statuses {
+		if strings.Contains(s, "cancelled") {
+			t.Fatalf("tray status must never contain 'cancelled' when superseding, got %v", tray.statuses)
+		}
+	}
+	if a.generation == g {
+		t.Fatal("generation must advance when superseded")
+	}
+}
+
+func TestTransientResetDoesNotOverwriteServerRestartStatus(t *testing.T) {
+	a, tray, _, _, _ := uxApp(t)
+	a.readyTip = "Clipboard Translator (ready)"
+	currentTime := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return currentTime }
+
+	// 1. User cancels or triggers a transient status.
+	a.setTransientStatus("Clipboard Translator - translation cancelled")
+
+	// 2. Server restart path sets status.
+	a.cancelTransientStatus()
+	serverStatus := "Clipboard Translator - server stopped, restarting..."
+	tray.SetStatus(serverStatus)
+
+	// 3. Time advances past the 8-second mark.
+	currentTime = currentTime.Add(10 * time.Second)
+	a.tickTransientStatus()
+
+	// 4. Status must NOT be overwritten by readyTip.
+	if tray.status != serverStatus {
+		t.Fatalf("server restart status was overwritten by transient reset: got %q, want %q", tray.status, serverStatus)
+	}
+}
+
+func TestCaptureFailureDisarmsTransientTimer(t *testing.T) {
+	a, tray, _, _, _ := uxApp(t)
+	a.readyTip = "Clipboard Translator (ready)"
+	currentTime := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return currentTime }
+
+	// Set a transient status
+	a.setTransientStatus("Clipboard Translator - text is too long")
+
+	// Set capture to fail
+	a.capture = func(cb Clipboard, win uintptr) (string, bool, error) {
+		return "", false, errors.New("cannot capture focus changed")
+	}
+	a.conf.Profiles = []Profile{{Languages: []string{"ja", "en"}}}
+	a.startTranslation(0)
+
+	if tray.status != a.readyTip {
+		t.Fatalf("status after capture failure = %q, want %q", tray.status, a.readyTip)
+	}
+	if !a.statusResetAt.IsZero() {
+		t.Fatalf("statusResetAt must be zero (timer disarmed), got %v", a.statusResetAt)
+	}
+
+	// Change status to something else and advance time past 8s; verify it is not clobbered
+	tray.SetStatus("Clipboard Translator - server stopped, restarting...")
+	currentTime = currentTime.Add(10 * time.Second)
+	a.tickTransientStatus()
+	if tray.status != "Clipboard Translator - server stopped, restarting..." {
+		t.Fatalf("transient timer fired after capture failure: status = %q", tray.status)
 	}
 }

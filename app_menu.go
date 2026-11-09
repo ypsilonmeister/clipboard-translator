@@ -136,7 +136,7 @@ func (a *app) handleCommand(id int) {
 		if a.translating {
 			log.Print("translation cancelled from the menu")
 			a.abortTranslation()
-			a.tray.SetStatus(a.readyTip)
+			a.setTransientStatus("Clipboard Translator - translation cancelled")
 		}
 	case id == cmdAutoPaste:
 		a.ensureRevisions()
@@ -318,6 +318,7 @@ func (a *app) switchBackend(name string) {
 	if err == nil {
 		a.conf, a.paths = newConf, paths
 		a.activeBackend = name
+		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
 		a.saveConfig(map[string]any{"server_file": a.conf.ServerFile, "gpu_layers": a.conf.GPULayers})
 		a.tray.Notify("Clipboard Translator", "Translation engine: "+backendLabel(name), false)
@@ -339,10 +340,12 @@ func (a *app) switchBackend(name string) {
 		// leave it to the main loop, which sees the supervisor is idle and
 		// retries through the bounded restart policy (or quits cleanly).
 		log.Printf("could not restore the previous engine: %v", err)
+		a.cancelTransientStatus()
 		a.tray.SetStatus("Clipboard Translator - server stopped, restarting...")
 		a.tray.Notify("Clipboard Translator", "Could not switch to "+backendLabel(name)+", and the previous engine did not start either. Trying to recover the translation server...", true)
 		return
 	}
+	a.cancelTransientStatus()
 	a.tray.SetStatus(a.readyTip)
 	a.tray.Notify("Clipboard Translator", "Could not switch to "+backendLabel(name)+"; keeping the previous engine.", true)
 }
