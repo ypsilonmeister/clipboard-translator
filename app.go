@@ -261,6 +261,13 @@ func (a *app) onFallback() bool {
 // startFallback starts the CPU fallback build.
 func (a *app) startFallback() error {
 	defer a.beginServerWork()()
+	if !isCustomTemplate(a.conf.TemplateFile) {
+		if m, known := modelForFile(a.conf.ModelFile); known {
+			if !verifyFileSha256(a.sup.template, m.TemplateSha256) {
+				return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(a.sup.template), m.Name)
+			}
+		}
+	}
 	if statErr := checkFile(a.paths.fallback); statErr != nil {
 		return fmt.Errorf("CPU fallback unavailable: %w", statErr)
 	}

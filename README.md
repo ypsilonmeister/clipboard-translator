@@ -401,7 +401,7 @@ use* for how it is served). It edits:
   you are no longer using or an incomplete file (with inline confirmation), and
   *Remove partial download* cleans up an interrupted download to free disk space
   (available for installed and active models too). The active model's file and the
-  shared chat template are never deleted.
+  chat template files are never deleted.
 - the **engine** (CPU, CUDA, Vulkan, or Metal on macOS), when more than one is installed.
 
 Everything else stays in `config.json`.

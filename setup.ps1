@@ -55,7 +55,7 @@ function Resolve-ModelKey($catalog, $config, [bool]$explicit, [string]$requested
 
 function Test-CustomTemplate([string]$path) {
     if ([string]::IsNullOrWhiteSpace($path)) { return $false }
-    $norm = $path -replace '\\', '/'
+    $norm = ($path -replace '\\', '/') -replace '^\./', ''
     $leaf = Split-Path -Leaf $norm
     $dir = Split-Path -Parent $norm
     if ($dir -ne '' -and $dir -ne 'models' -and $dir -ne '.') { return $true }
@@ -77,7 +77,8 @@ function Get-ModelKeyFromEntry($entry) {
 # Only an explicit -Model rewrites model_file. Returns $true when the config changed.
 function Update-ModelConfig($config, $entry, [bool]$explicit) {
     if (-not $explicit) { return $false }
-    $changed = Set-ConfigValue $config 'model_file' ('models/' + $entry['File'])
+    $file = if ($entry -is [System.Collections.IDictionary]) { $entry['File'] } else { $entry.File }
+    $changed = Set-ConfigValue $config 'model_file' ('models/' + $file)
     $key = Get-ModelKeyFromEntry $entry
     $curTpl = Get-ConfigValue $config 'template_file'
     if (-not (Test-CustomTemplate $curTpl)) {

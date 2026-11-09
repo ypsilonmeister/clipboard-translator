@@ -153,12 +153,13 @@ func (m modelEntry) templateInstalled(dir string) bool {
 // the user rather than a standard or legacy managed template file. Custom templates
 // are left alone and not hashed against catalog pins.
 func isCustomTemplate(templateFile string) bool {
-	t := filepath.ToSlash(strings.TrimSpace(templateFile))
+	t := strings.TrimSpace(templateFile)
 	if t == "" {
 		return false
 	}
-	base := strings.ToLower(filepath.Base(t))
-	dir := filepath.ToSlash(filepath.Dir(t))
+	clean := filepath.Clean(filepath.FromSlash(t))
+	base := strings.ToLower(filepath.Base(clean))
+	dir := filepath.ToSlash(filepath.Dir(clean))
 	if dir != "." && dir != "models" {
 		return true
 	}

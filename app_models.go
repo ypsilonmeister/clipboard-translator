@@ -198,6 +198,11 @@ func (a *app) switchModel(e modelEntry) error {
 	if err != nil {
 		return err
 	}
+	if !isCustomTemplate(newConf.TemplateFile) && e.TemplateSha256 != "" {
+		if !verifyFileSha256(paths.template, e.TemplateSha256) {
+			return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(paths.template), e.Name)
+		}
+	}
 	log.Printf("switching model to %s", e.Name)
 	a.abortTranslation() // the server it was talking to is about to go away
 	a.modelUnloaded = false

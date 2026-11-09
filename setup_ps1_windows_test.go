@@ -340,10 +340,27 @@ Assert-That (-not (Update-ModelConfig $c $catalog['2b'] $false)) 'no -Model, no 
 Assert-That ($c.model_file -eq 'models/plamo-3-translate-8b-Q4_K_M.gguf') 'model_file untouched without -Model'
 Assert-That (Update-ModelConfig $c $catalog['2b'] $true) '-Model changes model_file'
 Assert-That ($c.model_file -eq 'models/plamo-3-translate-2b-Q4_K_M.gguf' -and $c.keep -eq 1) 'model_file switched, other keys kept'
+Assert-That ($c.template_file -eq 'models/chat_template.2b.jinja') 'template_file updated to 2b'
 Assert-That (-not (Update-ModelConfig $c $catalog['2b'] $true)) 'asking for the model already set changes nothing'
 $empty = [pscustomobject]@{}
 Assert-That (Update-ModelConfig $empty $catalog['0.8b'] $true) 'a config without model_file gets one'
 Assert-That ($empty.model_file -eq 'models/plamo-3-translate-0.8b-Q4_K_M.gguf') 'model_file added'
+Assert-That ($empty.template_file -eq 'models/chat_template.0.8b.jinja') 'template_file added'
+
+# Custom template tests
+Assert-That (-not (Test-CustomTemplate '')) 'empty is not custom'
+Assert-That (-not (Test-CustomTemplate 'models/chat_template.jinja')) 'legacy shared template is not custom'
+Assert-That (-not (Test-CustomTemplate 'models\chat_template.2b.jinja')) 'standard 2b template is not custom'
+Assert-That (-not (Test-CustomTemplate 'models/chat_template.0.8b.jinja')) 'standard 0.8b template is not custom'
+Assert-That (-not (Test-CustomTemplate 'models/chat_template.8b.jinja')) 'standard 8b template is not custom'
+Assert-That (Test-CustomTemplate 'models/my_custom.jinja') 'custom file in models is custom'
+Assert-That (Test-CustomTemplate 'custom/chat_template.2b.jinja') 'file in another folder is custom'
+
+# When template_file is custom, Update-ModelConfig leaves it alone:
+$cust = [pscustomobject]@{ model_file = 'models/plamo-3-translate-2b-Q4_K_M.gguf'; template_file = 'models/my_custom.jinja' }
+Assert-That (Update-ModelConfig $cust $catalog['0.8b'] $true) 'model switched'
+Assert-That ($cust.model_file -eq 'models/plamo-3-translate-0.8b-Q4_K_M.gguf') 'model updated'
+Assert-That ($cust.template_file -eq 'models/my_custom.jinja') 'custom template_file preserved'
 `)
 }
 
