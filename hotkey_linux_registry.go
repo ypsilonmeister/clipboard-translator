@@ -5,7 +5,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"strings"
 )
 
 const (
@@ -22,35 +21,32 @@ func normalizeX11Modifiers(mods uint32) uint32 {
 }
 
 func parseX11Hotkey(spec string) (uint32, uint64, error) {
-	var mods uint32
-	var key uint64
-	for _, part := range strings.Split(strings.ToUpper(strings.ReplaceAll(spec, " ", "")), "+") {
-		switch part {
-		case "CTRL", "CONTROL":
-			mods |= x11ControlMask
-		case "ALT":
-			mods |= x11Mod1Mask
-		case "SHIFT":
-			mods |= x11ShiftMask
-		case "WIN", "WINDOWS", "SUPER":
-			mods |= x11Mod4Mask
-		default:
-			if key != 0 {
-				return 0, 0, fmt.Errorf("unsupported hotkey %q: use modifiers and one key (A-Z, 0-9, or F1-F12)", spec)
-			}
-			if len(part) == 1 && part[0] >= 'A' && part[0] <= 'Z' {
-				key = uint64(part[0] + ('a' - 'A'))
-			} else if len(part) == 1 && part[0] >= '0' && part[0] <= '9' {
-				key = uint64(part[0])
-			} else if fn, ok := parseFunctionKey(part); ok {
-				key = uint64(0xffbe + fn - 1)
-			} else {
-				return 0, 0, fmt.Errorf("unsupported hotkey %q: use modifiers and one key (A-Z, 0-9, or F1-F12)", spec)
-			}
-		}
+	parsed, err := parseHotkeyNames(spec, true, false)
+	if err != nil {
+		return 0, 0, err
 	}
-	if mods == 0 || key == 0 {
-		return 0, 0, errors.New("hotkey must include a modifier and key (A-Z, 0-9, or F1-F12)")
+	var mods uint32
+	if parsed.ctrl {
+		mods |= x11ControlMask
+	}
+	if parsed.alt {
+		mods |= x11Mod1Mask
+	}
+	if parsed.shift {
+		mods |= x11ShiftMask
+	}
+	if parsed.win {
+		mods |= x11Mod4Mask
+	}
+	var key uint64
+	if len(parsed.key) == 1 && parsed.key[0] >= 'A' && parsed.key[0] <= 'Z' {
+		key = uint64(parsed.key[0] + ('a' - 'A'))
+	} else if len(parsed.key) == 1 && parsed.key[0] >= '0' && parsed.key[0] <= '9' {
+		key = uint64(parsed.key[0])
+	} else if fn, ok := parseFunctionKey(parsed.key); ok {
+		key = uint64(0xffbe + fn - 1)
+	} else {
+		return 0, 0, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (letters A-Z, digits 0-9, or F1-F12)", spec)
 	}
 	return mods, key, nil
 }
@@ -78,7 +74,7 @@ func (r *hotkeyRegistry) Register(spec string, keycode uint32, rawMods uint32) (
 	normMods := normalizeX11Modifiers(rawMods)
 	for _, reg := range r.entries {
 		if reg.keycode == keycode && reg.mods == normMods {
-			return 0, fmt.Errorf("hotkey %s is already registered (keycode %d, modifiers 0x%x)", spec, keycode, normMods)
+			return 0, fmt.Errorf("hotkey %s is already registered (same key combination as %s)", spec, reg.spec)
 		}
 	}
 	if len(r.entries) >= r.limit {

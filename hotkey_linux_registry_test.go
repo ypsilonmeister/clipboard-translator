@@ -84,11 +84,8 @@ func TestHotkeyRegistryDuplicateDetection(t *testing.T) {
 
 	// Same keycode and same modifiers (even with LockMask set in raw): duplicate!
 	_, err = r.Register("alt+control+e", 26, 12|2)
-	if err == nil || !strings.Contains(err.Error(), "already registered") {
-		t.Fatalf("Duplicate registration should fail with 'already registered', got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "keycode 26") {
-		t.Fatalf("Duplicate error should mention keycode, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "already registered (same key combination as Ctrl+Alt+E)") {
+		t.Fatalf("Duplicate registration should fail with 'already registered (same key combination as Ctrl+Alt+E)', got: %v", err)
 	}
 
 	// Different keycode, same modifiers: ok
@@ -105,6 +102,50 @@ func TestHotkeyRegistryDuplicateDetection(t *testing.T) {
 
 	if r.Count() != 3 {
 		t.Fatalf("Count = %d; want 3", r.Count())
+	}
+}
+
+func TestHotkeyRegistryDuplicateDigitsAndFunctionKeys(t *testing.T) {
+	r := newHotkeyRegistry(8)
+
+	// Digits: Ctrl+5
+	id1, err := r.Register("Ctrl+5", 14, x11ControlMask)
+	if err != nil || id1 != 1 {
+		t.Fatalf("Register Ctrl+5: %v", err)
+	}
+	_, err = r.Register("ctrl+5", 14, x11ControlMask)
+	if err == nil || !strings.Contains(err.Error(), "already registered (same key combination as Ctrl+5)") {
+		t.Fatalf("Duplicate Ctrl+5 should fail with registered message, got: %v", err)
+	}
+	// Different digit: ok
+	id2, err := r.Register("Ctrl+6", 15, x11ControlMask)
+	if err != nil || id2 != 2 {
+		t.Fatalf("Register Ctrl+6: %v", err)
+	}
+
+	// Function keys: Super+F12
+	id3, err := r.Register("Super+F12", 96, x11Mod4Mask)
+	if err != nil || id3 != 3 {
+		t.Fatalf("Register Super+F12: %v", err)
+	}
+	_, err = r.Register("super+f12", 96, x11Mod4Mask)
+	if err == nil || !strings.Contains(err.Error(), "already registered (same key combination as Super+F12)") {
+		t.Fatalf("Duplicate Super+F12 should fail with registered message, got: %v", err)
+	}
+	// Different function key: ok
+	id4, err := r.Register("Super+F11", 95, x11Mod4Mask)
+	if err != nil || id4 != 4 {
+		t.Fatalf("Register Super+F11: %v", err)
+	}
+
+	// Equivalent spellings: Ctrl+F12 vs ctrl+f12
+	id5, err := r.Register("Ctrl+F12", 96, x11ControlMask)
+	if err != nil || id5 != 5 {
+		t.Fatalf("Register Ctrl+F12: %v", err)
+	}
+	_, err = r.Register("ctrl+f12", 96, x11ControlMask)
+	if err == nil || !strings.Contains(err.Error(), "already registered (same key combination as Ctrl+F12)") {
+		t.Fatalf("Duplicate ctrl+f12 vs Ctrl+F12 should fail, got: %v", err)
 	}
 }
 
