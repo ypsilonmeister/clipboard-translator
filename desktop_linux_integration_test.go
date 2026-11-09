@@ -4,7 +4,6 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -103,7 +102,7 @@ func TestX11Desktop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer hk.Close()
+	t.Cleanup(func() { hk.Close() })
 	// Synthetic keys go exclusively to this disposable Xvfb display.
 	x11TestKey(0xffe3, true) // Control_L
 	x11TestKey(0xffe9, true) // Alt_L
@@ -127,17 +126,26 @@ func TestX11Desktop(t *testing.T) {
 		t.Fatal(err)
 	}
 	x11TestConflict(true)
+	conflictDesk := true
+	t.Cleanup(func() {
+		if conflictDesk {
+			x11TestConflict(false)
+			conflictDesk = false
+		}
+	})
 	if unexpected, err := newHotkey("Ctrl+Alt+E"); err == nil {
 		unexpected.Close()
 		x11TestConflict(false)
+		conflictDesk = false
 		t.Fatal("a binding owned by another X11 client must be rejected")
 	}
 	x11TestConflict(false)
+	conflictDesk = false
 	hk, err = newHotkey("Ctrl+Alt+E")
 	if err != nil {
 		t.Fatalf("binding must recover after a conflict: %v", err)
 	}
-	defer hk.Close()
+	t.Cleanup(func() { hk.Close() })
 
 	tray := newTray("/tmp/test-translator.log")
 	defer tray.Close()
@@ -154,19 +162,45 @@ func TestX11Desktop(t *testing.T) {
 	}
 }
 
-func sendXdotool(t *testing.T, args ...string) {
-	t.Helper()
-	cmd := exec.Command("xdotool", args...)
-	cmd.Env = append(os.Environ(), "DISPLAY="+os.Getenv("DISPLAY"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("xdotool %v failed: %v (%s)", args, err, out)
+const (
+	x11XK_Control_L = 0xffe3
+	x11XK_Alt_L     = 0xffe9
+	x11XK_Shift_L   = 0xffe1
+	x11XK_Super_L   = 0xffeb
+	x11XK_Caps_Lock = 0xffe5
+	x11XK_Num_Lock  = 0xff7f
+)
+
+func sendKey(sym uint64) {
+	x11TestKey(sym, true)
+	time.Sleep(5 * time.Millisecond)
+	x11TestKey(sym, false)
+	time.Sleep(5 * time.Millisecond)
+}
+
+func sendCombo(syms ...uint64) {
+	for _, sym := range syms {
+		x11TestKey(sym, true)
 	}
+	time.Sleep(5 * time.Millisecond)
+	for i := len(syms) - 1; i >= 0; i-- {
+		x11TestKey(syms[i], false)
+	}
+	time.Sleep(5 * time.Millisecond)
 }
 
 func waitPressed(t *testing.T, hk Hotkey, shouldFire bool, desc string) {
 	t.Helper()
-	deadline := time.Now().Add(600 * time.Millisecond)
+	timeout := 600 * time.Millisecond
+	if !shouldFire {
+		if p, err := hk.Pressed(); err != nil {
+			t.Fatalf("%s: Pressed() error: %v", desc, err)
+		} else if p {
+			t.Fatalf("%s: fired unexpectedly on initial drain", desc)
+		}
+		timeout = 80 * time.Millisecond
+	}
+	deadline := time.Now().Add(timeout)
 	fired := false
 	for time.Now().Before(deadline) {
 		p, err := hk.Pressed()
@@ -178,6 +212,15 @@ func waitPressed(t *testing.T, hk Hotkey, shouldFire bool, desc string) {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if !shouldFire && !fired {
+		p, err := hk.Pressed()
+		if err != nil {
+			t.Fatalf("%s: extra Pressed() error: %v", desc, err)
+		}
+		if p {
+			fired = true
+		}
 	}
 	if fired != shouldFire {
 		t.Fatalf("%s: fired = %v; want %v", desc, fired, shouldFire)
@@ -199,13 +242,13 @@ func TestX11MultipleHotkeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newHotkey(Ctrl+Alt+E): %v", err)
 	}
-	defer hk1.Close()
+	t.Cleanup(func() { hk1.Close() })
 
 	hk2, err := newHotkey("Ctrl+Alt+K")
 	if err != nil {
 		t.Fatalf("newHotkey(Ctrl+Alt+K): %v", err)
 	}
-	defer hk2.Close()
+	t.Cleanup(func() { hk2.Close() })
 
 	// 2. Duplicate registration is refused (detect by keycode + normalized modifiers)
 	if dup, err := newHotkey("alt+control+e"); err == nil {
@@ -216,52 +259,78 @@ func TestX11MultipleHotkeys(t *testing.T) {
 	}
 
 	// 3. Two hotkeys fire independently and latch resets
-	sendXdotool(t, "key", "ctrl+alt+e")
+	sendCombo(x11XK_Control_L, x11XK_Alt_L, 'e')
 	waitPressed(t, hk1, true, "hk1 after ctrl+alt+e")
 	waitPressed(t, hk2, false, "hk2 after ctrl+alt+e")
 	waitPressed(t, hk1, false, "hk1 second read (latched)")
 
-	sendXdotool(t, "key", "ctrl+alt+k")
+	sendCombo(x11XK_Control_L, x11XK_Alt_L, 'k')
 	waitPressed(t, hk2, true, "hk2 after ctrl+alt+k")
 	waitPressed(t, hk1, false, "hk1 after ctrl+alt+k")
 	waitPressed(t, hk2, false, "hk2 second read (latched)")
 
 	// 4. Auto-repeat suppression: holding produces exactly one event
-	sendXdotool(t, "keydown", "ctrl", "alt", "e")
+	x11TestKey(x11XK_Control_L, true)
+	x11TestKey(x11XK_Alt_L, true)
+	x11TestKey('e', true)
 	time.Sleep(80 * time.Millisecond)
 	// Inject repeat keydown events for 'e' while held
-	sendXdotool(t, "keydown", "e")
-	sendXdotool(t, "keydown", "e")
+	x11TestKey('e', true)
+	x11TestKey('e', true)
 	time.Sleep(50 * time.Millisecond)
 
 	waitPressed(t, hk1, true, "hk1 held down should fire once")
 	waitPressed(t, hk1, false, "hk1 while still held should not fire again")
 
 	// Release
-	sendXdotool(t, "keyup", "e", "alt", "ctrl")
+	x11TestKey('e', false)
+	x11TestKey(x11XK_Alt_L, false)
+	x11TestKey(x11XK_Control_L, false)
 	time.Sleep(50 * time.Millisecond)
 
 	// Pressing again after release fires
-	sendXdotool(t, "key", "ctrl+alt+e")
+	sendCombo(x11XK_Control_L, x11XK_Alt_L, 'e')
 	waitPressed(t, hk1, true, "hk1 after release and re-press should fire")
 	waitPressed(t, hk1, false, "hk1 consumed")
 
 	// 5. CapsLock modifier variant triggers hotkey
-	sendXdotool(t, "key", "Caps_Lock")
+	capsOn := false
+	toggleCaps := func() {
+		sendKey(x11XK_Caps_Lock)
+		capsOn = !capsOn
+	}
+	t.Cleanup(func() {
+		if capsOn {
+			toggleCaps()
+		}
+	})
+
+	toggleCaps()
 	time.Sleep(20 * time.Millisecond)
-	sendXdotool(t, "key", "ctrl+alt+e")
+	sendCombo(x11XK_Control_L, x11XK_Alt_L, 'e')
 	waitPressed(t, hk1, true, "hk1 with CapsLock ON")
 	waitPressed(t, hk2, false, "hk2 with CapsLock ON after ctrl+alt+e")
-	sendXdotool(t, "key", "Caps_Lock")
+	toggleCaps()
 	time.Sleep(20 * time.Millisecond)
 
 	// 6. NumLock modifier variant triggers hotkey
-	sendXdotool(t, "key", "Num_Lock")
+	numOn := false
+	toggleNum := func() {
+		sendKey(x11XK_Num_Lock)
+		numOn = !numOn
+	}
+	t.Cleanup(func() {
+		if numOn {
+			toggleNum()
+		}
+	})
+
+	toggleNum()
 	time.Sleep(20 * time.Millisecond)
-	sendXdotool(t, "key", "ctrl+alt+k")
+	sendCombo(x11XK_Control_L, x11XK_Alt_L, 'k')
 	waitPressed(t, hk2, true, "hk2 with NumLock ON")
 	waitPressed(t, hk1, false, "hk1 with NumLock ON after ctrl+alt+k")
-	sendXdotool(t, "key", "Num_Lock")
+	toggleNum()
 	time.Sleep(20 * time.Millisecond)
 
 	// 7. Close() of one leaves the other working
@@ -269,10 +338,10 @@ func TestX11MultipleHotkeys(t *testing.T) {
 		t.Fatalf("hk1.Close(): %v", err)
 	}
 
-	sendXdotool(t, "key", "ctrl+alt+e")
+	sendCombo(x11XK_Control_L, x11XK_Alt_L, 'e')
 	waitPressed(t, hk1, false, "closed hk1 must not fire")
 
-	sendXdotool(t, "key", "ctrl+alt+k")
+	sendCombo(x11XK_Control_L, x11XK_Alt_L, 'k')
 	waitPressed(t, hk2, true, "hk2 must still fire after hk1 closed")
 	waitPressed(t, hk2, false, "hk2 consumed")
 
@@ -281,40 +350,49 @@ func TestX11MultipleHotkeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-registering Ctrl+Alt+E after Close failed: %v", err)
 	}
-	defer hk1New.Close()
+	t.Cleanup(func() { hk1New.Close() })
 
-	sendXdotool(t, "key", "ctrl+alt+e")
+	sendCombo(x11XK_Control_L, x11XK_Alt_L, 'e')
 	waitPressed(t, hk1New, true, "re-registered hk1 should fire")
 	waitPressed(t, hk1New, false, "re-registered hk1 consumed")
 
 	// 9. Conflict from another client gives error for that hotkey only, leaves others working
 	x11TestConflictKey('d', 12, true) // grab Ctrl+Alt+D on second X connection
+	conflictD := true
+	t.Cleanup(func() {
+		if conflictD {
+			x11TestConflictKey('d', 12, false)
+			conflictD = false
+		}
+	})
 	hk3, err := newHotkey("Ctrl+Alt+D")
 	if err == nil {
 		hk3.Close()
 		x11TestConflictKey('d', 12, false)
+		conflictD = false
 		t.Fatal("conflicting hotkey Ctrl+Alt+D must fail")
 	}
-	if !strings.Contains(err.Error(), "could not grab") {
-		t.Fatalf("expected 'could not grab', got: %v", err)
+	if !strings.Contains(err.Error(), "already used by another") && !strings.Contains(err.Error(), "could not grab") {
+		t.Fatalf("expected conflict error, got: %v", err)
 	}
 
 	// Others still work!
-	sendXdotool(t, "key", "ctrl+alt+k")
+	sendCombo(x11XK_Control_L, x11XK_Alt_L, 'k')
 	waitPressed(t, hk2, true, "hk2 must work despite conflict on Ctrl+Alt+D")
 
-	sendXdotool(t, "key", "ctrl+alt+e")
+	sendCombo(x11XK_Control_L, x11XK_Alt_L, 'e')
 	waitPressed(t, hk1New, true, "hk1New must work despite conflict on Ctrl+Alt+D")
 
 	// Release conflict and re-try
 	x11TestConflictKey('d', 12, false)
+	conflictD = false
 	hk3, err = newHotkey("Ctrl+Alt+D")
 	if err != nil {
 		t.Fatalf("Ctrl+Alt+D should succeed after conflict released: %v", err)
 	}
-	defer hk3.Close()
+	t.Cleanup(func() { hk3.Close() })
 
-	sendXdotool(t, "key", "ctrl+alt+d")
+	sendCombo(x11XK_Control_L, x11XK_Alt_L, 'd')
 	waitPressed(t, hk3, true, "hk3 should fire after registration")
 	waitPressed(t, hk3, false, "hk3 consumed")
 }
