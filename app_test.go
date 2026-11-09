@@ -71,6 +71,9 @@ func newTestApp(t *testing.T) (*app, *fakeTray, *[]string) {
 	a.newHotkey = func(spec string) (Hotkey, error) { return fakeHotkey{spec}, nil }
 	a.fallbackEditor = func(path string) error { return errors.New("fallback disabled in tests") }
 	a.askYesNo = func(msg string) bool { return false }
+	// Tests script the capture through a.capture (or set beginCapture
+	// themselves); the real one would send Ctrl+C to this desktop.
+	a.beginCapture = nil
 	t.Cleanup(a.sup.Stop)
 	return a, tray, &errs
 }

@@ -238,18 +238,24 @@ func sendPaste() error {
 // after the key press.
 const windowsCopyTimeout = 2 * time.Second
 
-// captureSelectedText tries to copy the selected content of window win, the
+// beginSelectionCapture starts copying the selected content of window win, the
 // window that was in front when the hotkey was pressed. If Ctrl+C does not
-// change the clipboard, it uses the previous clipboard text (fromSelection is
-// then false). See captureWith for the ordering rules.
-func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
-	return captureWith(cb, win, captureOps{
+// change the clipboard, the previous clipboard text is used (fromSelection is
+// then false). The app steps the job from its message loop, so the wait for a
+// slow copy does not freeze the tray. See captureJob for the ordering rules.
+func beginSelectionCapture(cb Clipboard, win uintptr) captureTask {
+	return newCaptureJob(cb, win, captureOps{
 		foreground:      foregroundWindow,
-		waitModifiers:   waitModifiersReleased, // keep Ctrl+Alt+E from contaminating the simulated Ctrl+C
+		modifiersUp:     func() bool { return !modifierPressed() }, // keep Ctrl+Alt+E from contaminating the simulated Ctrl+C
 		sequence:        clipboardSequence,
 		sendCopy:        sendCopy,
 		modifierTimeout: 900 * time.Millisecond,
 		copyTimeout:     windowsCopyTimeout,
 		settleTime:      80 * time.Millisecond,
 	})
+}
+
+// captureSelectedText is beginSelectionCapture run to the end in one call.
+func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
+	return runCapture(beginSelectionCapture(cb, win))
 }

@@ -131,23 +131,31 @@ func sendCopy() error {
 	return nil
 }
 
-// captureSelectedText copies the selection of window win (see captureWith for
-// the ordering rules). Without Accessibility access no keys can be sent, so the
-// existing clipboard text is translated instead.
-func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
+// beginSelectionCapture starts copying the selection of window win (see
+// captureJob for the ordering rules); the app steps it from its run loop.
+// Without Accessibility access no keys can be sent, so it returns nil and
+// captureSelectedText translates the existing clipboard text instead.
+func beginSelectionCapture(cb Clipboard, win uintptr) captureTask {
 	if !accessibilityGranted() {
-		text, err := cb.Read()
-		return text, false, err
+		return nil
 	}
-	return captureWith(cb, win, captureOps{
+	return newCaptureJob(cb, win, captureOps{
 		foreground:      foregroundWindow,
-		waitModifiers:   waitModifiersReleased,
+		modifiersUp:     func() bool { return C.ct_mac_modifiers() == 0 },
 		sequence:        clipboardSequence,
 		sendCopy:        sendCopy,
 		modifierTimeout: 900 * time.Millisecond,
 		copyTimeout:     700 * time.Millisecond,
 		settleTime:      80 * time.Millisecond,
 	})
+}
+
+func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
+	if task := beginSelectionCapture(cb, win); task != nil {
+		return runCapture(task)
+	}
+	text, err := cb.Read()
+	return text, false, err
 }
 
 type macTray struct {
