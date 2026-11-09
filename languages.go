@@ -59,7 +59,7 @@ func languageName(code string) string {
 	return code
 }
 
-// pairLabel is how a pair is shown in the tray menu and in notifications.
+// pairLabel is how a pair is shown in profile labels.
 func pairLabel(pair []string) string {
 	return languageName(pair[0]) + " ↔ " + languageName(pair[1])
 }
@@ -183,27 +183,6 @@ func directionFor(pair []string, s string) (translationDirection, bool) {
 	return translationDirection{}, false
 }
 
-// languagePairPresets are offered in the tray menu; any other pair in
-// config.json is added so it shows as the current choice.
-var languagePairPresets = [][]string{
-	{"ja", "en"}, {"ja", "zh-hans"}, {"ja", "zh-hant"}, {"ja", "ko"},
-	{"en", "zh-hans"}, {"en", "zh-hant"}, {"en", "ko"}, {"en", "ru"},
-}
-
 func samePair(a, b []string) bool {
 	return len(a) == 2 && len(b) == 2 && (a[0] == b[0] && a[1] == b[1] || a[0] == b[1] && a[1] == b[0])
-}
-
-// languagePairChoices returns the presets plus current when it is not one of them.
-func languagePairChoices(current []string) [][]string {
-	out := append([][]string(nil), languagePairPresets...)
-	for _, p := range out {
-		if samePair(p, current) {
-			return out
-		}
-	}
-	if len(current) == 2 {
-		out = append(out, current)
-	}
-	return out
 }

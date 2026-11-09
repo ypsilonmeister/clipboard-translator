@@ -10,7 +10,7 @@ import (
 )
 
 // Issue #60: a settings page save that changes neither hotkeys nor languages
-// still writes "profiles", which loadConfig prefers; later tray changes must
+// still writes "profiles", which loadConfig prefers; later another Settings page changes must
 // then be saved there too, or they are lost at the next start.
 
 // settingsOnlySave saves the page's current form on a legacy config.json (no
@@ -58,35 +58,35 @@ func checkReloaded(t *testing.T, a *app) Config {
 	return c
 }
 
-func TestTrayLanguagesSurviveRestartAfterSettingsOnlySave(t *testing.T) {
+func TestSettingsLanguagesSurviveRestartAfterSettingsOnlySave(t *testing.T) {
 	a := settingsOnlySave(t, func(f *settingsForm) { f.AutoPaste = !f.AutoPaste })
-	a.changeLanguages([]string{"ja", "ko"})
+	changeSettingsLanguages(t, a, []string{"ja", "ko"})
 	c := checkReloaded(t, a)
 	if !samePair(c.Profiles[0].Languages, []string{"ja", "ko"}) || !samePair(c.Languages, []string{"ja", "ko"}) {
-		t.Fatalf("tray change lost after reload: memory=%v disk=%v explicit=%v", a.conf.Languages, c.Profiles[0].Languages, a.conf.explicitProfiles)
+		t.Fatalf("Settings change lost after reload: memory=%v disk=%v explicit=%v", a.conf.Languages, c.Profiles[0].Languages, a.conf.explicitProfiles)
 	}
 	if !c.AutoPaste {
 		t.Error("auto_paste from the settings page was lost")
 	}
 }
 
-func TestTrayHotkeySurvivesRestartAfterSettingsOnlySave(t *testing.T) {
+func TestSettingsHotkeySurvivesRestartAfterSettingsOnlySave(t *testing.T) {
 	a := settingsOnlySave(t, func(f *settingsForm) { f.MaxChars = 2000 })
-	a.changeHotkey("Ctrl+Shift+Y")
+	changeSettingsHotkey(t, a, "Ctrl+Shift+Y")
 	if a.conf.Hotkey != "Ctrl+Shift+Y" {
 		t.Fatalf("precondition: hotkey changed in memory, got %q", a.conf.Hotkey)
 	}
 	c := checkReloaded(t, a)
 	if c.Profiles[0].Hotkey != "Ctrl+Shift+Y" || c.Hotkey != "Ctrl+Shift+Y" {
-		t.Fatalf("tray change lost after reload: memory=%q disk=%q explicit=%v", a.conf.Hotkey, c.Profiles[0].Hotkey, a.conf.explicitProfiles)
+		t.Fatalf("Settings change lost after reload: memory=%q disk=%q explicit=%v", a.conf.Hotkey, c.Profiles[0].Hotkey, a.conf.explicitProfiles)
 	}
 	if c.MaxChars != 2000 {
 		t.Errorf("max_chars from the settings page was lost: %d", c.MaxChars)
 	}
 }
 
-// Issue #61: when the configured GPU fails and the CPU fallback runs, the menu
-// and the page must show the CPU, and choosing the GPU must try it again.
+// Issue #61: when the configured GPU fails and the CPU fallback runs, Settings
+// must show the CPU, and choosing the GPU must try it again.
 
 // startOnFallback configures (and saves) the unusable vulkan build and starts
 // the server, which falls back to the CPU.
@@ -147,14 +147,57 @@ func TestCPUFallbackIsShownAsTheRunningEngine(t *testing.T) {
 	if got := a.runningBackend(); got != "cpu" {
 		t.Fatalf("running engine: %q", got)
 	}
+	st := a.settingsState()
+	if st.ConfiguredEngine != "vulkan" || st.RunningEngine != "cpu" {
+		t.Errorf("state fields when configured != running: configured=%q, running=%q", st.ConfiguredEngine, st.RunningEngine)
+	}
 	page, menu := engineChecks(t, a)
-	if len(page) != 1 || page[0] != "cpu" || len(menu) != 1 || menu[0] != "CPU" {
+	if len(page) != 1 || page[0] != "cpu" || len(menu) != 0 {
 		t.Fatalf("the CPU must be the one checked: page %v, menu %v", page, menu)
 	}
 	// One failed start does not change the preference: the GPU is tried again
 	// at the next start.
 	if currentBackend(a.conf.ServerFile) != "vulkan" || preferenceOnDisk(t, a) != "vulkan" {
 		t.Fatalf("the configured engine must stay vulkan: memory %q, disk %q", a.conf.ServerFile, preferenceOnDisk(t, a))
+	}
+}
+
+func TestChoosingRunningFallbackViaSettingsRequest(t *testing.T) {
+	a := startOnFallback(t)
+	pid := a.sup.cmd.Process.Pid
+
+	st := a.settingsState()
+	if st.ConfiguredEngine != "vulkan" || st.RunningEngine != "cpu" {
+		t.Fatalf("state mismatch before keep: configured=%q, running=%q", st.ConfiguredEngine, st.RunningEngine)
+	}
+	if st.ConfiguredEngine == st.RunningEngine {
+		t.Fatal("expected configured != running before request")
+	}
+
+	req := newActionRequest("engine", "cpu", time.Minute)
+	a.startEngineSwitch(req)
+	rep := <-req.reply
+	if rep.err != nil {
+		t.Fatalf("startEngineSwitch error: %v", rep.err)
+	}
+
+	if a.sup.cmd.Process.Pid != pid || !healthy(a) {
+		t.Fatal("choosing the engine that already runs must not restart it")
+	}
+
+	if c, _ := loadConfig(a.dir); currentBackend(c.ServerFile) != "cpu" || c.GPULayers != 0 {
+		t.Errorf("config.json on disk: %q gpu_layers=%d", c.ServerFile, c.GPULayers)
+	}
+
+	if rep.state.ConfiguredEngine != "cpu" || rep.state.RunningEngine != "cpu" {
+		t.Errorf("reply state after keep: configured=%q, running=%q", rep.state.ConfiguredEngine, rep.state.RunningEngine)
+	}
+	stAfter := a.settingsState()
+	if stAfter.ConfiguredEngine != "cpu" || stAfter.RunningEngine != "cpu" {
+		t.Errorf("state after keep: configured=%q, running=%q", stAfter.ConfiguredEngine, stAfter.RunningEngine)
+	}
+	if stAfter.ConfiguredEngine != stAfter.RunningEngine {
+		t.Errorf("mismatch must be gone: configured=%q, running=%q", stAfter.ConfiguredEngine, stAfter.RunningEngine)
 	}
 }
 
@@ -212,7 +255,7 @@ func TestRetryingTheConfiguredGPUWorksOnceItCanStart(t *testing.T) {
 		t.Fatalf("vulkan must run now: healthy=%v running=%q", healthy(a), a.runningBackend())
 	}
 	page, menu := engineChecks(t, a)
-	if len(page) != 1 || page[0] != "vulkan" || len(menu) != 1 || menu[0] != "GPU (Vulkan)" {
+	if len(page) != 1 || page[0] != "vulkan" || len(menu) != 0 {
 		t.Fatalf("vulkan must be the one checked: page %v, menu %v", page, menu)
 	}
 	if c, _ := loadConfig(a.dir); currentBackend(c.ServerFile) != "vulkan" || c.GPULayers != 99 {

@@ -17,7 +17,7 @@
   let closed = false; // the page was closed via "Close this page"
   // The revision the unsaved edits are based on. Syncing with the app moves it only
   // while nothing is being edited: moving it under a dirty section would hide a newer
-  // change made in the tray from the server's stale-save check.
+  // change made outside this page from the server's stale-save check.
   let baseRevision = 0;
   let pollTimer = null;
   let pingTimer = null;
@@ -32,6 +32,10 @@
 
   function isDirty() {
     return dirtyFields.profiles || dirtyFields.auto_paste || dirtyFields.notify_on_complete || dirtyFields.max_chars || dirtyFields.idle_unload_minutes;
+  }
+
+  function isSaveNeeded(dirtyState, noActiveHotkey) {
+    return Boolean(dirtyState || noActiveHotkey);
   }
 
   function markDirty() {
@@ -104,7 +108,7 @@
 
   function toPayload(m) {
     const changed = [];
-    if (dirtyFields.profiles) changed.push('profiles');
+    if (dirtyFields.profiles || (state && state.no_active_hotkey)) changed.push('profiles');
     if (dirtyFields.auto_paste) changed.push('auto_paste');
     if (dirtyFields.notify_on_complete) changed.push('notify_on_complete');
     if (dirtyFields.max_chars) changed.push('max_chars');
@@ -198,7 +202,7 @@
 
   function inactiveBanner(list) {
     if (!list || list.length === 0) return showBanner([]);
-    showBanner(['These hotkeys are not active right now:'].concat(list));
+    showBanner(['These hotkeys are not active right now. Choose another hotkey below and click Save. If none are active, you can also retry Save after the other program releases them:'].concat(list));
   }
 
   function fmtBytes(n) {
@@ -229,7 +233,6 @@
       onclick: () => { model.profiles.splice(i, 1); dirtyFields.profiles = true; markDirty(); renderHotkeys(); } }, 'Remove');
     card.append(h('div', { class: 'profile-head' },
       h('h3', { text: 'Hotkey ' + (i + 1) }),
-      i === 0 ? h('span', { class: 'badge', text: 'also changeable from the tray menu' }) : null,
       h('span', { class: 'spacer' }), remove));
 
     const keyRow = h('div', { class: 'row' }, h('span', { class: 'label', text: 'Keys' }));
@@ -541,6 +544,9 @@
     const box = $('engines');
     if (list.length <= 1) {
       box.replaceChildren(h('p', { class: 'hint', text: 'Installed: ' + (list[0] ? list[0].label : 'none') + '. GPU engines are installed by the setup script (see the README).' }));
+      if (state.configured_engine && state.running_engine && state.configured_engine !== state.running_engine) {
+        renderEngineFallback(box, list);
+      }
       return;
     }
     const lock = appBusy() || acting;
@@ -548,6 +554,25 @@
       list.map((e) => h('label', {}, h('input', { type: 'radio', name: 'engine', value: e.name, checked: e.active, disabled: lock,
         onchange: () => act('/api/engine', { name: e.name }) }), e.label))));
     box.append(h('p', { class: 'hint', text: 'Switching reloads the model. If the chosen engine cannot start, the previous one stays.' }));
+    if (state.configured_engine && state.running_engine && state.configured_engine !== state.running_engine) {
+      renderEngineFallback(box, list);
+    }
+  }
+
+  function renderEngineFallback(box, list) {
+    const lock = appBusy() || acting;
+    const running = (list || []).find((e) => e.active) || { name: state.running_engine, label: state.running_engine };
+    const runningLabel = (running && running.label) || state.running_engine || 'CPU';
+    const runningName = (running && running.name) || state.running_engine;
+    const keepBtn = h('button', {
+      type: 'button',
+      class: 'secondary',
+      disabled: lock,
+      onclick: () => act('/api/engine', { name: runningName }),
+    }, 'Keep using ' + runningLabel);
+    box.append(h('div', { class: 'engine-fallback' },
+      h('p', { class: 'hint', text: 'The GPU engine did not start, so the ' + runningLabel + ' engine is in use. It will be tried again at the next start.' }),
+      keepBtn));
   }
 
   let lastServerNotice = '';
@@ -696,7 +721,7 @@
       dirtyFields.idle_unload_minutes = true;
       markDirty();
     }
-    if (!isDirty()) {
+    if (!isSaveNeeded(isDirty(), state && state.no_active_hotkey)) {
       // Nothing to send. Sending every field with an old revision would report a
       // conflict, or overwrite a change made in the tray, for edits that were never made.
       setStatus('No changes to save');

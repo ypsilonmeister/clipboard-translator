@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -344,7 +345,7 @@ func (t *winTray) showMenu() {
 	}
 	switch cmd {
 	case menuOpenLog:
-		openTarget(t.logPath)
+		_ = openTarget(t.logPath)
 	case menuAutostart:
 		var err error
 		if autostartOn {
@@ -412,8 +413,12 @@ func pump(record bool) bool {
 }
 
 // openTarget opens a file or URL with the program Windows associates with it.
-func openTarget(target string) {
-	shellExecuteW.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(target))), 0, 0, swShowNormal)
+func openTarget(target string) error {
+	r, _, _ := shellExecuteW.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(target))), 0, 0, swShowNormal)
+	if r <= 32 {
+		return fmt.Errorf("ShellExecute failed with code %d", r)
+	}
+	return nil
 }
 
 // showInfo shows a plain information box.

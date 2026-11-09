@@ -287,15 +287,15 @@ func TestEachProfileTranslatesWithItsOwnOutputMode(t *testing.T) {
 	}
 }
 
-func TestTrayChangesSaveProfilesWhenTheFileHasThem(t *testing.T) {
+func TestSettingsChangesSaveProfilesWhenTheFileHasThem(t *testing.T) {
 	a := profilesApp(t,
 		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
 		Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"})
 	a.conf.explicitProfiles = true
 	a.hotkey = fakeHotkey{"Ctrl+Alt+E"}
 
-	a.changeLanguages([]string{"en", "ru"})
-	a.changeHotkey("Ctrl+Shift+Y")
+	changeSettingsLanguages(t, a, []string{"en", "ru"})
+	changeSettingsHotkey(t, a, "Ctrl+Shift+Y")
 
 	b, err := os.ReadFile(filepath.Join(a.dir, "config.json"))
 	if err != nil {
@@ -318,21 +318,17 @@ func TestTrayChangesSaveProfilesWhenTheFileHasThem(t *testing.T) {
 	}
 }
 
-func TestLanguagesMenuWhenFirstProfileHasATarget(t *testing.T) {
+func TestSettingsPreservesTargetOnUnrelatedSave(t *testing.T) {
 	a := profilesApp(t, Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"})
-	var found *MenuItem
+	saveSettingsField(t, a, "auto_paste", true)
+	st := a.settingsState()
+	if st.Profiles[0].Target != "ko" || st.Profiles[0].Languages != nil {
+		t.Fatalf("target profile changed: %+v", st.Profiles[0])
+	}
 	for _, it := range a.buildMenu() {
 		if strings.HasPrefix(it.Label, "Languages") {
-			it := it
-			found = &it
+			t.Fatalf("unexpected language menu: %+v", it)
 		}
-	}
-	if found == nil || !found.Disabled || len(found.Sub) != 0 || !strings.Contains(found.Label, "Korean") {
-		t.Fatalf("a target profile has no pair to pick; the menu must say so: %+v", found)
-	}
-	a.changeLanguages([]string{"en", "ru"}) // must not turn the target profile into a pair
-	if a.conf.Profiles[0].Target != "ko" || a.conf.Profiles[0].Languages != nil {
-		t.Errorf("profile 0 was changed: %+v", a.conf.Profiles[0])
 	}
 }
 
@@ -340,7 +336,7 @@ func TestLanguagesMenuWhenFirstProfileHasATarget(t *testing.T) {
 // the OS, so registering the same key for profile 0 succeeds. Saving it would
 // write a config that loadConfig rejects at the next start (#84).
 func TestChangeHotkeyRefusesAKeyUsedByAnInactiveProfile(t *testing.T) {
-	a, tray, _ := newTestApp(t)
+	a, _, _ := newTestApp(t)
 	a.hotkeyLimit = 1
 	a.conf.Profiles = []Profile{
 		{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
@@ -358,15 +354,15 @@ func TestChangeHotkeyRefusesAKeyUsedByAnInactiveProfile(t *testing.T) {
 
 	// Same key spelled differently: the parsed combinations are compared.
 	for _, spec := range []string{"Ctrl+Alt+K", "alt+control+k"} {
-		a.changeHotkey(spec)
+		err := changeSettingsHotkey(t, a, spec)
 		if a.hotkey != registered {
 			t.Errorf("%s: the current registration must be kept", spec)
 		}
 		if a.conf.Hotkey != "Ctrl+Alt+E" || a.conf.Profiles[0].Hotkey != "Ctrl+Alt+E" {
 			t.Errorf("%s: the hotkey in memory changed: %q", spec, a.conf.Hotkey)
 		}
-		if note := tray.lastNote(); !strings.Contains(note, "already used") {
-			t.Errorf("%s: the user must be told why, got %q", spec, note)
+		if err == nil || !strings.Contains(err.Error(), "same key combination") {
+			t.Errorf("%s: the user must be told why, got %v", spec, err)
 		}
 	}
 	got, err := os.ReadFile(path)
@@ -378,7 +374,7 @@ func TestChangeHotkeyRefusesAKeyUsedByAnInactiveProfile(t *testing.T) {
 	}
 
 	// A free key still works and the result loads.
-	a.changeHotkey("Ctrl+Shift+Y")
+	changeSettingsHotkey(t, a, "Ctrl+Shift+Y")
 	if a.conf.Hotkey != "Ctrl+Shift+Y" {
 		t.Fatalf("a free key was refused: %q", a.conf.Hotkey)
 	}

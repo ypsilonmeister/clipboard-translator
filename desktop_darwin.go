@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os/exec"
 	"strings"
 	"time"
 	"unsafe"
@@ -214,7 +215,7 @@ func pumpMessages() bool {
 		for id := int(C.ct_mac_command()); id != 0; id = int(C.ct_mac_command()) {
 			switch id {
 			case 1:
-				openTarget(t.logPath)
+				_ = openTarget(t.logPath)
 			case 2:
 				t.quit = true
 			case 3:
@@ -222,7 +223,7 @@ func pumpMessages() bool {
 					t.Notify("Startup setting failed", err.Error(), true)
 				}
 			case 4:
-				openTarget("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+				_ = openTarget("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
 			default:
 				t.commands = append(t.commands, id)
 			}
@@ -238,7 +239,19 @@ func dialog(msg string, question, isError bool) bool {
 func showError(msg string)     { dialog(msg, false, true) }
 func showInfo(msg string)      { dialog(msg, false, false) }
 func askYesNo(msg string) bool { return dialog(msg, true, false) }
-func openTarget(target string) { withCString(target, func(p *C.char) { C.ct_mac_open(p) }) }
+func openTarget(target string) error {
+	var ok bool
+	withCString(target, func(p *C.char) { ok = C.ct_mac_open(p) != 0 })
+	if !ok {
+		cmd := exec.Command("open", target)
+		if err := cmd.Start(); err != nil {
+			log.Printf("open: %v", err)
+			return err
+		}
+		go func() { _ = cmd.Wait() }()
+	}
+	return nil
+}
 
 func beginSetupProgress(path string) { withCString(path, func(p *C.char) { C.ct_mac_setup_begin(p) }) }
 func setupCancelled() bool           { return C.ct_mac_setup_cancelled() != 0 }

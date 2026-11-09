@@ -215,8 +215,8 @@ func TestIdleUnloadSettingsRoundTripAndConflicts(t *testing.T) {
 	if old.IdleUnloadMinutes != 0 {
 		t.Fatal("default must be zero")
 	}
-	// An unrelated tray edit must survive a partial page save based on an older revision.
-	f.a.handleCommand(cmdAutoPaste)
+	// An unrelated Settings edit must survive a partial page save based on an older revision.
+	saveSettingsField(t, f.a, "auto_paste", !f.a.conf.AutoPaste)
 	resp, body := s.do(t, "POST", "/api/save", map[string]any{"base_revision": old.Revision, "idle_unload_minutes": 5}, nil)
 	st := decodeAPI(t, body).State
 	if resp.StatusCode != 200 || st == nil || st.IdleUnloadMinutes != 5 || !st.AutoPaste {
@@ -513,141 +513,63 @@ func TestReloadQuitDuringLoad(t *testing.T) {
 	}
 }
 
-func TestEngineSwitchQueuedDuringDelayedStartRunsAfter(t *testing.T) {
-	findBackendCmd := func(a *app, name string) int {
-		backends := availableBackends(a.dir)
-		for i, b := range backends {
-			if b == name {
-				return cmdBackendBase + i
+func TestSettingsEngineSwitchDuringDelayedStart(t *testing.T) {
+	for _, reload := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reload=%v", reload), func(t *testing.T) {
+			t.Setenv("CT_TEST_FAKE_SERVER_DELAY", "200")
+			a, _, cb, pastes, _ := uxApp(t)
+			if reload {
+				if err := a.startServer(); err != nil {
+					t.Fatal(err)
+				}
+				a.unloadModel()
 			}
-		}
-		return -1
+			req := newSettingsRequest(nil, time.Minute)
+			req.action, req.arg = "engine", "cuda"
+			queued := false
+			origUI := a.sup.ui
+			a.sup.ui = func(label string, elapsed time.Duration) bool {
+				if !queued {
+					queued = true
+					a.settingsReqs <- req
+				}
+				if a.activeBackend == "cuda" || a.serverWork > 1 {
+					t.Fatal("engine switch re-entered startup")
+				}
+				return origUI(label, elapsed)
+			}
+			if reload {
+				cb.text = "こんにちは"
+				a.capture = func(Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
+				a.startTranslation(0)
+			} else if err := a.startServer(); err != nil {
+				t.Fatal(err)
+			}
+			if !queued {
+				t.Fatal("startup callback was not called")
+			}
+			if rep := <-req.reply; !errors.Is(rep.err, errSettingsBusy) {
+				t.Fatalf("busy switch: %+v", rep)
+			}
+			if a.serverWork != 0 || a.sup.starting {
+				t.Fatal("startup state not cleared")
+			}
+			// Retry from Settings after loading ends; this also cancels an in-flight translation.
+			a.sup.ui = origUI
+			retry := newSettingsRequest(nil, time.Minute)
+			retry.action, retry.arg = "engine", "cuda"
+			a.handleSettingsRequest(retry)
+			if rep := <-retry.reply; rep.err != nil {
+				t.Fatal(rep.err)
+			}
+			if a.activeBackend != "cuda" || a.translating || !a.canUnloadModel() || a.serverWork != 0 || a.sup.starting {
+				t.Fatal("engine switch did not finish cleanly")
+			}
+			if *pastes != 0 {
+				t.Fatal("switch must not paste")
+			}
+		})
 	}
-
-	t.Run("DuringReload", func(t *testing.T) {
-		t.Setenv("CT_TEST_FAKE_SERVER_DELAY", "200")
-		a, tray, cb, pastes, _ := uxApp(t)
-		if err := a.startServer(); err != nil {
-			t.Fatal(err)
-		}
-		a.unloadModel()
-
-		switchCmd := findBackendCmd(a, "cuda")
-		if switchCmd < 0 {
-			t.Fatal("cuda backend not available in test")
-		}
-
-		cb.text = "こんにちは"
-		a.capture = func(Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
-
-		queued := false
-		var workDuringOuterStart int
-		var startingDuringOuterStart bool
-		origUI := a.sup.ui
-		a.sup.ui = func(label string, elapsed time.Duration) bool {
-			if !queued {
-				queued = true
-				tray.cmds = append(tray.cmds, switchCmd)
-			}
-			if a.activeBackend == "cuda" {
-				t.Fatal("engine switch executed inside sup.ui during outer start")
-			}
-			if a.serverWork > 1 {
-				t.Fatalf("outer start re-entered: serverWork = %d", a.serverWork)
-			}
-			workDuringOuterStart = a.serverWork
-			startingDuringOuterStart = a.sup.starting
-			return origUI(label, elapsed)
-		}
-
-		a.startTranslation(0)
-
-		if !queued {
-			t.Fatal("sup.ui was not called to queue engine switch")
-		}
-		if workDuringOuterStart != 1 {
-			t.Fatalf("serverWork during outer start = %d, want 1", workDuringOuterStart)
-		}
-		if !startingDuringOuterStart {
-			t.Fatal("sup.starting should be true during outer start")
-		}
-		if a.activeBackend != "cuda" {
-			t.Fatalf("backend = %q, want cuda", a.activeBackend)
-		}
-		if a.sup.starting {
-			t.Fatal("a.sup.starting must be false after start and switch completed")
-		}
-		if a.serverWork != 0 {
-			t.Fatalf("a.serverWork = %d, want 0", a.serverWork)
-		}
-		if !a.canUnloadModel() {
-			t.Fatal("canUnloadModel must be true after switch completed")
-		}
-		if a.translating {
-			t.Fatal("translating must be false after switch aborted the translation")
-		}
-		if *pastes != 0 {
-			t.Fatalf("pastes = %d, want 0", *pastes)
-		}
-		select {
-		case res := <-a.results:
-			t.Fatalf("unexpected translation result for A: %+v", res)
-		default:
-		}
-	})
-
-	t.Run("DuringStartServer", func(t *testing.T) {
-		t.Setenv("CT_TEST_FAKE_SERVER_DELAY", "200")
-		a, tray, _ := newTestApp(t)
-		switchCmd := findBackendCmd(a, "cuda")
-		if switchCmd < 0 {
-			t.Fatal("cuda backend not available in test")
-		}
-		queued := false
-		origUI := a.sup.ui
-		a.sup.ui = func(label string, elapsed time.Duration) bool {
-			if !queued {
-				queued = true
-				tray.cmds = append(tray.cmds, switchCmd)
-			}
-			if a.activeBackend == "cuda" {
-				t.Fatal("engine switch ran inside sup.ui during startServer")
-			}
-			if a.serverWork > 1 {
-				t.Fatalf("outer start re-entered: serverWork = %d", a.serverWork)
-			}
-			return origUI(label, elapsed)
-		}
-		if err := a.startServer(); err != nil {
-			t.Fatal(err)
-		}
-		if a.activeBackend == "cuda" {
-			t.Fatal("engine switch should not run until after startServer completed")
-		}
-		if a.sup.starting {
-			t.Fatal("sup.starting must be false after startServer returns")
-		}
-		if a.serverWork != 0 {
-			t.Fatalf("serverWork = %d, want 0", a.serverWork)
-		}
-		id, ok := tray.NextCommand()
-		if !ok || id != switchCmd {
-			t.Fatalf("expected switch command queued, got id=%d ok=%v", id, ok)
-		}
-		a.handleCommand(id)
-		if a.activeBackend != "cuda" {
-			t.Fatalf("backend = %q, want cuda", a.activeBackend)
-		}
-		if a.sup.starting {
-			t.Fatal("sup.starting must be false after switch completed")
-		}
-		if a.serverWork != 0 {
-			t.Fatalf("serverWork = %d, want 0", a.serverWork)
-		}
-		if !a.canUnloadModel() {
-			t.Fatal("canUnloadModel must be true")
-		}
-	})
 }
 
 type serveIdleTestHotkey struct {

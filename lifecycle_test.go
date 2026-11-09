@@ -9,7 +9,7 @@ import (
 )
 
 func TestStartupHotkeyConflictFallsBackToNoHotkey(t *testing.T) {
-	a, tray, errs := newTestApp(t)
+	a, _, errs := newTestApp(t)
 	a.newHotkey = func(spec string) (Hotkey, error) {
 		if spec == "Ctrl+Alt+E" {
 			return nil, errors.New("already registered")
@@ -30,28 +30,20 @@ func TestStartupHotkeyConflictFallsBackToNoHotkey(t *testing.T) {
 	if pressed, err := a.hotkey.Pressed(); pressed || err != nil {
 		t.Fatalf("noHotkey must be inert: %v %v", pressed, err)
 	}
-	// The menu must not claim the unregistered hotkey is active.
-	for _, it := range a.buildMenu() {
-		if it.Label == "Hotkey" {
-			for _, s := range it.Sub {
-				if s.Checked {
-					t.Errorf("no hotkey is registered, but %q is checked", s.Label)
-				}
-			}
-		}
+	// Settings stays reachable even without a registered hotkey.
+	if it := a.buildMenu()[0]; it.ID != cmdSettings || it.Disabled {
+		t.Fatalf("Settings unavailable: %+v", it)
 	}
-
-	// Trying the same (still taken) one again keeps the app alive.
-	a.changeHotkey("Ctrl+Alt+E")
-	if !a.hasNoHotkey() || !strings.Contains(tray.lastNote(), "No hotkey is active") {
-		t.Fatalf("a failed retry must keep noHotkey and tell the user, got %#v / %q", a.hotkey, tray.lastNote())
+	err := changeSettingsHotkey(t, a, "Ctrl+Alt+E")
+	if !a.hasNoHotkey() || err == nil || !strings.Contains(err.Error(), "Choose another hotkey") {
+		t.Fatalf("failed retry: %#v / %v", a.hotkey, err)
 	}
 	if len(*errs) != 0 {
 		t.Fatalf("a failed retry must not raise a modal error, got %v", *errs)
 	}
 
 	// Picking a free one recovers.
-	a.changeHotkey("Ctrl+Shift+Y")
+	changeSettingsHotkey(t, a, "Ctrl+Shift+Y")
 	if hk, ok := a.hotkey.(fakeHotkey); !ok || hk.spec != "Ctrl+Shift+Y" {
 		t.Fatalf("the chosen hotkey must be registered, got %#v", a.hotkey)
 	}
@@ -104,21 +96,16 @@ func TestSwitchBackendBothFailLeavesRecoverableState(t *testing.T) {
 }
 
 func TestServeRecoversOrQuitsAfterFailedSwitch(t *testing.T) {
-	a, tray, errs := newTestApp(t)
+	a, _, errs := newTestApp(t)
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
 	a.hotkey = fakeHotkey{"Ctrl+Alt+E"}
 	breakPreviousEngine(a)
 	a.limiter = restartLimiter{max: 0, window: time.Minute} // no recovery attempts allowed
-	for i, b := range availableBackends(a.dir) {
-		if b == "vulkan" { // the unusable build
-			tray.cmds = []int{cmdBackendBase + i}
-		}
-	}
-	if len(tray.cmds) == 0 {
-		t.Fatal("vulkan must be listed")
-	}
+	req := newSettingsRequest(nil, time.Minute)
+	req.action, req.arg = "engine", "vulkan"
+	a.settingsReqs <- req
 
 	done := make(chan struct{})
 	go func() { a.serve(&testClipboard{}); close(done) }()
@@ -146,7 +133,7 @@ func TestRetryingTheConfiguredHotkeyOnceFree(t *testing.T) {
 	}
 	a.registerStartupHotkey()
 	taken = false // the other program let go
-	a.changeHotkey(a.conf.Hotkey)
+	changeSettingsHotkey(t, a, a.conf.Hotkey)
 	if a.hasNoHotkey() {
 		t.Fatal("choosing the configured hotkey again must retry the registration")
 	}
@@ -157,7 +144,7 @@ type quitOnNotifyTray struct {
 }
 
 func (q *quitOnNotifyTray) Notify(title, message string, isError bool) {
-	if strings.Contains(message, "pasted") {
+	if strings.Contains(message, "Copied.") {
 		q.fakeTray.quit = true
 	}
 	q.fakeTray.Notify(title, message, isError)
@@ -171,14 +158,14 @@ func TestServeChecksQuitRequestedBetweenQueuedCommands(t *testing.T) {
 	a.hotkey = fakeHotkey{"Ctrl+Alt+E"}
 	a.hist.Add(historyEntry{Source: "source", Translated: "translated"})
 
-	// Wrap tray so that when cmdAutoPaste calls Notify, QuitRequested becomes true.
+	// Wrap tray so that when cmdHistoryBase calls Notify, QuitRequested becomes true.
 	wrappedTray := &quitOnNotifyTray{fakeTray: tray}
 	a.tray = wrappedTray
 
 	// Queue two commands:
-	// 1. cmdAutoPaste (will trigger Notify and set quit = true)
+	// 1. cmdHistoryBase (will trigger Notify and set quit = true)
 	// 2. cmdHistoryClear (must NOT be executed because Quit was requested)
-	tray.cmds = []int{cmdAutoPaste, cmdHistoryClear}
+	tray.cmds = []int{cmdHistoryBase, cmdHistoryClear}
 
 	done := make(chan struct{})
 	go func() {
@@ -192,8 +179,8 @@ func TestServeChecksQuitRequestedBetweenQueuedCommands(t *testing.T) {
 		t.Fatal("serve did not exit after quit request")
 	}
 
-	if !a.conf.AutoPaste {
-		t.Error("first command (cmdAutoPaste) should have executed")
+	if len(tray.notes) == 0 || !strings.Contains(tray.lastNote(), "Copied.") {
+		t.Error("first command (cmdHistoryBase) should have executed")
 	}
 	if len(a.hist.Items()) == 0 {
 		t.Error("second command (cmdHistoryClear) must not have executed after quit request")

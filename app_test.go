@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +69,8 @@ func newTestApp(t *testing.T) (*app, *fakeTray, *[]string) {
 	var errs []string
 	a.showErr = func(msg string) { errs = append(errs, msg) }
 	a.newHotkey = func(spec string) (Hotkey, error) { return fakeHotkey{spec}, nil }
+	a.fallbackEditor = func(path string) error { return errors.New("fallback disabled in tests") }
+	a.askYesNo = func(msg string) bool { return false }
 	t.Cleanup(a.sup.Stop)
 	return a, tray, &errs
 }
@@ -163,10 +166,10 @@ func TestSwitchBackend(t *testing.T) {
 }
 
 func TestChangeHotkey(t *testing.T) {
-	a, tray, _ := newTestApp(t)
+	a, _, _ := newTestApp(t)
 	a.hotkey = fakeHotkey{"Ctrl+Alt+E"}
 
-	a.changeHotkey("Ctrl+Shift+Y")
+	changeSettingsHotkey(t, a, "Ctrl+Shift+Y")
 	if a.conf.Hotkey != "Ctrl+Shift+Y" || !strings.Contains(a.readyTip, "Ctrl+Shift+Y") {
 		t.Fatalf("hotkey not applied: %q / %q", a.conf.Hotkey, a.readyTip)
 	}
@@ -181,7 +184,7 @@ func TestChangeHotkey(t *testing.T) {
 		}
 		return fakeHotkey{spec}, nil
 	}
-	a.changeHotkey("Ctrl+Alt+T")
+	err := changeSettingsHotkey(t, a, "Ctrl+Alt+T")
 	if a.conf.Hotkey != "Ctrl+Shift+Y" {
 		t.Fatalf("a taken hotkey must not replace the working one, got %q", a.conf.Hotkey)
 	}
@@ -191,8 +194,8 @@ func TestChangeHotkey(t *testing.T) {
 	if c, _ := loadConfig(a.dir); c.Hotkey != "Ctrl+Shift+Y" {
 		t.Fatalf("a failed change must not be saved, config has %q", c.Hotkey)
 	}
-	if !strings.Contains(tray.lastNote(), "Keeping Ctrl+Shift+Y") {
-		t.Errorf("the user must be told, got %q", tray.lastNote())
+	if err == nil || !strings.Contains(err.Error(), "previous settings were kept") {
+		t.Errorf("the user must be told, got %v", err)
 	}
 }
 
@@ -207,31 +210,6 @@ func TestBuildMenu(t *testing.T) {
 		return nil
 	}
 	items := a.buildMenu()
-
-	hk := find(items, "Hotkey")
-	if hk == nil || len(hk.Sub) != len(hotkeyPresets) {
-		t.Fatalf("hotkey submenu missing: %+v", hk)
-	}
-	checked := 0
-	for _, s := range hk.Sub {
-		if s.Checked {
-			checked++
-			if s.Label != "Ctrl+Alt+E" {
-				t.Errorf("wrong hotkey checked: %q", s.Label)
-			}
-		}
-	}
-	if checked != 1 {
-		t.Errorf("exactly one hotkey must be checked, got %d", checked)
-	}
-
-	eng := find(items, "Translation engine")
-	if eng == nil || len(eng.Sub) != 3 { // cpu, cuda and the unusable vulkan are all "installed"
-		t.Fatalf("engine submenu: %+v", eng)
-	}
-	if !eng.Sub[0].Checked || eng.Sub[0].Label != "CPU" {
-		t.Errorf("CPU must be checked: %+v", eng.Sub)
-	}
 
 	if it := find(items, "Check for updates"); it == nil || it.ID != cmdCheckUpdate {
 		t.Fatalf("update entry: %+v", it)
@@ -294,5 +272,73 @@ func TestOnUpdateResult(t *testing.T) {
 	a.startUpdateCheck()
 	if a.checking || !strings.Contains(tray.lastNote(), "development build") {
 		t.Fatalf("a dev build must not check: checking=%v note=%q", a.checking, tray.lastNote())
+	}
+}
+
+func TestBuildMenuExactLabels(t *testing.T) {
+	old := version
+	version = "1.0.0"
+	defer func() { version = old }()
+	for _, state := range []string{"idle", "translating", "unloaded", "no hotkey active", "target profile", "checking", "update"} {
+		for _, engines := range []int{1, 3} {
+			t.Run(fmt.Sprintf("%s/%d engines", state, engines), func(t *testing.T) {
+				a, _, _ := newTestApp(t)
+				a.registerStartupHotkey()
+				if engines == 1 {
+					for _, b := range []string{"cuda", "vulkan"} {
+						if err := os.Remove(filepath.Join(a.dir, "runtime", b, serverBinaryName())); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if err := a.startServer(); err != nil {
+					t.Fatal(err)
+				}
+				switch state {
+				case "translating":
+					pending(a)
+				case "unloaded":
+					a.unloadModel()
+				case "no hotkey active":
+					a.closeHotkeys()
+					a.hotkey = noHotkey{}
+				case "target profile":
+					a.conf.Profiles[0] = Profile{Hotkey: "Ctrl+Alt+E", Target: "ko"}
+				case "checking":
+					a.checking = true
+				case "update":
+					a.latest = releaseInfo{Tag: "v2.0.0"}
+				}
+				want := []string{"Settings..."}
+				if a.translating {
+					want = append(want, "Cancel translation", "---")
+				}
+				update := "Check for updates"
+				if a.checking {
+					update = "Checking for updates..."
+				} else if state == "update" {
+					update = "Update to v2.0.0..."
+				}
+				want = append(want, "Unload model", "Recent translations (click to copy)", "---", update, "Open config.json", "---", "Built with PLaMo (license)", "Clipboard Translator 1.0.0")
+				items := a.buildMenu()
+				var got []string
+				for _, it := range items {
+					if it.Separator {
+						got = append(got, "---")
+					} else {
+						got = append(got, it.Label)
+					}
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("menu=%q want=%q", got, want)
+				}
+				if items[0].ID != cmdSettings || items[0].Disabled {
+					t.Fatalf("Settings must be first and enabled: %+v", items[0])
+				}
+				if unloadMenuEnabled(t, a) != (state != "translating" && state != "unloaded") {
+					t.Fatal("incorrect Unload availability")
+				}
+			})
+		}
 	}
 }

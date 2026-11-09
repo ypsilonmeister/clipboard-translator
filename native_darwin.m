@@ -251,12 +251,12 @@ int ct_mac_dialog(const char *text, int question, int error) {
         return [alert runModal] == NSAlertFirstButtonReturn;
     }
 }
-void ct_mac_open(const char *target) {
+int ct_mac_open(const char *target) {
     @autoreleasepool {
         NSString *text = [NSString stringWithUTF8String:target];
         NSURL *url = [NSURL URLWithString:text];
         if (![url scheme]) url = [NSURL fileURLWithPath:text];
-        [[NSWorkspace sharedWorkspace] openURL:url];
+        return [[NSWorkspace sharedWorkspace] openURL:url] ? 1 : 0;
     }
 }
 

@@ -36,10 +36,10 @@ type Config struct {
 	Languages []string `json:"languages"`
 	// Profiles are the hotkeys, each with its own language setting. When it is
 	// absent, one profile is made from Hotkey and Languages. Profiles[0] is always
-	// mirrored in Hotkey and (for a pair profile) Languages, which the tray menu edits.
+	// mirrored in Hotkey and (for a pair profile) Languages for legacy config files.
 	Profiles []Profile `json:"profiles"`
 
-	explicitProfiles bool // config.json has a "profiles" key; the tray saves that instead of hotkey/languages
+	explicitProfiles bool // config.json has a "profiles" key rather than only legacy hotkey/languages
 }
 
 const (
@@ -148,24 +148,6 @@ func (c *Config) resolveProfiles(explicit bool) error {
 	c.explicitProfiles = true
 	c.normalizeProfiles()
 	return nil
-}
-
-// otherProfileWithHotkey reports the index of a profile other than the first
-// that already uses spec. Keys are compared as parsed combinations, as
-// resolveProfiles does, so "alt+control+e" and "Ctrl+Alt+E" are the same key.
-// An unparsable spec matches nothing: the caller's own validation reports it.
-func (c *Config) otherProfileWithHotkey(spec string) (int, bool) {
-	want, err := parseHotkeyNames(spec, runtime.GOOS != "windows", runtime.GOOS == "darwin")
-	if err != nil {
-		return 0, false
-	}
-	for i := 1; i < len(c.Profiles); i++ {
-		got, err := parseHotkeyNames(c.Profiles[i].Hotkey, runtime.GOOS != "windows", runtime.GOOS == "darwin")
-		if err == nil && got == want {
-			return i, true
-		}
-	}
-	return 0, false
 }
 
 func defaultConfig() Config {

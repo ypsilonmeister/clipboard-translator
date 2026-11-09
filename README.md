@@ -163,7 +163,7 @@ First-run setup requires Python with `tarfile.data_filter` (Python 3.12+, or a s
 3.10/3.11; for example install Python with Homebrew). Start the app and accept the explicit
 download prompt. A responsive setup window offers Cancel; download details go to `setup.log`.
 A fixed official llama.cpp macOS archive is verified against its pinned SHA-256 and supports
-both CPU and Metal. Metal is selected by default; CPU is available as a fallback/menu option.
+both CPU and Metal. Metal is selected by default; CPU is available as a fallback and in Settings (Translation engine card).
 As on Windows and Linux, a fresh download of the model and the chat template is checked against pinned SHA-256 values; the size check only guards a file that is already on disk.
 
 The app runs in the **menu bar**, without a Dock icon. The default hotkey is
@@ -300,19 +300,26 @@ Right-click the tray icon:
 
 | Item | What it does |
 | --- | --- |
+| **Settings...** | Opens a settings page in your browser: add, change and remove hotkeys (keys, a language pair or one target language each), auto-paste, completion notifications, the longest text to translate, idle model unloading, the translation model (download a size, switch between installed ones) and the engine. Saved to `config.json`; see *Settings page*. |
 | **Cancel translation** | Shown while a translation runs. |
-| **Recent translations** | The last 10, kept in memory only (never written to disk). Click one to copy its translation again; *Clear history* empties the list. |
-| **Settings...** | Opens a settings page in your browser: add, change and remove hotkeys (keys, a language pair or one target language each), auto-paste, the longest text to translate, idle model unloading, the translation model (download a size, switch between installed ones) and the engine. Saved to `config.json`; see *Settings page*. |
 | **Unload model** | Stops the server and unloads the model when no translation or server switch is in progress. |
-| **Paste automatically after translating** | Off by default. When on, Ctrl+V is typed for you, but only if the text was a fresh selection and the same window is still in front; otherwise the translation just waits in the clipboard. |
-| **Hotkey** | Pick another combination. If another program already owns it, the old one stays. |
-| **Languages** | The pair that is translated in both directions (default Japanese ↔ English). Takes effect at once. Other pairs: see `languages` below. |
-| **Translation engine** | Switch between the installed llama.cpp builds (CPU, CUDA, Vulkan). Shown only when more than one is installed. |
+| **Recent translations** | The last 10, kept in memory only (never written to disk). Click one to copy its translation again; *Clear history* empties the list. |
 | **Check for updates** | Asks GitHub for the latest release when you click. The app never checks by itself. |
 | **Open config.json** | For everything else, see [Configuration](#configuration). |
 | **Built with PLaMo (license)** | Opens the PLaMo Community License. |
 | **Start with Windows** | Toggle. |
 | **Open log** / **Quit** | |
+
+### What is in the tray / what is in Settings
+
+| Place | Actions and settings |
+| --- | --- |
+| Tray | Settings, cancel translation, unload model, recent translations, updates, open config.json, start at login, license, quit (plus logs and version information) |
+| Settings | Hotkeys, languages, and output format (replace / bilingual) per profile; auto-paste, notifications, model and engine selection, text limits, idle unload |
+
+Auto-paste is off by default. When enabled, it pastes only for a fresh selection while the same window is still in front; otherwise the translation waits in the clipboard.
+If hotkey registration fails, open **Settings...**, the first tray entry, choose another hotkey and click **Save**.
+For advanced keys, use **Open config.json** and restart after editing.
 
 If the translation server (`llama-server`) stops unexpectedly the app restarts it
 (1 s, 2 s, 4 s ... apart) and says so; after 3 restarts within 10 minutes it gives
@@ -347,9 +354,9 @@ written to `translator.log`.
 
 ## Configuration
 
-`config.json` (all paths are relative to the app folder). The tray menu edits
-`hotkey`, `languages`, `server_file`, `gpu_layers`, `auto_paste` and `notify_on_complete` for you; everything else is
-edited by hand and needs a restart. The previous file is kept as `config.json.bak`.
+Use Settings for everyday configuration. For advanced keys, edit `config.json`
+(all paths are relative to the app folder) and restart the app. The previous
+file is kept as `config.json.bak`.
 
 | Key | Meaning |
 | --- | --- |
@@ -357,7 +364,7 @@ edited by hand and needs a restart. The previous file is kept as `config.json.ba
 | `auto_paste` | `true` types Ctrl+V after translating (default `false`) |
 | `notify_on_complete` | `true` shows a tray notification that the translation is ready in the clipboard (without showing text) when not auto-pasted (default `false`) |
 | `languages` | Two language codes translated in both directions, e.g. `["ja", "en"]` (default), `["en", "ko"]`, `["ja", "zh-hans"]`. Codes are the model's: `ja en ko zh-hans zh-hant ru th ar de fr es ...` (53 in all, see the [model card](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)). The direction is read from the script of the text, so the two languages must use different scripts (en ↔ de is refused for now). Japanese ↔ English is the main use; other languages are best effort. |
-| `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "bilingual"}]`. A profile has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each), and an optional `output` format: `"replace"` (default; key absent = replace) puts only the translation on the clipboard; `"bilingual"` puts the original text, a newline, and then the translation (`<source>\n<translated>`, with trailing CR/LF characters trimmed from the source before adding the newline). Translation history keeps Source and Translated separately; "Recent translations" copies the plain translation. Takes the place of `hotkey` and `languages`; the tray menu edits the first profile. Up to 8 hotkeys on Windows and Linux; on macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
+| `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "bilingual"}]`. A profile has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each), and an optional `output` format: `"replace"` (default; key absent = replace) puts only the translation on the clipboard; `"bilingual"` puts the original text, a newline, and then the translation (`<source>\n<translated>`, with trailing CR/LF characters trimmed from the source before adding the newline). Translation history keeps Source and Translated separately; "Recent translations" copies the plain translation. Takes the place of `hotkey` and `languages`; Settings edits each profile. Up to 8 hotkeys on Windows and Linux; on macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
 | `port` | Local llama-server port, 1024-65534 (the app also uses `port + 1` as an instance lock) |
 | `max_chars` | Longer text is skipped |
 | `idle_unload_minutes` | Unload the model after this many idle minutes (0..1440; default `0` = never). Also editable on the Settings page. |

@@ -154,8 +154,8 @@ func TestCancelFromMenu(t *testing.T) {
 	a.cancelCurrent = func() { cancelled = true }
 	a.readyTip = "ready"
 
-	if items := a.buildMenu(); items[0].ID != cmdCancel {
-		t.Fatalf("while translating, Cancel must be the first menu item, got %+v", items[0])
+	if items := a.buildMenu(); items[1].ID != cmdCancel {
+		t.Fatalf("while translating, Cancel must follow Settings, got %+v", items[1])
 	}
 	a.handleCommand(cmdCancel)
 	if !cancelled || a.translating || a.generation == g || tray.status != "Clipboard Translator - translation cancelled" {
@@ -200,60 +200,26 @@ func TestElapsedSecondsInTooltip(t *testing.T) {
 	}
 }
 
-func TestAutoPasteToggleIsSaved(t *testing.T) {
-	a, tray, _, _, _ := uxApp(t)
-	a.handleCommand(cmdAutoPaste)
-	if !a.conf.AutoPaste {
-		t.Fatal("toggle on")
-	}
-	if c, _ := loadConfig(a.dir); !c.AutoPaste {
-		t.Fatal("the setting must be saved")
-	}
-	if !strings.Contains(tray.lastNote(), "pasted into the window") {
-		t.Fatalf("turning it on must say what it does, got %q", tray.lastNote())
-	}
-	checked := false
-	for _, it := range a.buildMenu() {
-		if it.ID == cmdAutoPaste {
-			checked = it.Checked
-		}
-	}
-	if !checked {
-		t.Fatal("the menu item must be checked")
-	}
-	a.handleCommand(cmdAutoPaste)
-	if a.conf.AutoPaste {
-		t.Fatal("toggle off")
-	}
-	if c, _ := loadConfig(a.dir); c.AutoPaste {
-		t.Fatal("off must be saved too")
-	}
-}
-
-func TestNotifyOnCompleteToggleIsSaved(t *testing.T) {
-	a, _, _, _, _ := uxApp(t)
-	a.handleCommand(cmdNotifyOnComplete)
-	if !a.conf.NotifyOnComplete {
-		t.Fatal("toggle on")
-	}
-	if c, _ := loadConfig(a.dir); !c.NotifyOnComplete {
-		t.Fatal("the setting must be saved")
-	}
-	checked := false
-	for _, it := range a.buildMenu() {
-		if it.ID == cmdNotifyOnComplete {
-			checked = it.Checked
-		}
-	}
-	if !checked {
-		t.Fatal("the menu item must be checked")
-	}
-	a.handleCommand(cmdNotifyOnComplete)
-	if a.conf.NotifyOnComplete {
-		t.Fatal("toggle off")
-	}
-	if c, _ := loadConfig(a.dir); c.NotifyOnComplete {
-		t.Fatal("off must be saved too")
+func TestSettingsTogglesAreSaved(t *testing.T) {
+	for _, field := range []string{"auto_paste", "notify_on_complete"} {
+		t.Run(field, func(t *testing.T) {
+			a, _, _, _, _ := uxApp(t)
+			for _, enabled := range []bool{true, false} {
+				saveSettingsField(t, a, field, enabled)
+				st := a.settingsState()
+				c, err := loadConfig(a.dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, saved := st.AutoPaste, c.AutoPaste
+				if field == "notify_on_complete" {
+					got, saved = st.NotifyOnComplete, c.NotifyOnComplete
+				}
+				if got != enabled || saved != enabled {
+					t.Fatalf("enabled=%v state=%v saved=%v", enabled, got, saved)
+				}
+			}
+		})
 	}
 }
 
