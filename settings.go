@@ -12,22 +12,7 @@ import (
 	"strings"
 )
 
-// hotkeyPresets are offered in the tray menu. Any other hotkey in config.json
-// is added to the list so it shows as the current choice.
-var hotkeyPresets = []string{"Ctrl+Alt+E", "Ctrl+Alt+T", "Ctrl+Alt+J", "Ctrl+Shift+E", "Ctrl+Shift+Y"}
-
-// hotkeyChoices returns the presets plus current when it is not one of them.
-func hotkeyChoices(current string) []string {
-	out := append([]string(nil), hotkeyPresets...)
-	for _, p := range out {
-		if strings.EqualFold(p, current) {
-			return out
-		}
-	}
-	return append(out, current)
-}
-
-// backendNames are the llama.cpp builds setup.ps1 can install, in menu order.
+// backendNames are the llama.cpp builds setup.ps1 can install, in Settings order.
 var backendNames = []string{"cpu", "cuda", "vulkan", "metal"}
 
 // availableBackends lists the installed builds (runtime/<name>/llama-server.exe).

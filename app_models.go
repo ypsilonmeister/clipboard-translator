@@ -101,6 +101,9 @@ func (a *app) fillModelsAndEngines(st *settingsState) {
 		st.CustomModel = a.conf.ModelFile
 	}
 	cur := a.runningBackend() // after a CPU fallback, not the configured one
+	cfg := currentBackend(a.conf.ServerFile)
+	st.ConfiguredEngine = cfg
+	st.RunningEngine = cur
 	for _, b := range availableBackends(a.dir) {
 		st.Engines = append(st.Engines, engineState{Name: b, Label: backendLabel(b), Active: b == cur})
 	}

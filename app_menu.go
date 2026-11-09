@@ -3,29 +3,22 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
 // Command IDs of the app-specific tray menu items.
 const (
-	cmdCheckUpdate      = firstAppCommand + 1
-	cmdDoUpdate         = firstAppCommand + 2
-	cmdOpenConfig       = firstAppCommand + 3
-	cmdPlamoLicense     = firstAppCommand + 4
-	cmdCancel           = firstAppCommand + 5
-	cmdAutoPaste        = firstAppCommand + 6
-	cmdHistoryClear     = firstAppCommand + 7
-	cmdSettings         = firstAppCommand + 8
-	cmdNotifyOnComplete = firstAppCommand + 9
-	cmdUnloadModel      = firstAppCommand + 10
-	cmdHotkeyBase       = firstAppCommand + 100 // + index into hotkeyChoices
-	cmdBackendBase      = firstAppCommand + 200 // + index into availableBackends
-	cmdHistoryBase      = firstAppCommand + 300 // + index into history (newest first)
-	cmdLanguageBase     = firstAppCommand + 400 // + index into languagePairChoices
+	cmdCheckUpdate  = firstAppCommand + 1
+	cmdDoUpdate     = firstAppCommand + 2
+	cmdOpenConfig   = firstAppCommand + 3
+	cmdPlamoLicense = firstAppCommand + 4
+	cmdCancel       = firstAppCommand + 5
+	cmdHistoryClear = firstAppCommand + 7
+	cmdSettings     = firstAppCommand + 8
+	cmdUnloadModel  = firstAppCommand + 10
+	cmdHistoryBase  = firstAppCommand + 300 // + index into history (newest first)
 )
 
 func backendLabel(name string) string {
@@ -50,9 +43,9 @@ func versionLabel() string {
 }
 
 // buildMenu is the app-specific part of the tray menu. It runs each time the
-// menu opens, so checkmarks and the update entry reflect the current state.
+// menu opens, so availability and the update entry reflect the current state.
 func (a *app) buildMenu() []MenuItem {
-	var items []MenuItem
+	items := []MenuItem{{ID: cmdSettings, Label: "Settings..."}}
 	if a.translating {
 		items = append(items, MenuItem{ID: cmdCancel, Label: "Cancel translation"}, MenuItem{Separator: true})
 	}
@@ -67,37 +60,6 @@ func (a *app) buildMenu() []MenuItem {
 		recent = append(recent, MenuItem{Separator: true}, MenuItem{ID: cmdHistoryClear, Label: "Clear history"})
 	}
 	items = append(items, MenuItem{Label: "Recent translations (click to copy)", Sub: recent})
-	items = append(items, MenuItem{ID: cmdSettings, Label: "Settings..."})
-	items = append(items, MenuItem{ID: cmdAutoPaste, Label: "Paste automatically after translating", Checked: a.conf.AutoPaste})
-	items = append(items, MenuItem{ID: cmdNotifyOnComplete, Label: "Show notification when translation finishes", Checked: a.conf.NotifyOnComplete})
-
-	var hotkeys []MenuItem
-	none := a.hasNoHotkey()
-	for i, h := range hotkeyChoices(a.conf.Hotkey) {
-		hotkeys = append(hotkeys, MenuItem{ID: cmdHotkeyBase + i, Label: h, Checked: !none && strings.EqualFold(h, a.conf.Hotkey)})
-	}
-	items = append(items, MenuItem{Label: "Hotkey", Sub: hotkeys})
-
-	if t := a.conf.Profiles[0].Target; t != "" {
-		// The first profile has no pair to pick; it is edited in config.json.
-		items = append(items, MenuItem{Label: "Languages: first hotkey translates " + a.conf.Profiles[0].label() + " (config.json)", Disabled: true})
-	} else {
-		var pairs []MenuItem
-		for i, p := range languagePairChoices(a.conf.Languages) {
-			pairs = append(pairs, MenuItem{ID: cmdLanguageBase + i, Label: pairLabel(p), Checked: samePair(p, a.conf.Languages)})
-		}
-		items = append(items, MenuItem{Label: "Languages", Sub: pairs})
-	}
-
-	// Only offer a choice when more than one build is installed.
-	if backends := availableBackends(a.dir); len(backends) > 1 {
-		cur := a.runningBackend() // after a CPU fallback, not the configured one
-		var sub []MenuItem
-		for i, b := range backends {
-			sub = append(sub, MenuItem{ID: cmdBackendBase + i, Label: backendLabel(b), Checked: b == cur})
-		}
-		items = append(items, MenuItem{Label: "Translation engine", Sub: sub})
-	}
 
 	items = append(items, MenuItem{Separator: true})
 	switch {
@@ -120,20 +82,8 @@ func (a *app) buildMenu() []MenuItem {
 // handleCommand runs one app-specific menu command. It runs on the UI thread.
 func (a *app) handleCommand(id int) {
 	switch {
-	case id >= cmdLanguageBase:
-		if choices := languagePairChoices(a.conf.Languages); id-cmdLanguageBase < len(choices) {
-			a.changeLanguages(choices[id-cmdLanguageBase])
-		}
 	case id >= cmdHistoryBase:
 		a.copyFromHistory(id - cmdHistoryBase)
-	case id >= cmdHotkeyBase && id < cmdBackendBase:
-		if choices := hotkeyChoices(a.conf.Hotkey); id-cmdHotkeyBase < len(choices) {
-			a.changeHotkey(choices[id-cmdHotkeyBase])
-		}
-	case id >= cmdBackendBase:
-		if backends := availableBackends(a.dir); id-cmdBackendBase < len(backends) {
-			a.switchBackend(backends[id-cmdBackendBase])
-		}
 	case id == cmdUnloadModel:
 		a.unloadModel()
 	case id == cmdCancel:
@@ -142,21 +92,6 @@ func (a *app) handleCommand(id int) {
 			a.abortTranslation()
 			a.setTransientStatus("Clipboard Translator - translation cancelled")
 		}
-	case id == cmdAutoPaste:
-		a.ensureRevisions()
-		a.conf.AutoPaste = !a.conf.AutoPaste
-		a.confRevision++
-		a.autoPasteRev = a.confRevision
-		a.saveConfig(map[string]any{"auto_paste": a.conf.AutoPaste})
-		if a.conf.AutoPaste {
-			a.tray.Notify("Clipboard Translator", "The translation will be pasted into the window you selected the text in.", false)
-		}
-	case id == cmdNotifyOnComplete:
-		a.ensureRevisions()
-		a.conf.NotifyOnComplete = !a.conf.NotifyOnComplete
-		a.confRevision++
-		a.notifyOnCompleteRev = a.confRevision
-		a.saveConfig(map[string]any{"notify_on_complete": a.conf.NotifyOnComplete})
 	case id == cmdSettings:
 		a.openSettings()
 	case id == cmdHistoryClear:
@@ -166,9 +101,30 @@ func (a *app) handleCommand(id int) {
 	case id == cmdDoUpdate:
 		a.startUpdate()
 	case id == cmdOpenConfig:
-		openTarget(filepath.Join(a.dir, "config.json"))
+		a.openConfigFile()
 	case id == cmdPlamoLicense:
-		openTarget(plamoLicenseURL)
+		if err := a.openURL(plamoLicenseURL); err != nil {
+			log.Printf("could not open license URL: %v", err)
+			a.tray.Notify("Clipboard Translator", "Could not open "+plamoLicenseURL+": "+err.Error(), true)
+		}
+	}
+}
+
+// openConfigFile opens config.json in the user's associated JSON editor, or
+// with a fallback editor on Windows. If both fail, it notifies the user how to
+// edit the file manually.
+func (a *app) openConfigFile() {
+	path := filepath.Join(a.dir, "config.json")
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	if err := a.openURL(path); err != nil {
+		if a.fallbackEditor != nil && a.fallbackEditor(path) == nil {
+			log.Printf("opened config.json with fallback editor after opener failed: %v", err)
+			return
+		}
+		log.Printf("could not open config.json: %v", err)
+		a.tray.Notify("Clipboard Translator", "Could not open config.json ("+path+"). You can open it manually in any text editor, edit the hotkey, and restart the app.", true)
 	}
 }
 
@@ -195,92 +151,11 @@ func (a *app) saveConfig(set map[string]any) {
 	}
 }
 
-// changeLanguages switches the language pair. Nothing needs restarting: the
-// languages are sent with every request. A translation already running keeps its
-// own direction.
-func (a *app) changeLanguages(pair []string) {
-	if samePair(pair, a.conf.Languages) || a.conf.Profiles[0].Target != "" {
-		return
-	}
-	a.ensureRevisions()
-	a.conf.Languages = append([]string(nil), pair...)
-	a.conf.Profiles[0].Languages = append([]string(nil), pair...)
-	a.confRevision++
-	a.profilesRev = a.confRevision
-	if a.conf.explicitProfiles {
-		a.saveConfig(map[string]any{"profiles": a.conf.Profiles})
-	} else {
-		a.saveConfig(map[string]any{"languages": a.conf.Languages})
-	}
-	log.Printf("languages changed to %s/%s", pair[0], pair[1])
-	a.tray.Notify("Clipboard Translator", "Languages: "+pairLabel(pair)+".", false)
-}
-
-// changeHotkey re-registers the hotkey. If the new one is taken, the old one
-// is restored and nothing is saved.
-func (a *app) changeHotkey(spec string) {
-	none := a.hasNoHotkey()
-	if !none && strings.EqualFold(spec, a.conf.Hotkey) {
-		return // with no hotkey registered, picking the configured one is a retry
-	}
-	// A profile whose hotkey is not registered (over the OS limit, or taken when
-	// the app started) does not hold its key with the OS, so registering succeeds
-	// but the saved file would fail loadConfig at the next start. Check before
-	// anything is closed or written.
-	if i, dup := a.conf.otherProfileWithHotkey(spec); dup {
-		log.Printf("hotkey %s: already used by profiles[%d]", spec, i)
-		msg := fmt.Sprintf("%s is already used by another hotkey (%s). Keeping %s.", spec, a.conf.Profiles[i].Hotkey, a.conf.Hotkey)
-		if none {
-			msg = fmt.Sprintf("%s is already used by another hotkey (%s). Pick a different one.", spec, a.conf.Profiles[i].Hotkey)
-		}
-		a.tray.Notify("Clipboard Translator", msg, true)
-		return
-	}
-	_ = a.hotkey.Close()
-	nh, err := a.newHotkey(spec)
-	if err != nil {
-		log.Printf("hotkey %s: %v", spec, err)
-		if none {
-			// Nothing to restore: stay without a hotkey and keep the menu usable.
-			a.hotkey = noHotkey{}
-			a.tray.Notify("Clipboard Translator", fmt.Sprintf("Could not use %s (already taken?). No hotkey is active; pick another one from the menu.", spec), true)
-			return
-		}
-		old, err2 := a.newHotkey(a.conf.Hotkey)
-		if err2 != nil {
-			a.failed(fmt.Errorf("Could not register %s (%v) and could not restore %s: %v", spec, err, a.conf.Hotkey, err2))
-			a.tray.Notify("Clipboard Translator", "The hotkey is not registered. Pick one from the menu or restart the app.", true)
-			a.hotkey = noHotkey{}
-			a.updateReadyTip()
-			a.tray.SetStatus(a.readyTip)
-			return
-		}
-		a.hotkey = old
-		a.tray.Notify("Clipboard Translator", fmt.Sprintf("Could not use %s (already taken?). Keeping %s.", spec, a.conf.Hotkey), true)
-		return
-	}
-	a.ensureRevisions()
-	a.hotkey = nh
-	a.conf.Hotkey = spec
-	a.conf.Profiles[0].Hotkey = spec
-	a.confRevision++
-	a.profilesRev = a.confRevision
-	a.updateReadyTip()
-	a.tray.SetStatus(a.readyTip)
-	if a.conf.explicitProfiles {
-		a.saveConfig(map[string]any{"profiles": a.conf.Profiles})
-	} else {
-		a.saveConfig(map[string]any{"hotkey": spec})
-	}
-	log.Printf("hotkey changed to %s", spec)
-	a.tray.Notify("Clipboard Translator", "Hotkey is now "+spec+".", false)
-}
-
 // noHotkey stands in when no hotkey could be registered at all.
 type noHotkey struct{}
 
 // noHotkeyTip is the tooltip while no hotkey is registered.
-const noHotkeyTip = "Clipboard Translator - no hotkey (choose one in the tray menu)"
+const noHotkeyTip = "Clipboard Translator - no hotkey (open Settings... from the tray menu to choose another hotkey)"
 
 // hasNoHotkey reports whether the app is running without a registered hotkey.
 func (a *app) hasNoHotkey() bool {
@@ -320,7 +195,7 @@ func (a *app) switchBackend(name string) {
 	a.updateReadyTip()
 	a.sup.Stop()
 	// Start the chosen build itself, without the CPU fallback of startServer:
-	// silently running on the CPU would make the menu check mark a lie.
+	// silently running on the CPU would misrepresent the active engine in Settings.
 	err = a.sup.start(paths.server, newConf.GPULayers, "switching engine")
 	if err == nil {
 		a.conf, a.paths = newConf, paths
@@ -419,9 +294,13 @@ func (a *app) onUpdateResult(u updateResult) {
 // pointing at Scoop, or by opening the releases page for a hand-extracted zip.
 func (a *app) startUpdate() {
 	tag := a.latest.Tag
+	ask := a.askYesNo
+	if ask == nil {
+		ask = askYesNo
+	}
 	switch detectInstallKind(a.dir, recordedInstallLocation()) {
 	case kindInstaller:
-		if !askYesNo("Update to " + tag + "?\n\nThis downloads the new version, closes Clipboard Translator and starts it again.") {
+		if !ask("Update to " + tag + "?\n\nThis downloads the new version, closes Clipboard Translator and starts it again.") {
 			return
 		}
 		if err := runInstaller(a.dir, tag); err != nil {
@@ -430,8 +309,11 @@ func (a *app) startUpdate() {
 	case kindScoop:
 		showInfo("This copy was installed with Scoop. To update, run this in a terminal:\n\nscoop update clipboard-translator")
 	default:
-		if askYesNo("This copy was not installed with the installer, so it cannot update itself.\n\nOpen the releases page to download " + tag + "?") {
-			openTarget(releasesPage)
+		if ask("This copy was not installed with the installer, so it cannot update itself.\n\nOpen the releases page to download " + tag + "?") {
+			if err := a.openURL(releasesPage); err != nil {
+				log.Printf("could not open releases page: %v", err)
+				a.tray.Notify("Clipboard Translator", "Could not open "+releasesPage+": "+err.Error(), true)
+			}
 		}
 	}
 }

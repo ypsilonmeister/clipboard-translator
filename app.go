@@ -40,7 +40,7 @@ type app struct {
 
 	activeBackend string // last known working backend ("cpu", "cuda", ...)
 
-	hotkey    Hotkey                            // profile 0, the one the tray menu edits
+	hotkey    Hotkey                            // profile 0
 	newHotkey func(spec string) (Hotkey, error) // newHotkey, replaceable in tests
 	showErr   func(msg string)                  // showError, replaceable in tests
 	// extras are the hotkeys of profiles 1.., in order; hk is nil when that
@@ -48,11 +48,14 @@ type app struct {
 	extras      []extraHotkey
 	hotkeyLimit int // how many hotkeys this OS build can register, hotkeyLimit() in production
 
-	settings       *settingsServer      // the settings page, while it is open
-	settingsReqs   chan settingsRequest // page -> main loop
-	settingsNotice string               // why the last switch started from the page did not work
-	openURL        func(target string)  // openTarget, replaceable in tests
-	dl             *downloadManager     // model downloads; they outlive the settings page
+	settings       *settingsServer           // the settings page, while it is open
+	settingsReqs   chan settingsRequest      // page -> main loop
+	settingsNotice string                    // why the last switch started from the page did not work
+	settingsIdle   time.Duration             // idle timeout for the settings server; 0 uses settingsIdle
+	openURL        func(target string) error // openTarget, replaceable in tests
+	fallbackEditor func(path string) error   // startFallbackEditor, replaceable in tests
+	askYesNo       func(msg string) bool     // askYesNo, replaceable in tests
+	dl             *downloadManager          // model downloads; they outlive the settings page
 
 	confRevision        int // bumped on every configuration change
 	profilesRev         int // bumped when profiles (languages/hotkeys) change
@@ -100,6 +103,8 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 		settingsReqs:        make(chan settingsRequest, 8),
 		dl:                  newDownloadManager(dir),
 		openURL:             openTarget,
+		fallbackEditor:      startFallbackEditor,
+		askYesNo:            askYesNo,
 		dir:                 dir,
 		conf:                conf,
 		endpoint:            fmt.Sprintf("http://127.0.0.1:%d", conf.Port),
@@ -408,7 +413,7 @@ func (a *app) extraFailures() string {
 
 // registerStartupHotkey registers the configured hotkey. If another program
 // owns it, the app still starts (without a hotkey) so the user can pick a free
-// one from the tray menu instead of having to edit config.json.
+// one in Settings instead of having to edit config.json.
 func (a *app) registerStartupHotkey() {
 	hk, err := a.newHotkey(a.conf.Hotkey)
 	if err != nil {
@@ -440,7 +445,7 @@ func (a *app) serve(cb Clipboard) {
 	tray.SetStatus(a.readyTip)
 	if a.hasNoHotkey() {
 		log.Printf("ready, but the hotkey %s could not be registered; waiting for the user to pick another", a.conf.Hotkey)
-		tray.Notify("Clipboard Translator", fmt.Sprintf("Could not register the hotkey %s (another program may be using it). Choose another one from the tray menu: Hotkey.", a.conf.Hotkey), true)
+		tray.Notify("Clipboard Translator", fmt.Sprintf("Could not register the hotkey %s (another program may be using it). Open Settings... from the tray menu and choose another hotkey there.", a.conf.Hotkey), true)
 	} else {
 		log.Printf("ready: select text and press %s (or translate existing clipboard)", a.hotkeySummary())
 		tray.Notify("Clipboard Translator", "Ready. Select text and press "+a.hotkeySummary()+", then paste with "+pasteShortcut()+".", false)

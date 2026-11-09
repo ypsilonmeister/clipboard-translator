@@ -248,7 +248,7 @@ func pumpMessages() bool {
 		for id := int(C.ct_command()); id != 0; id = int(C.ct_command()) {
 			switch id {
 			case 1:
-				openTarget(t.logPath)
+				_ = openTarget(t.logPath)
 			case 2:
 				t.quit = true
 			case 3:
@@ -278,14 +278,15 @@ func dialog(msg string, question, isError bool) bool {
 func showError(msg string)     { dialog(msg, false, true) }
 func showInfo(msg string)      { dialog(msg, false, false) }
 func askYesNo(msg string) bool { return dialog(msg, true, false) }
-func openTarget(target string) {
+func openTarget(target string) error {
 	if !strings.Contains(target, "://") {
 		target, _ = filepath.Abs(target)
 	}
 	cmd := exec.Command("xdg-open", target)
 	if err := cmd.Start(); err != nil {
 		log.Printf("open: %v", err)
-		return
+		return err
 	}
 	go func() { _ = cmd.Wait() }()
+	return nil
 }

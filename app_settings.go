@@ -14,7 +14,7 @@ import (
 
 const settingsIdle = 5 * time.Minute
 
-var ErrConflict = errors.New("The settings were changed in the tray menu while this page was open. Reload the settings to see the changes.")
+var ErrConflict = errors.New("The settings were changed while this page was open. Reload the settings to see the changes.")
 
 func (a *app) ensureRevisions() {
 	if a.confRevision == 0 {
@@ -41,15 +41,23 @@ func (a *app) ensureRevisions() {
 // page in the browser. The server closes itself when the page is gone.
 func (a *app) openSettings() {
 	if a.settings == nil || !a.settings.Running() {
-		s, err := startSettingsServer(a.askSettings, a.dl, settingsIdle)
+		idle := a.settingsIdle
+		if idle <= 0 {
+			idle = settingsIdle
+		}
+		s, err := startSettingsServer(a.askSettings, a.dl, idle)
 		if err != nil {
 			log.Printf("settings page: %v", err)
-			a.tray.Notify("Clipboard Translator", "Could not open the settings page: "+err.Error(), true)
+			a.tray.Notify("Clipboard Translator", "Could not start the settings server: "+err.Error()+". You can open config.json from the tray (Open config.json), edit the hotkey there and restart the app.", true)
 			return
 		}
 		a.settings = s
 	}
-	a.openURL(a.settings.URL())
+	if err := a.openURL(a.settings.URL()); err != nil {
+		log.Printf("open settings browser: %v", err)
+		a.tray.Notify("Clipboard Translator", "Could not open Settings in the browser. You can open config.json from the tray (Open config.json), edit the hotkey there and restart the app.", true)
+		return
+	}
 }
 
 func (a *app) closeSettings() {
@@ -109,11 +117,12 @@ func (a *app) handleSettingsRequest(req settingsRequest) {
 func (a *app) settingsState() settingsState {
 	a.ensureRevisions()
 	st := settingsState{
-		Revision:   a.confRevision,
-		Languages:  languageOptions(),
-		MaxHotkeys: a.hotkeyLimit,
-		WinKey:     winKeyName(runtime.GOOS),
-		Inactive:   a.inactiveHotkeys(),
+		Revision:       a.confRevision,
+		Languages:      languageOptions(),
+		MaxHotkeys:     a.hotkeyLimit,
+		WinKey:         winKeyName(runtime.GOOS),
+		Inactive:       a.inactiveHotkeys(),
+		NoActiveHotkey: !a.anyHotkeyActive(),
 	}
 	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste
@@ -195,7 +204,7 @@ func sameProfiles(a, b []Profile) bool {
 // applySettings validates the page's settings, registers the hotkeys again,
 // saves config.json and reports what is not active. It returns an error, and
 // leaves everything as it was, when the settings are invalid or none of the new
-// hotkeys can be registered. A save that changes nothing does nothing.
+// hotkeys can be registered. An unchanged save retries when no hotkey is active.
 func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 	a.ensureRevisions()
 	hasField := func(field string) bool {
@@ -235,21 +244,43 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if sameProfiles(cand.Profiles, a.conf.Profiles) && cand.AutoPaste == a.conf.AutoPaste && cand.NotifyOnComplete == a.conf.NotifyOnComplete && cand.MaxChars == a.conf.MaxChars && cand.IdleUnloadMinutes == a.conf.IdleUnloadMinutes {
+	sameProf := sameProfiles(cand.Profiles, a.conf.Profiles)
+	// Let Save recover unchanged hotkeys after another program releases them.
+	retryHotkeys := hasField("profiles") && !a.anyHotkeyActive() && sameProf
+	if !retryHotkeys && sameProf && cand.AutoPaste == a.conf.AutoPaste && cand.NotifyOnComplete == a.conf.NotifyOnComplete && cand.MaxChars == a.conf.MaxChars && cand.IdleUnloadMinutes == a.conf.IdleUnloadMinutes {
 		return a.inactiveHotkeys(), nil
 	}
 
-	changedProfiles := hasField("profiles") && !sameProfiles(cand.Profiles, a.conf.Profiles)
+	changedProfiles := hasField("profiles") && !sameProf
 	changedAutoPaste := hasField("auto_paste") && cand.AutoPaste != a.conf.AutoPaste
 	changedNotifyOnComplete := hasField("notify_on_complete") && cand.NotifyOnComplete != a.conf.NotifyOnComplete
 	changedIdleUnload := hasField("idle_unload_minutes") && cand.IdleUnloadMinutes != a.conf.IdleUnloadMinutes
 	changedMaxChars := hasField("max_chars") && cand.MaxChars != a.conf.MaxChars
 
+	if retryHotkeys && !changedAutoPaste && !changedNotifyOnComplete && !changedIdleUnload && !changedMaxChars {
+		// Pure retry: re-register unchanged hotkeys without touching revisions, config.json, or .bak.
+		a.closeHotkeys()
+		a.registerStartupHotkey()
+		if !a.anyHotkeyActive() {
+			a.refreshStatus()
+			return nil, errors.New("None of the hotkeys could be registered (another program may be using them), so the previous settings were kept. Choose another hotkey and click Save.")
+		}
+		a.refreshStatus()
+		return a.inactiveHotkeys(), nil
+	}
+
+	if retryHotkeys {
+		a.closeHotkeys()
+		a.registerStartupHotkey()
+		if !a.anyHotkeyActive() {
+			a.refreshStatus()
+			return nil, errors.New("None of the hotkeys could be registered (another program may be using them), so the previous settings were kept. Choose another hotkey and click Save.")
+		}
+	}
+
 	if !changedProfiles {
-		// No hotkey changes: leave the registrations alone. config.json gets
-		// "profiles" below even so, and loadConfig prefers that key, so the tray
-		// must from now on save "profiles" too: a legacy hotkey/languages edit
-		// would be ignored at the next start.
+		// No hotkey changes: leave the registrations alone. Settings writes
+		// profiles even for legacy files; loadConfig prefers that key.
 		a.conf.AutoPaste, a.conf.NotifyOnComplete, a.conf.MaxChars = cand.AutoPaste, cand.NotifyOnComplete, cand.MaxChars
 		a.conf.IdleUnloadMinutes = cand.IdleUnloadMinutes
 		a.conf.explicitProfiles = cand.explicitProfiles
@@ -264,7 +295,7 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 			a.conf = old
 			a.registerStartupHotkey()
 			a.refreshStatus()
-			return nil, errors.New("None of the hotkeys could be registered (another program may be using them), so the previous settings were kept.")
+			return nil, errors.New("None of the hotkeys could be registered (another program may be using them), so the previous settings were kept. Choose another hotkey and click Save.")
 		}
 	}
 

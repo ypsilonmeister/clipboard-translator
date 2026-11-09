@@ -8,18 +8,12 @@ import (
 	"testing"
 )
 
-func TestHotkeyChoices(t *testing.T) {
-	got := hotkeyChoices("Ctrl+Alt+E")
-	if len(got) != len(hotkeyPresets) {
-		t.Fatalf("a preset must not be added twice: %v", got)
-	}
-	got = hotkeyChoices("ctrl+alt+e") // case-insensitive match
-	if len(got) != len(hotkeyPresets) {
-		t.Fatalf("case differences must not add a duplicate: %v", got)
-	}
-	got = hotkeyChoices("Ctrl+Alt+Q")
-	if len(got) != len(hotkeyPresets)+1 || got[len(got)-1] != "Ctrl+Alt+Q" {
-		t.Fatalf("a custom hotkey must be appended: %v", got)
+func TestSettingsCustomHotkeysRoundTrip(t *testing.T) {
+	for _, spec := range []string{"Ctrl+Alt+E", "ctrl+alt+e", "Ctrl+Alt+Q"} {
+		f, err := formFromProfile(Profile{Hotkey: spec, Languages: []string{"ja", "en"}}, "windows")
+		if err != nil || !strings.EqualFold(f.hotkeyString(), spec) {
+			t.Fatalf("%s: %+v %v", spec, f, err)
+		}
 	}
 }
 

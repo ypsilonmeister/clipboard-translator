@@ -324,13 +324,17 @@ func TestHotkeyDuplicateDetection(t *testing.T) {
 			t.Errorf("expected duplicate error for %q and %q, got %v", tc.a, tc.b, err)
 		}
 
-		c2 := defaultConfig()
-		c2.Profiles = []Profile{
-			{Hotkey: "Ctrl+Alt+T", Languages: []string{"ja", "en"}},
-			{Hotkey: tc.a, Target: "ko"},
+		// Settings validates the same duplicates before touching registrations.
+		form := settingsForm{MaxChars: 4000}
+		for _, p := range c.Profiles {
+			f, err := formFromProfile(p, "windows")
+			if err != nil {
+				t.Fatal(err)
+			}
+			form.Profiles = append(form.Profiles, f)
 		}
-		if idx, ok := c2.otherProfileWithHotkey(tc.b); !ok || idx != 1 {
-			t.Errorf("otherProfileWithHotkey(%q) with existing %q: got idx %d, ok %v; want 1, true", tc.b, tc.a, idx, ok)
+		if _, err := form.toConfig(defaultConfig()); err == nil || !strings.Contains(err.Error(), "same key combination") {
+			t.Errorf("Settings must reject %q and %q: %v", tc.a, tc.b, err)
 		}
 	}
 }

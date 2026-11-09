@@ -113,27 +113,9 @@ func TestLoadConfigLanguages(t *testing.T) {
 	}
 }
 
-func TestLanguageMenuSwitchesAndSaves(t *testing.T) {
-	a, tray, _ := newTestApp(t)
-	var sub []MenuItem
-	for _, it := range a.buildMenu() {
-		if it.Label == "Languages" {
-			sub = it.Sub
-		}
-	}
-	if len(sub) == 0 || !sub[0].Checked || sub[0].Label != "Japanese ↔ English" {
-		t.Fatalf("the default pair must be listed first and checked: %+v", sub)
-	}
-	var koID int
-	for _, it := range sub {
-		if it.Label == "English ↔ Korean" {
-			koID = it.ID
-		}
-	}
-	if koID == 0 {
-		t.Fatal("English ↔ Korean preset missing")
-	}
-	a.handleCommand(koID)
+func TestSettingsLanguageSwitchesAndSaves(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	changeSettingsLanguages(t, a, []string{"en", "ko"})
 	if !samePair(a.conf.Languages, []string{"en", "ko"}) {
 		t.Fatalf("pair not switched: %v", a.conf.Languages)
 	}
@@ -144,7 +126,7 @@ func TestLanguageMenuSwitchesAndSaves(t *testing.T) {
 	if err != nil || !strings.Contains(string(b), `"languages": ["en","ko"]`) || !strings.Contains(string(b), `"hotkey"`) {
 		t.Errorf("config.json not updated while keeping other keys: %s %v", b, err)
 	}
-	if len(tray.notes) == 0 {
-		t.Error("the user is not told about the change")
+	if !samePair(a.settingsState().Profiles[0].Languages, []string{"en", "ko"}) {
+		t.Fatal("Settings must show the saved pair")
 	}
 }

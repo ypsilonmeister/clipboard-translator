@@ -94,3 +94,21 @@ func TestTrayNextCommand(t *testing.T) {
 		t.Fatal("the queue must be empty after both commands")
 	}
 }
+
+// Read back the native popup without displaying it or interacting with the desktop.
+func TestPopupSettingsFirstWithNoActiveHotkeys(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	a.hotkey = noHotkey{}
+	menu := buildPopup(a.buildMenu())
+	if menu == 0 {
+		t.Fatal("no menu")
+	}
+	defer destroyMenu.Call(menu)
+	if got := menuText(menu, 0); got != "Settings..." {
+		t.Fatalf("first item=%q", got)
+	}
+	st, _, _ := getMenuState.Call(menu, 0, mfByPosition)
+	if st == ^uintptr(0) || st&0x3 != 0 {
+		t.Fatalf("Settings must be enabled: state=%#x", st)
+	}
+}

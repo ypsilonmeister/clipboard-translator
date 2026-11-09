@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -36,7 +37,7 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 		}
 		return fakeHotkey{spec}, nil
 	}
-	a.openURL = func(u string) { f.opened = append(f.opened, u) }
+	a.openURL = func(u string) error { f.opened = append(f.opened, u); return nil }
 	a.registerStartupHotkey()
 	go func() {
 		for {
@@ -218,9 +219,31 @@ func TestSettingsPageKeepsStaleSaveGuards(t *testing.T) {
 	if !strings.Contains(js, "JSON.stringify(next) !== JSON.stringify(model.profiles)") {
 		t.Error("mergeState must rebuild the hotkey cards only when the profiles differ")
 	}
-	// Save with nothing edited sends nothing.
+	// Save with nothing edited sends nothing, unless no hotkey is active (in which case it retries).
 	if !strings.Contains(js, "setStatus('No changes to save')") {
 		t.Error("save must do nothing when no section is dirty")
+	}
+	if !strings.Contains(js, "isSaveNeeded") || !strings.Contains(js, "state.no_active_hotkey") {
+		t.Error("save must check isSaveNeeded and retry when no hotkey is active")
+	}
+	if !strings.Contains(js, "dirtyFields.profiles || (state && state.no_active_hotkey)") {
+		t.Error("toPayload must send profiles when state.no_active_hotkey is set")
+	}
+	if nodePath, err := exec.LookPath("node"); err == nil {
+		cmd := exec.Command(nodePath, "-e", `
+const fs = require('fs');
+const js = fs.readFileSync('settings_web/app.js', 'utf8');
+const match = js.match(/function isSaveNeeded\([^)]*\)\s*\{[^}]*\}/);
+if (!match) throw new Error('isSaveNeeded not found in app.js');
+const fn = new Function('return ' + match[0])();
+if (fn(false, false) !== false) throw new Error('isSaveNeeded(false, false) must be false');
+if (fn(true, false) !== true) throw new Error('isSaveNeeded(true, false) must be true');
+if (fn(false, true) !== true) throw new Error('isSaveNeeded(false, true) must be true');
+if (fn(true, true) !== true) throw new Error('isSaveNeeded(true, true) must be true');
+`)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Errorf("node test of isSaveNeeded failed: %v: %s", err, string(out))
+		}
 	}
 }
 
@@ -513,7 +536,7 @@ func TestProfileFormRoundTrip(t *testing.T) {
 	}
 }
 
-func TestTrayLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
+func TestSettingsLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
 
@@ -524,10 +547,10 @@ func TestTrayLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 		t.Fatalf("expected state with revision: %s", body)
 	}
 
-	// Tray changes languages while settings page is open.
-	f.a.changeLanguages([]string{"ja", "ko"})
+	// Another Settings page changes languages while settings page is open.
+	changeSettingsLanguages(t, f.a, []string{"ja", "ko"})
 	if !samePair(f.a.conf.Languages, []string{"ja", "ko"}) {
-		t.Fatalf("tray did not change language: %v", f.a.conf.Languages)
+		t.Fatalf("Settings did not change language: %v", f.a.conf.Languages)
 	}
 
 	// Settings page saves an unrelated setting (max_chars = 2000).
@@ -541,9 +564,9 @@ func TestTrayLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 		t.Fatalf("save failed: %d %s", resp.StatusCode, body)
 	}
 
-	// The tray's language choice must be preserved in memory and on disk.
+	// The other page's language choice must be preserved in memory and on disk.
 	if !samePair(f.a.conf.Languages, []string{"ja", "ko"}) {
-		t.Fatalf("tray languages overwritten in memory: %v", f.a.conf.Languages)
+		t.Fatalf("Settings languages overwritten in memory: %v", f.a.conf.Languages)
 	}
 	if !samePair(f.a.conf.Profiles[0].Languages, []string{"ja", "ko"}) {
 		t.Fatalf("profile 0 languages overwritten in memory: %v", f.a.conf.Profiles[0].Languages)
@@ -557,14 +580,14 @@ func TestTrayLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !samePair(c.Languages, []string{"ja", "ko"}) && !samePair(c.Profiles[0].Languages, []string{"ja", "ko"}) {
-		t.Fatalf("tray languages overwritten on disk: %+v", c)
+		t.Fatalf("Settings languages overwritten on disk: %+v", c)
 	}
 	if c.MaxChars != 2000 {
 		t.Fatalf("max_chars not saved to disk: %d", c.MaxChars)
 	}
 
-	// Also verify direct applySettings with Changed specified preserves tray languages.
-	f.a.changeLanguages([]string{"ja", "zh-hans"})
+	// Also verify direct applySettings with Changed specified preserves Settings languages.
+	changeSettingsLanguages(t, f.a, []string{"ja", "zh-hans"})
 	if _, err := f.a.applySettings(settingsForm{
 		BaseRevision: f.a.confRevision,
 		MaxChars:     3000,
@@ -573,11 +596,11 @@ func TestTrayLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 		t.Fatalf("applySettings: %v", err)
 	}
 	if !samePair(f.a.conf.Languages, []string{"ja", "zh-hans"}) {
-		t.Fatalf("direct applySettings overwrote tray languages: %v", f.a.conf.Languages)
+		t.Fatalf("direct applySettings overwrote Settings languages: %v", f.a.conf.Languages)
 	}
 }
 
-func TestTrayHotkeyChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
+func TestSettingsHotkeyChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
 
@@ -587,10 +610,10 @@ func TestTrayHotkeyChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 		t.Fatalf("expected state with revision: %s", body)
 	}
 
-	// Tray changes hotkey while settings page is open.
-	f.a.changeHotkey("Ctrl+Shift+Y")
+	// Another Settings page changes hotkey while settings page is open.
+	changeSettingsHotkey(t, f.a, "Ctrl+Shift+Y")
 	if f.a.conf.Hotkey != "Ctrl+Shift+Y" {
-		t.Fatalf("tray hotkey not changed: %s", f.a.conf.Hotkey)
+		t.Fatalf("Settings hotkey not changed: %s", f.a.conf.Hotkey)
 	}
 
 	// Settings page saves an unrelated setting (max_chars = 2500).
@@ -605,7 +628,7 @@ func TestTrayHotkeyChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 	}
 
 	if f.a.conf.Hotkey != "Ctrl+Shift+Y" || f.a.conf.Profiles[0].Hotkey != "Ctrl+Shift+Y" {
-		t.Fatalf("tray hotkey overwritten in memory: %s", f.a.conf.Hotkey)
+		t.Fatalf("Settings hotkey overwritten in memory: %s", f.a.conf.Hotkey)
 	}
 	if f.a.conf.MaxChars != 2500 {
 		t.Fatalf("max_chars not saved: %d", f.a.conf.MaxChars)
@@ -616,14 +639,14 @@ func TestTrayHotkeyChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Hotkey != "Ctrl+Shift+Y" || c.Profiles[0].Hotkey != "Ctrl+Shift+Y" {
-		t.Fatalf("tray hotkey overwritten on disk: %+v", c)
+		t.Fatalf("Settings hotkey overwritten on disk: %+v", c)
 	}
 	if c.MaxChars != 2500 {
 		t.Fatalf("max_chars not saved to disk: %d", c.MaxChars)
 	}
 }
 
-func TestTrayAutoPasteChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
+func TestSettingsAutoPasteChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
 
@@ -633,10 +656,10 @@ func TestTrayAutoPasteChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 		t.Fatalf("expected state with revision: %s", body)
 	}
 
-	// Tray toggles auto-paste while settings page is open.
-	f.a.handleCommand(cmdAutoPaste)
+	// Another Settings page toggles auto-paste while settings page is open.
+	saveSettingsField(t, f.a, "auto_paste", !f.a.conf.AutoPaste)
 	if !f.a.conf.AutoPaste {
-		t.Fatal("tray auto_paste not enabled")
+		t.Fatal("Settings auto_paste not enabled")
 	}
 
 	// Settings page saves max_chars = 3500 without touching auto_paste.
@@ -651,7 +674,7 @@ func TestTrayAutoPasteChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 	}
 
 	if !f.a.conf.AutoPaste {
-		t.Fatal("tray auto_paste overwritten in memory")
+		t.Fatal("Settings auto_paste overwritten in memory")
 	}
 	if f.a.conf.MaxChars != 3500 {
 		t.Fatalf("max_chars not saved: %d", f.a.conf.MaxChars)
@@ -662,14 +685,14 @@ func TestTrayAutoPasteChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !c.AutoPaste {
-		t.Fatal("tray auto_paste overwritten on disk")
+		t.Fatal("Settings auto_paste overwritten on disk")
 	}
 	if c.MaxChars != 3500 {
 		t.Fatalf("max_chars not saved to disk: %d", c.MaxChars)
 	}
 }
 
-func TestTrayNotifyOnCompleteChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
+func TestSettingsNotifyOnCompleteChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
 
@@ -679,10 +702,10 @@ func TestTrayNotifyOnCompleteChangeFollowedByUnrelatedSettingsSave(t *testing.T)
 		t.Fatalf("expected state with revision: %s", body)
 	}
 
-	// Tray toggles notify_on_complete while settings page is open.
-	f.a.handleCommand(cmdNotifyOnComplete)
+	// Another Settings page toggles notify_on_complete while settings page is open.
+	saveSettingsField(t, f.a, "notify_on_complete", !f.a.conf.NotifyOnComplete)
 	if !f.a.conf.NotifyOnComplete {
-		t.Fatal("tray notify_on_complete not enabled")
+		t.Fatal("Settings notify_on_complete not enabled")
 	}
 
 	// Settings page saves max_chars = 3500 without touching notify_on_complete.
@@ -697,7 +720,7 @@ func TestTrayNotifyOnCompleteChangeFollowedByUnrelatedSettingsSave(t *testing.T)
 	}
 
 	if !f.a.conf.NotifyOnComplete {
-		t.Fatal("tray notify_on_complete overwritten in memory")
+		t.Fatal("Settings notify_on_complete overwritten in memory")
 	}
 	if f.a.conf.MaxChars != 3500 {
 		t.Fatalf("max_chars not saved: %d", f.a.conf.MaxChars)
@@ -708,7 +731,7 @@ func TestTrayNotifyOnCompleteChangeFollowedByUnrelatedSettingsSave(t *testing.T)
 		t.Fatal(err)
 	}
 	if !c.NotifyOnComplete {
-		t.Fatal("tray notify_on_complete overwritten on disk")
+		t.Fatal("Settings notify_on_complete overwritten on disk")
 	}
 	if c.MaxChars != 3500 {
 		t.Fatalf("max_chars not saved to disk: %d", c.MaxChars)
@@ -719,14 +742,14 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
 
-	// Case A: Tray changes languages, page attempts to save stale profiles.
+	// Case A: Another Settings page changes languages, page attempts to save stale profiles.
 	_, body := s.do(t, "GET", "/api/state", nil, nil)
 	st := decodeAPI(t, body).State
 	if st == nil || st.Revision == 0 {
 		t.Fatalf("expected state: %s", body)
 	}
 
-	f.a.changeLanguages([]string{"ja", "ko"})
+	changeSettingsLanguages(t, f.a, []string{"ja", "ko"})
 
 	resp, body := s.do(t, "POST", "/api/save", map[string]any{
 		"base_revision": st.Revision,
@@ -739,13 +762,13 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 	if resp.StatusCode != 409 {
 		t.Fatalf("overlapping edit must return 409 Conflict, got %d %s", resp.StatusCode, body)
 	}
-	if !strings.Contains(r.Error, "settings were changed in the tray menu") {
+	if !strings.Contains(r.Error, "settings were changed") {
 		t.Fatalf("conflict error message unexpected: %q", r.Error)
 	}
 	if r.State == nil || !samePair(r.State.Profiles[0].Languages, []string{"ja", "ko"}) {
 		t.Fatalf("conflict response must return current state: %+v", r.State)
 	}
-	// Tray language stayed intact.
+	// The other page's language stayed intact.
 	if !samePair(f.a.conf.Languages, []string{"ja", "ko"}) {
 		t.Fatalf("conf.Languages was corrupted on conflict: %v", f.a.conf.Languages)
 	}
@@ -762,11 +785,11 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 		t.Fatalf("resave with current revision failed: %d %s", resp.StatusCode, body)
 	}
 
-	// Case B: Tray changes auto-paste, page attempts to save stale auto-paste.
+	// Case B: Another Settings page changes auto-paste, page attempts to save stale auto-paste.
 	_, body = s.do(t, "GET", "/api/state", nil, nil)
 	st2 := decodeAPI(t, body).State
 
-	f.a.handleCommand(cmdAutoPaste) // toggles auto-paste
+	saveSettingsField(t, f.a, "auto_paste", !f.a.conf.AutoPaste) // toggles auto-paste
 	curAutoPaste := f.a.conf.AutoPaste
 
 	resp, body = s.do(t, "POST", "/api/save", map[string]any{
@@ -785,11 +808,11 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 		t.Fatalf("conflict state auto_paste mismatch: %+v", r2.State)
 	}
 
-	// Case B2: Tray changes notify_on_complete, page attempts to save stale notify_on_complete.
+	// Case B2: Another Settings page changes notify_on_complete, page attempts to save stale notify_on_complete.
 	_, body = s.do(t, "GET", "/api/state", nil, nil)
 	st3 := decodeAPI(t, body).State
 
-	f.a.handleCommand(cmdNotifyOnComplete) // toggles notify_on_complete
+	saveSettingsField(t, f.a, "notify_on_complete", !f.a.conf.NotifyOnComplete) // toggles notify_on_complete
 	curNotify := f.a.conf.NotifyOnComplete
 
 	resp, body = s.do(t, "POST", "/api/save", map[string]any{
@@ -810,14 +833,262 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 
 	// Case C: Direct applySettings call with stale BaseRevision on conflicting field.
 	form := f.a.settingsState().settingsForm
-	f.a.changeLanguages([]string{"ja", "zh-hans"})
+	changeSettingsLanguages(t, f.a, []string{"ja", "zh-hans"})
 	form.Changed = []string{"profiles"}
 	_, err := f.a.applySettings(form)
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("applySettings with stale BaseRevision must return ErrConflict, got %v", err)
 	}
 	if !samePair(f.a.conf.Languages, []string{"ja", "zh-hans"}) {
-		t.Fatalf("tray change lost on direct applySettings conflict: %v", f.a.conf.Languages)
+		t.Fatalf("Settings change lost on direct applySettings conflict: %v", f.a.conf.Languages)
+	}
+}
+
+// These helpers edit the current Settings form, preserving unrelated profiles.
+func changeSettingsHotkey(t *testing.T, a *app, spec string) error {
+	t.Helper()
+	form := a.settingsState().settingsForm
+	p := a.conf.Profiles[0]
+	p.Hotkey = spec
+	f, err := formFromProfile(p, "windows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	form.Profiles[0] = f
+	form.Changed = []string{"profiles"}
+	_, err = a.applySettings(form)
+	return err
+}
+
+func changeSettingsLanguages(t *testing.T, a *app, pair []string) {
+	t.Helper()
+	form := a.settingsState().settingsForm
+	form.Profiles[0].Languages = pair
+	form.Changed = []string{"profiles"}
+	if _, err := a.applySettings(form); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func saveSettingsField(t *testing.T, a *app, field string, value bool) {
+	t.Helper()
+	form := a.settingsState().settingsForm
+	form.Changed = []string{field}
+	switch field {
+	case "auto_paste":
+		form.AutoPaste = value
+	case "notify_on_complete":
+		form.NotifyOnComplete = value
+	default:
+		t.Fatalf("unexpected field %q", field)
+	}
+	if _, err := a.applySettings(form); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSettingsAllHotkeysInactive(t *testing.T) {
+	f := newSettingsFixture(t)
+	f.a.closeHotkeys()
+	f.a.conf.Profiles = []Profile{{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}}, {Hotkey: "Ctrl+Alt+K", Target: "ko"}}
+	f.a.conf.normalizeProfiles()
+	f.taken["CTRL+ALT+E"], f.taken["CTRL+ALT+K"] = true, true
+	f.a.registerStartupHotkey()
+	if f.a.anyHotkeyActive() {
+		t.Fatal("all registrations must fail")
+	}
+	item := f.a.buildMenu()[0]
+	if item.ID != cmdSettings || item.Disabled {
+		t.Fatalf("Settings must be first and enabled: %+v", item)
+	}
+	f.a.handleCommand(item.ID)
+	if len(f.opened) != 1 {
+		t.Fatal("Settings did not open")
+	}
+	_, body := f.a.settings.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, body).State
+	if st == nil || len(st.Inactive) != 2 || !strings.Contains(st.Inactive[0], "Ctrl+Alt+E") || !strings.Contains(st.Inactive[1], "Ctrl+Alt+K") {
+		t.Fatalf("inactive state: %s", body)
+	}
+	if !st.NoActiveHotkey {
+		t.Error("expected NoActiveHotkey=true when all hotkeys failed to register")
+	}
+	_, js := f.a.settings.do(t, "GET", "/app.js", nil, nil)
+	if !strings.Contains(string(js), "Choose another hotkey below and click Save") {
+		t.Fatal("inactive banner must explain recovery")
+	}
+	// After the keys become free, an unchanged Save retries registration.
+	f.taken["CTRL+ALT+E"], f.taken["CTRL+ALT+K"] = false, false
+	resp, body := f.a.settings.do(t, "POST", "/api/save", st.settingsForm, nil)
+	rep := decodeAPI(t, body)
+	if resp.StatusCode != 200 || rep.State == nil || len(rep.State.Inactive) != 0 || !f.a.anyHotkeyActive() {
+		t.Fatalf("retry: %d %s", resp.StatusCode, body)
+	}
+	if rep.State.NoActiveHotkey {
+		t.Error("expected NoActiveHotkey=false after retry succeeded")
+	}
+}
+
+func TestSettingsStateNoActiveHotkey(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+
+	// Initially startup hotkey is registered and active
+	st := f.a.settingsState()
+	if st.NoActiveHotkey {
+		t.Error("expected NoActiveHotkey=false when hotkey is active")
+	}
+	_, body := s.do(t, "GET", "/api/state", nil, nil)
+	apiState := decodeAPI(t, body).State
+	if apiState == nil || apiState.NoActiveHotkey {
+		t.Errorf("API state NoActiveHotkey should be false, got %+v", apiState)
+	}
+
+	// Make hotkey inactive
+	f.a.closeHotkeys()
+	f.a.hotkey = noHotkey{}
+	st = f.a.settingsState()
+	if !st.NoActiveHotkey {
+		t.Error("expected NoActiveHotkey=true when no hotkey is active")
+	}
+	_, body = s.do(t, "GET", "/api/state", nil, nil)
+	apiState = decodeAPI(t, body).State
+	if apiState == nil || !apiState.NoActiveHotkey {
+		t.Errorf("API state NoActiveHotkey should be true, got %+v", apiState)
+	}
+}
+
+func TestOpenSettingsOpenerFailureGuidanceAndIdleClose(t *testing.T) {
+	f := newSettingsFixture(t)
+	tray := f.a.tray.(*fakeTray)
+	tray.notes = nil
+
+	f.a.settingsIdle = 50 * time.Millisecond
+	f.a.openURL = func(target string) error {
+		return errors.New("browser execution failed")
+	}
+
+	// Must not panic on opener failure
+	f.a.openSettings()
+
+	note := tray.lastNote()
+	if !strings.Contains(note, "Could not open Settings in the browser") {
+		t.Fatalf("expected browser failure message, got %q", note)
+	}
+	if !strings.Contains(note, "Open config.json") || !strings.Contains(note, "restart") {
+		t.Fatalf("expected actionable guidance to open config.json and restart, got %q", note)
+	}
+	if strings.Contains(note, "http://") || strings.Contains(note, "?t=") {
+		t.Fatalf("notification must not leak URL or token: %q", note)
+	}
+
+	// Server is initially running
+	if f.a.settings == nil || !f.a.settings.Running() {
+		t.Fatal("expected settings server to be running initially")
+	}
+
+	// Idle timer must close the server
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for f.a.settings.Running() {
+		if time.Now().After(deadline) {
+			t.Fatal("settings server was left running forever after opener failure")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestPureHotkeyRetryDoesNotTouchConfigOrRevisions(t *testing.T) {
+	f := newSettingsFixture(t)
+	confPath := filepath.Join(f.a.dir, "config.json")
+	bakPath := filepath.Join(f.a.dir, "config.json.bak")
+	_ = os.Remove(bakPath)
+
+	initialBytes, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialInfo, err := os.Stat(confPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Hotkey inactive at start
+	f.a.closeHotkeys()
+	f.a.hotkey = noHotkey{}
+	f.a.confRevision = 5
+	f.a.profilesRev = 5
+
+	form := settingsForm{
+		BaseRevision: 5,
+		Changed:      []string{"profiles"},
+		Profiles: []profileForm{
+			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}},
+		},
+	}
+
+	var regCount int
+	f.a.newHotkey = func(spec string) (Hotkey, error) {
+		regCount++
+		return fakeHotkey{spec}, nil
+	}
+
+	warnings, err := f.a.applySettings(form)
+	if err != nil {
+		t.Fatalf("pure retry failed: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if !f.a.anyHotkeyActive() {
+		t.Fatal("expected hotkey to be active after retry")
+	}
+	if regCount == 0 {
+		t.Fatal("expected registration to be attempted on retry")
+	}
+
+	// Revisions must NOT change on pure retry
+	if f.a.confRevision != 5 {
+		t.Errorf("confRevision bumped from 5 to %d", f.a.confRevision)
+	}
+	if f.a.profilesRev != 5 {
+		t.Errorf("profilesRev bumped from 5 to %d", f.a.profilesRev)
+	}
+
+	// config.json must NOT be touched
+	currentBytes, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(currentBytes) != string(initialBytes) {
+		t.Errorf("config.json changed: got %s, want %s", string(currentBytes), string(initialBytes))
+	}
+	currentInfo, err := os.Stat(confPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !currentInfo.ModTime().Equal(initialInfo.ModTime()) {
+		t.Errorf("config.json mtime changed: got %v, want %v", currentInfo.ModTime(), initialInfo.ModTime())
+	}
+	if _, err := os.Stat(bakPath); !os.IsNotExist(err) {
+		t.Errorf("config.json.bak was created: %v", err)
+	}
+
+	// Retry on already-working registrations must do nothing
+	regCount = 0
+	f.a.newHotkey = func(spec string) (Hotkey, error) {
+		regCount++
+		t.Error("newHotkey must not be called when registrations are already active")
+		return nil, errors.New("must not be called")
+	}
+	warnings, err = f.a.applySettings(form)
+	if err != nil {
+		t.Fatalf("unexpected error on active retry: %v", err)
+	}
+	if regCount != 0 {
+		t.Errorf("expected 0 registration calls, got %d", regCount)
+	}
+	if f.a.confRevision != 5 || f.a.profilesRev != 5 {
+		t.Errorf("revisions changed on active retry: confRev=%d, profilesRev=%d", f.a.confRevision, f.a.profilesRev)
 	}
 }
 
@@ -873,8 +1144,8 @@ func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 		t.Error("an unchanged save re-registered hotkeys")
 	}
 
-	// Overlapping edit conflict: app revision moves ahead (e.g. tray changed languages).
-	f.a.changeLanguages([]string{"ja", "ko"})
+	// Overlapping edit conflict: app revision moves ahead (another editor changed the languages).
+	changeSettingsLanguages(t, f.a, []string{"ja", "ko"})
 
 	// Attempt save with stale base_revision.
 	staleForm := settingsForm{
@@ -889,7 +1160,7 @@ func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 	if resp.StatusCode != 409 {
 		t.Fatalf("stale profile output save must return 409 Conflict, got %d %s", resp.StatusCode, body)
 	}
-	if !strings.Contains(r.Error, "settings were changed in the tray menu") {
+	if !strings.Contains(r.Error, "settings were changed") {
 		t.Fatalf("unexpected error message: %q", r.Error)
 	}
 }

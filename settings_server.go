@@ -65,19 +65,22 @@ type languageOption struct {
 // settingsState is what the page shows.
 type settingsState struct {
 	settingsForm
-	Revision   int              `json:"revision"`
-	Languages  []languageOption `json:"language_options"`
-	MaxHotkeys int              `json:"max_hotkeys"`
-	WinKey     string           `json:"win_key"`  // what the Win modifier is called here
-	Inactive   []string         `json:"inactive"` // hotkeys that could not be registered, with the reason
+	Revision       int              `json:"revision"`
+	Languages      []languageOption `json:"language_options"`
+	MaxHotkeys     int              `json:"max_hotkeys"`
+	WinKey         string           `json:"win_key"`  // what the Win modifier is called here
+	Inactive       []string         `json:"inactive"` // hotkeys that could not be registered, with the reason
+	NoActiveHotkey bool             `json:"no_active_hotkey"`
 
-	Models      []modelState   `json:"models"`
-	CustomModel string         `json:"custom_model,omitempty"` // model_file when it is not one of the models above
-	Engines     []engineState  `json:"engines"`
-	Download    *downloadState `json:"download,omitempty"`
-	Busy        string         `json:"busy,omitempty"`   // what the app is doing now (loading a model ...)
-	Notice      string         `json:"notice,omitempty"` // why the last switch did not work
-	LicenseURL  string         `json:"license_url"`
+	Models           []modelState   `json:"models"`
+	CustomModel      string         `json:"custom_model,omitempty"` // model_file when it is not one of the models above
+	Engines          []engineState  `json:"engines"`
+	ConfiguredEngine string         `json:"configured_engine,omitempty"`
+	RunningEngine    string         `json:"running_engine,omitempty"`
+	Download         *downloadState `json:"download,omitempty"`
+	Busy             string         `json:"busy,omitempty"`   // what the app is doing now (loading a model ...)
+	Notice           string         `json:"notice,omitempty"` // why the last switch did not work
+	LicenseURL       string         `json:"license_url"`
 }
 
 type modelState struct {
