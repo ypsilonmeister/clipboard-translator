@@ -1,5 +1,5 @@
 {
-    "version": "0.8.2",
+    "version": "0.9.0",
     "description": "Clipboard translator that runs fully locally (llama.cpp + PLaMo 3 Translate): Japanese <-> English by default, other languages selectable. Select text, press a hotkey, paste.",
     "homepage": "https://github.com/ypsilonmeister/clipboard-translator",
     "license": "MIT",
@@ -10,8 +10,8 @@
     ],
     "architecture": {
         "64bit": {
-            "url": "https://github.com/ypsilonmeister/clipboard-translator/releases/download/v0.8.2/Portable-Clipboard-Translator-Windows-x64-v0.8.2.zip",
-            "hash": "402af15580fa0b3bf2d15acee5bf73020d25a7fb9e2820afeb738772d9aca2be"
+            "url": "https://github.com/ypsilonmeister/clipboard-translator/releases/download/v0.9.0/Portable-Clipboard-Translator-Windows-x64-v0.9.0.zip",
+            "hash": "1395924ef8e84eaa37c00e8a5c6f9e645d1b770423bdc8cac27d6b3c3c398a20"
         }
     },
     "shortcuts": [
