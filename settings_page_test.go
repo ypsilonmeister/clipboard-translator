@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 // settingsFixture is an app whose settings requests are answered by a goroutine
@@ -549,7 +551,7 @@ func TestSettingsLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 
 	// Another Settings page changes languages while settings page is open.
 	changeSettingsLanguages(t, f.a, []string{"ja", "ko"})
-	if !samePair(f.a.conf.Languages, []string{"ja", "ko"}) {
+	if !languages.SamePair(f.a.conf.Languages, []string{"ja", "ko"}) {
 		t.Fatalf("Settings did not change language: %v", f.a.conf.Languages)
 	}
 
@@ -565,10 +567,10 @@ func TestSettingsLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 	}
 
 	// The other page's language choice must be preserved in memory and on disk.
-	if !samePair(f.a.conf.Languages, []string{"ja", "ko"}) {
+	if !languages.SamePair(f.a.conf.Languages, []string{"ja", "ko"}) {
 		t.Fatalf("Settings languages overwritten in memory: %v", f.a.conf.Languages)
 	}
-	if !samePair(f.a.conf.Profiles[0].Languages, []string{"ja", "ko"}) {
+	if !languages.SamePair(f.a.conf.Profiles[0].Languages, []string{"ja", "ko"}) {
 		t.Fatalf("profile 0 languages overwritten in memory: %v", f.a.conf.Profiles[0].Languages)
 	}
 	if f.a.conf.MaxChars != 2000 {
@@ -579,7 +581,7 @@ func TestSettingsLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !samePair(c.Languages, []string{"ja", "ko"}) && !samePair(c.Profiles[0].Languages, []string{"ja", "ko"}) {
+	if !languages.SamePair(c.Languages, []string{"ja", "ko"}) && !languages.SamePair(c.Profiles[0].Languages, []string{"ja", "ko"}) {
 		t.Fatalf("Settings languages overwritten on disk: %+v", c)
 	}
 	if c.MaxChars != 2000 {
@@ -595,7 +597,7 @@ func TestSettingsLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("applySettings: %v", err)
 	}
-	if !samePair(f.a.conf.Languages, []string{"ja", "zh-hans"}) {
+	if !languages.SamePair(f.a.conf.Languages, []string{"ja", "zh-hans"}) {
 		t.Fatalf("direct applySettings overwrote Settings languages: %v", f.a.conf.Languages)
 	}
 }
@@ -765,11 +767,11 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 	if !strings.Contains(r.Error, "settings were changed") {
 		t.Fatalf("conflict error message unexpected: %q", r.Error)
 	}
-	if r.State == nil || !samePair(r.State.Profiles[0].Languages, []string{"ja", "ko"}) {
+	if r.State == nil || !languages.SamePair(r.State.Profiles[0].Languages, []string{"ja", "ko"}) {
 		t.Fatalf("conflict response must return current state: %+v", r.State)
 	}
 	// The other page's language stayed intact.
-	if !samePair(f.a.conf.Languages, []string{"ja", "ko"}) {
+	if !languages.SamePair(f.a.conf.Languages, []string{"ja", "ko"}) {
 		t.Fatalf("conf.Languages was corrupted on conflict: %v", f.a.conf.Languages)
 	}
 
@@ -839,7 +841,7 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("applySettings with stale BaseRevision must return ErrConflict, got %v", err)
 	}
-	if !samePair(f.a.conf.Languages, []string{"ja", "zh-hans"}) {
+	if !languages.SamePair(f.a.conf.Languages, []string{"ja", "zh-hans"}) {
 		t.Fatalf("Settings change lost on direct applySettings conflict: %v", f.a.conf.Languages)
 	}
 }

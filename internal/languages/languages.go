@@ -1,4 +1,4 @@
-package main
+package languages
 
 import (
 	"fmt"
@@ -6,6 +6,10 @@ import (
 	"strings"
 	"unicode"
 )
+
+// Direction is what to ask the model for. Source is empty for a
+// target-only profile: the model then detects the source language itself.
+type Direction struct{ Source, Target string }
 
 // A language pair decides which way a selection is translated. The model
 // (PLaMo 3 Translate) takes lowercase codes and, per its model card, covers the
@@ -50,23 +54,24 @@ var scriptTables = map[string][]*unicode.RangeTable{
 	"telugu": {unicode.Telugu}, "thai": {unicode.Thai},
 }
 
-var defaultLanguages = []string{"ja", "en"}
+// Default is the pair used when a config names none.
+var Default = []string{"ja", "en"}
 
-func languageName(code string) string {
+func Name(code string) string {
 	if l, ok := languages[code]; ok {
 		return l.name
 	}
 	return code
 }
 
-// pairLabel is how a pair is shown in profile labels.
-func pairLabel(pair []string) string {
-	return languageName(pair[0]) + " ↔ " + languageName(pair[1])
+// PairLabel is how a pair is shown in profile labels.
+func PairLabel(pair []string) string {
+	return Name(pair[0]) + " ↔ " + Name(pair[1])
 }
 
-// validateLanguages checks a "languages" setting and returns it normalized
+// Validate checks a "languages" setting and returns it normalized
 // (trimmed, lowercase). It rejects what the app cannot translate reliably.
-func validateLanguages(in []string) ([]string, error) {
+func Validate(in []string) ([]string, error) {
 	if len(in) != 2 {
 		return nil, fmt.Errorf("languages must list exactly two language codes, e.g. [\"ja\", \"en\"]")
 	}
@@ -78,7 +83,7 @@ func validateLanguages(in []string) ([]string, error) {
 			if c == "zh" || c == "zh-cn" || c == "zh-tw" {
 				hint = " (use zh-hans or zh-hant)"
 			}
-			return nil, fmt.Errorf("languages: %q is not a supported language code%s; supported: %s", in[i], hint, strings.Join(languageCodes(), ", "))
+			return nil, fmt.Errorf("languages: %q is not a supported language code%s; supported: %s", in[i], hint, strings.Join(Codes(), ", "))
 		}
 		out[i] = c
 	}
@@ -86,12 +91,30 @@ func validateLanguages(in []string) ([]string, error) {
 		return nil, fmt.Errorf("languages: both entries are %q; pick two different languages", out[0])
 	}
 	if languages[out[0]].script == languages[out[1]].script {
-		return nil, fmt.Errorf("languages: %s and %s use the same script, so the app cannot tell from the text which way to translate. Pick a language with a different script for now", languageName(out[0]), languageName(out[1]))
+		return nil, fmt.Errorf("languages: %s and %s use the same script, so the app cannot tell from the text which way to translate. Pick a language with a different script for now", Name(out[0]), Name(out[1]))
 	}
 	return out, nil
 }
 
-func languageCodes() []string {
+// Known reports whether code is one of the supported language codes.
+func Known(code string) bool {
+	_, ok := languages[code]
+	return ok
+}
+
+// Language is one entry of the table, for pages that list them.
+type Language struct{ Code, Name string }
+
+// All returns every supported language, in no particular order.
+func All() []Language {
+	out := make([]Language, 0, len(languages))
+	for code, l := range languages {
+		out = append(out, Language{Code: code, Name: l.name})
+	}
+	return out
+}
+
+func Codes() []string {
 	codes := make([]string, 0, len(languages))
 	for c := range languages {
 		codes = append(codes, c)
@@ -121,31 +144,31 @@ func uses(s, lang string) bool {
 	return hasScript(s, l.script) || (lang == "ja" && hasScript(s, "han"))
 }
 
-func isURL(s string) bool {
+func IsURL(s string) bool {
 	l := strings.ToLower(s)
 	return strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "http://")
 }
 
-// directionFor says which way s should be translated for the language pair.
+// DirectionFor says which way s should be translated for the language pair.
 // The language with its own non-Latin script wins when the text mixes scripts
 // (Japanese with an English word is still Japanese). URLs and text without a
 // letter of either script are not translated.
-func directionFor(pair []string, s string) (translationDirection, bool) {
+func DirectionFor(pair []string, s string) (Direction, bool) {
 	if len(pair) != 2 {
-		pair = defaultLanguages
+		pair = Default
 	}
 	s = strings.TrimSpace(s)
-	if s == "" || isURL(s) {
-		return translationDirection{}, false
+	if s == "" || IsURL(s) {
+		return Direction{}, false
 	}
 	a, b := pair[0], pair[1]
-	to := func(src, dst string) (translationDirection, bool) {
-		return translationDirection{Source: src, Target: dst}, true
+	to := func(src, dst string) (Direction, bool) {
+		return Direction{Source: src, Target: dst}, true
 	}
 	la, lb := languages[a].script == "latin", languages[b].script == "latin"
 	switch {
 	case la && lb:
-		return translationDirection{}, false // validateLanguages refuses this pair
+		return Direction{}, false // Validate refuses this pair
 	case la || lb:
 		latin, other := a, b
 		if lb {
@@ -157,7 +180,7 @@ func directionFor(pair []string, s string) (translationDirection, bool) {
 		if hasScript(s, "latin") {
 			return to(latin, other)
 		}
-		return translationDirection{}, false
+		return Direction{}, false
 	}
 	ownA, ownB := hasScript(s, languages[a].script), hasScript(s, languages[b].script)
 	switch {
@@ -180,9 +203,9 @@ func directionFor(pair []string, s string) (translationDirection, bool) {
 			return to(b, a)
 		}
 	}
-	return translationDirection{}, false
+	return Direction{}, false
 }
 
-func samePair(a, b []string) bool {
+func SamePair(a, b []string) bool {
 	return len(a) == 2 && len(b) == 2 && (a[0] == b[0] && a[1] == b[1] || a[0] == b[1] && a[1] == b[0])
 }

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 // uxApp is an app wired for translation-flow tests: a fake clipboard, a fake
@@ -38,7 +40,7 @@ func TestHandleResultCopiesAndRemembers(t *testing.T) {
 	a, tray, cb, pastes, _ := uxApp(t)
 	cb.text = "こんにちは"
 	g := pending(a)
-	a.handleResult(result{original: "こんにちは", translated: "Hello", generation: g, direction: translationDirection{"ja", "en"}, window: 100, fromSelection: true})
+	a.handleResult(result{original: "こんにちは", translated: "Hello", generation: g, direction: languages.Direction{Source: "ja", Target: "en"}, window: 100, fromSelection: true})
 	if cb.text != "Hello" {
 		t.Fatalf("clipboard = %q", cb.text)
 	}
@@ -262,7 +264,7 @@ func TestHandleResultNotifyOnComplete(t *testing.T) {
 		original:      "こんにちは",
 		translated:    "Hello world",
 		generation:    g,
-		direction:     translationDirection{"ja", "en"},
+		direction:     languages.Direction{Source: "ja", Target: "en"},
 		window:        100,
 		fromSelection: true,
 	})
@@ -278,7 +280,7 @@ func TestHandleResultNotifyOnComplete(t *testing.T) {
 		original:      "Hello",
 		translated:    "こんにちは",
 		generation:    g,
-		direction:     translationDirection{Target: "ja"},
+		direction:     languages.Direction{Target: "ja"},
 		window:        100,
 		fromSelection: true,
 	})
@@ -295,7 +297,7 @@ func TestHandleResultNotifyOnComplete(t *testing.T) {
 		original:      "apple",
 		translated:    "りんご",
 		generation:    g,
-		direction:     translationDirection{"en", "ja"},
+		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
 	})
@@ -323,7 +325,7 @@ func TestHandleResultNotifyOnComplete(t *testing.T) {
 		original:      "orange",
 		translated:    "みかん",
 		generation:    g,
-		direction:     translationDirection{"en", "ja"},
+		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
 	})
@@ -346,7 +348,7 @@ func TestHandleResultNotifyOnComplete(t *testing.T) {
 		original:      "grape",
 		translated:    "ぶどう",
 		generation:    g,
-		direction:     translationDirection{"en", "ja"},
+		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
 	})
@@ -865,7 +867,7 @@ func TestHandleResultBilingualOutput(t *testing.T) {
 		original:      original,
 		translated:    translated,
 		generation:    g,
-		direction:     translationDirection{"en", "ja"},
+		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
 		output:        OutputBilingual,
@@ -916,7 +918,7 @@ func TestHandleResultBilingualReplaceIfUnchanged(t *testing.T) {
 		original:      original,
 		translated:    translated,
 		generation:    g,
-		direction:     translationDirection{"en", "ja"},
+		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
 		output:        OutputBilingual,
@@ -948,7 +950,7 @@ func TestHandleResultWhitespaceOnlyRewriteReplaces(t *testing.T) {
 		original:      original,
 		translated:    translated,
 		generation:    g,
-		direction:     translationDirection{"en", "ja"},
+		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
 	})
@@ -978,7 +980,7 @@ func TestHandleResultRealChangeDiscardsWithDiagnostics(t *testing.T) {
 		original:      original,
 		translated:    translated,
 		generation:    g,
-		direction:     translationDirection{"en", "ja"},
+		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
 		capturedAt:    capturedAt,
@@ -1018,7 +1020,7 @@ func TestHandleResultBilingualTranslationUnchanged(t *testing.T) {
 		original:      original,
 		translated:    original, // model returned unchanged text
 		generation:    g,
-		direction:     translationDirection{"en", "ja"},
+		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
 		output:        OutputBilingual,
@@ -1043,7 +1045,7 @@ func TestHandleResultBilingualTargetOnly(t *testing.T) {
 		original:      original,
 		translated:    translated,
 		generation:    g,
-		direction:     translationDirection{Target: "ko"},
+		direction:     languages.Direction{Target: "ko"},
 		window:        100,
 		fromSelection: true,
 		output:        OutputBilingual,
@@ -1065,7 +1067,7 @@ func TestHandleResultMultipleProfilesDifferentModes(t *testing.T) {
 		original:      "Hello\r\n",
 		translated:    "こんにちは",
 		generation:    g,
-		direction:     translationDirection{"en", "ja"},
+		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
 		output:        OutputReplace,
@@ -1081,7 +1083,7 @@ func TestHandleResultMultipleProfilesDifferentModes(t *testing.T) {
 		original:      "Good night\r\n",
 		translated:    "おやすみ",
 		generation:    g,
-		direction:     translationDirection{"en", "ja"},
+		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
 		output:        OutputBilingual,
@@ -1105,7 +1107,7 @@ func TestHandleResultBilingualAutoPaste(t *testing.T) {
 		original:      original,
 		translated:    translated,
 		generation:    g,
-		direction:     translationDirection{"en", "ja"},
+		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
 		output:        OutputBilingual,

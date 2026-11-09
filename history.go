@@ -4,13 +4,15 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 const historySize = 10
 
 type historyEntry struct {
 	Source, Translated string
-	Direction          translationDirection
+	Direction          languages.Direction
 }
 
 // history keeps the last few translations in memory only (never on disk:

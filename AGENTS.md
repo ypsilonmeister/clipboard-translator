@@ -81,7 +81,7 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 | File | Role |
 | --- | --- |
 | `main.go` | `main()`, `Profile.direction` (what one hotkey translates), the HTTP `translate` call, `fatal`, `pathWithin` |
-| `languages.go` | The 53 model languages, `validateLanguages`, and `directionFor`: the script of the text picks the direction of a language pair (URLs are skipped) |
+| `internal/languages/` | The 53 model languages, `Validate`, and `DirectionFor`: the script of the text picks the direction of a language pair (URLs are skipped). Standard library only; the first package split out of `main` (Issue #104) |
 | `app.go` | `app` struct and the main loop `serve`: hotkeys (one per profile), tray commands, update results, translation results, Settings-page requests, download results. `startTranslation` / `handleResult` / `abortTranslation` |
 | `app_menu.go`, `app_idle.go` | Daily tray commands (Settings first, cancel, unload, model switch when multiple are installed, history, updates, config and license); configuration is edited in Settings; UI-thread idle timer and intentional unload/reload state |
 | `capture.go` | `captureJob`: the ordering rules of selection capture (modifiers released, focus unchanged, clipboard sequence) over per-OS pieces, so they are tested without a desktop. `serve` steps the job (`stepCapture`) every ~15 ms instead of sleeping, so a slow copy never blocks the UI thread |

@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 func entry(src, dst string) historyEntry {
-	return historyEntry{Source: src, Translated: dst, Direction: translationDirection{"en", "ja"}}
+	return historyEntry{Source: src, Translated: dst, Direction: languages.Direction{Source: "en", Target: "ja"}}
 }
 
 func TestHistoryOrderLimitAndDedupe(t *testing.T) {

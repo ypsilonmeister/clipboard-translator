@@ -1,8 +1,6 @@
-package main
+package languages
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -41,7 +39,7 @@ func TestDirectionForPairs(t *testing.T) {
 		{nil, "Hello", "en", "missing pair uses ja/en", "ja", true},
 	}
 	for _, tc := range cases {
-		got, ok := directionFor(tc.pair, tc.input)
+		got, ok := DirectionFor(tc.pair, tc.input)
 		if ok != tc.ok || got.Source != tc.source || got.Target != tc.target {
 			t.Errorf("%s %v %q: got %+v, %v; want %s->%s, %v", tc.label, tc.pair, tc.input, got, ok, tc.source, tc.target, tc.ok)
 		}
@@ -51,7 +49,7 @@ func TestDirectionForPairs(t *testing.T) {
 func TestValidateLanguages(t *testing.T) {
 	good := [][]string{{"ja", "en"}, {"EN", " ko "}, {"zh-hant", "ja"}, {"en", "ru"}}
 	for _, g := range good {
-		got, err := validateLanguages(g)
+		got, err := Validate(g)
 		if err != nil {
 			t.Errorf("%v must be accepted: %v", g, err)
 			continue
@@ -77,7 +75,7 @@ func TestValidateLanguages(t *testing.T) {
 		{[]string{"ru", "bg"}, "same script"},
 	}
 	for _, tc := range bad {
-		if _, err := validateLanguages(tc.in); err == nil || !strings.Contains(err.Error(), tc.want) {
+		if _, err := Validate(tc.in); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%v: want an error containing %q, got %v", tc.in, tc.want, err)
 		}
 	}
@@ -94,39 +92,5 @@ func TestEveryLanguageHasAScriptTable(t *testing.T) {
 		if len(scriptTables[l.script]) == 0 {
 			t.Errorf("%s: no unicode table for script %q", code, l.script)
 		}
-	}
-}
-
-func TestLoadConfigLanguages(t *testing.T) {
-	c, err := loadConfig(writeConfig(t, `{}`))
-	if err != nil || !samePair(c.Languages, []string{"ja", "en"}) {
-		t.Fatalf("default languages: %v, %v", c.Languages, err)
-	}
-	c, err = loadConfig(writeConfig(t, `{"languages": ["EN", "ko"]}`))
-	if err != nil || c.Languages[0] != "en" || c.Languages[1] != "ko" {
-		t.Fatalf("explicit languages: %v, %v", c.Languages, err)
-	}
-	for _, bad := range []string{`{"languages": []}`, `{"languages": ["ja", "xx"]}`, `{"languages": ["en", "de"]}`} {
-		if err := loadConfig2(t, bad); err == nil || !strings.Contains(err.Error(), "languages") {
-			t.Errorf("%s must be rejected with a message about languages, got %v", bad, err)
-		}
-	}
-}
-
-func TestSettingsLanguageSwitchesAndSaves(t *testing.T) {
-	a, _, _ := newTestApp(t)
-	changeSettingsLanguages(t, a, []string{"en", "ko"})
-	if !samePair(a.conf.Languages, []string{"en", "ko"}) {
-		t.Fatalf("pair not switched: %v", a.conf.Languages)
-	}
-	if got, ok := directionFor(a.conf.Languages, "안녕"); !ok || got.Source != "ko" || got.Target != "en" {
-		t.Errorf("the new pair is not used: %+v, %v", got, ok)
-	}
-	b, err := os.ReadFile(filepath.Join(a.dir, "config.json"))
-	if err != nil || !strings.Contains(string(b), `"languages": ["en","ko"]`) || !strings.Contains(string(b), `"hotkey"`) {
-		t.Errorf("config.json not updated while keeping other keys: %s %v", b, err)
-	}
-	if !samePair(a.settingsState().Profiles[0].Languages, []string{"en", "ko"}) {
-		t.Fatal("Settings must show the saved pair")
 	}
 }

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 // The settings page is a small web page served by the app on 127.0.0.1 for as
@@ -500,9 +502,10 @@ func (s *settingsServer) handleDeleteModel(w http.ResponseWriter, r *http.Reques
 
 // languageOptions lists the model's languages by name, Japanese and English first.
 func languageOptions() []languageOption {
-	out := make([]languageOption, 0, len(languages))
-	for code, l := range languages {
-		out = append(out, languageOption{Code: code, Name: l.name})
+	all := languages.All()
+	out := make([]languageOption, 0, len(all))
+	for _, l := range all {
+		out = append(out, languageOption{Code: l.Code, Name: l.Name})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		rank := func(c string) int {
