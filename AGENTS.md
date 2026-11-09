@@ -120,6 +120,9 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
   is in front. Selection capture waits for the sequence to settle (~80 ms) to
   avoid intermediate clipboard writes, and `ReplaceIfUnchanged` tolerates harmless
   line-break (CRLF/CR) and trailing whitespace changes while protecting newer user copies.
+  On Windows the capture waits up to 2 s (`windowsCopyTimeout`) for the copy: a slow web
+  page can finish its copy after 1 s, and giving up earlier translates the stale clipboard
+  text (the cost: with nothing selected the clipboard text is used 2 s after the key press).
 - **Paths in `config.json` are relative to the exe folder** (`pathWithin`
   rejects absolute paths and `..`), and may use `/` or `\`. Unknown keys must
   survive `updateConfigFile`.

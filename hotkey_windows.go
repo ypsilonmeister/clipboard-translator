@@ -229,6 +229,15 @@ func sendPaste() error {
 	return nil
 }
 
+// windowsCopyTimeout is how long captureSelectedText waits for Ctrl+C to change
+// the clipboard before it gives up and uses the previous clipboard text. A heavy
+// web page (a long chat page in a browser) can take well over a second to finish
+// a copy, and giving up early translates the STALE clipboard text and then loses
+// the race with the late copy. The price is that with nothing selected (the
+// 'copy manually, then press the hotkey' flow) the translation starts this long
+// after the key press.
+const windowsCopyTimeout = 2 * time.Second
+
 // captureSelectedText tries to copy the selected content of window win, the
 // window that was in front when the hotkey was pressed. If Ctrl+C does not
 // change the clipboard, it uses the previous clipboard text (fromSelection is
@@ -240,7 +249,7 @@ func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
 		sequence:        clipboardSequence,
 		sendCopy:        sendCopy,
 		modifierTimeout: 900 * time.Millisecond,
-		copyTimeout:     700 * time.Millisecond,
+		copyTimeout:     windowsCopyTimeout,
 		settleTime:      80 * time.Millisecond,
 	})
 }
