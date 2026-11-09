@@ -18,6 +18,7 @@ const (
 	cmdHistoryClear = firstAppCommand + 7
 	cmdSettings     = firstAppCommand + 8
 	cmdUnloadModel  = firstAppCommand + 10
+	cmdQuickstart   = firstAppCommand + 11
 	cmdModelBase    = firstAppCommand + 100 // + index into modelCatalog
 	cmdHistoryBase  = firstAppCommand + 300 // + index into history (newest first)
 )
@@ -46,7 +47,7 @@ func versionLabel() string {
 // buildMenu is the app-specific part of the tray menu. It runs each time the
 // menu opens, so availability and the update entry reflect the current state.
 func (a *app) buildMenu() []MenuItem {
-	items := []MenuItem{{ID: cmdSettings, Label: "Settings..."}}
+	items := []MenuItem{{ID: cmdSettings, Label: "Settings..."}, {ID: cmdQuickstart, Label: "Quick start"}}
 	if a.translating {
 		items = append(items, MenuItem{ID: cmdCancel, Label: "Cancel translation"}, MenuItem{Separator: true})
 	}
@@ -113,6 +114,8 @@ func (a *app) handleCommand(id int) {
 		}
 	case id == cmdSettings:
 		a.openSettings()
+	case id == cmdQuickstart:
+		a.showQuickstart()
 	case id == cmdHistoryClear:
 		a.hist.Clear()
 	case id == cmdCheckUpdate:

@@ -321,7 +321,7 @@ func TestBuildMenuExactLabels(t *testing.T) {
 					case "update":
 						a.latest = releaseInfo{Tag: "v2.0.0"}
 					}
-					want := []string{"Settings..."}
+					want := []string{"Settings...", "Quick start"}
 					if a.translating {
 						want = append(want, "Cancel translation", "---")
 					}

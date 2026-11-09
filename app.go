@@ -465,7 +465,9 @@ func (a *app) serve(cb Clipboard) {
 		tray.Notify("Clipboard Translator", fmt.Sprintf("Could not register the hotkey %s (another program may be using it). Open Settings... from the tray menu and choose another hotkey there.", a.conf.Hotkey), true)
 	} else {
 		log.Printf("ready: select text and press %s (or translate existing clipboard)", a.hotkeySummary())
-		tray.Notify("Clipboard Translator", "Ready. Select text and press "+a.hotkeySummary()+", then paste with "+pasteShortcut()+".", false)
+		if !a.conf.QuickstartShown {
+			a.showQuickstart() // first run only; the tray menu shows it again
+		}
 	}
 	if f := a.extraFailures(); f != "" {
 		tray.Notify("Clipboard Translator", "These hotkeys are not active:\n"+f, true)

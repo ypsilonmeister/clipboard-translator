@@ -32,6 +32,9 @@ type Config struct {
 	// NotifyOnComplete shows a tray notification when a translation finishes
 	// without auto-pasting. Off by default.
 	NotifyOnComplete bool `json:"notify_on_complete"`
+	// QuickstartShown is set once the first-run guide has been shown, so later
+	// launches stay quiet. The guide stays available in the tray and Settings.
+	QuickstartShown bool `json:"quickstart_shown"`
 	// Languages is the pair translated in both directions, e.g. ["ja", "en"].
 	Languages []string `json:"languages"`
 	// Profiles are the hotkeys, each with its own language setting. When it is
