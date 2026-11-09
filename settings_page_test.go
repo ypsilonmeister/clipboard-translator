@@ -1092,6 +1092,64 @@ func TestPureHotkeyRetryDoesNotTouchConfigOrRevisions(t *testing.T) {
 	}
 }
 
+func TestSettingsProfileInputSaveAndState(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+
+	_, body := s.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, body).State
+	if st == nil || len(st.Profiles) != 1 || st.Profiles[0].Input != InputSelection {
+		t.Fatalf("initial state input: %+v", st)
+	}
+
+	saveForm := settingsForm{
+		BaseRevision: st.Revision,
+		MaxChars:     4000,
+		Changed:      []string{"profiles"},
+		Profiles: []profileForm{
+			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Input: InputClipboard},
+		},
+	}
+	resp, body := s.do(t, "POST", "/api/save", saveForm, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 200 || r.Error != "" || r.State == nil {
+		t.Fatalf("save clipboard input: %d %s", resp.StatusCode, body)
+	}
+	if r.State.Profiles[0].Input != InputClipboard || f.a.conf.Profiles[0].Input != InputClipboard {
+		t.Fatalf("input not applied: state %q, conf %q", r.State.Profiles[0].Input, f.a.conf.Profiles[0].Input)
+	}
+	raw, err := os.ReadFile(filepath.Join(f.a.dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"input":"clipboard"`) {
+		t.Fatalf("config.json did not save the input mode:\n%s", raw)
+	}
+
+	// An unknown value is rejected and nothing changes.
+	bad := saveForm
+	bad.BaseRevision = r.State.Revision
+	bad.Profiles = []profileForm{{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Input: "mouse"}}
+	resp, body = s.do(t, "POST", "/api/save", bad, nil)
+	if resp.StatusCode == 200 || !strings.Contains(decodeAPI(t, body).Error, "input") {
+		t.Fatalf("an unknown input must be rejected: %d %s", resp.StatusCode, body)
+	}
+	if f.a.conf.Profiles[0].Input != InputClipboard {
+		t.Fatal("a rejected save changed the input mode")
+	}
+
+	// Saving the same settings again changes nothing (hotkeys are not re-registered).
+	before := f.reg.Load()
+	same := saveForm
+	same.BaseRevision = r.State.Revision
+	if resp, _ := s.do(t, "POST", "/api/save", same, nil); resp.StatusCode != 200 {
+		t.Fatalf("second save: %d", resp.StatusCode)
+	}
+	if f.reg.Load() != before {
+		t.Error("an unchanged save re-registered hotkeys")
+	}
+}
+
 func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)

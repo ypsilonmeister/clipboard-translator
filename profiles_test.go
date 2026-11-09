@@ -287,6 +287,89 @@ func TestEachProfileTranslatesWithItsOwnOutputMode(t *testing.T) {
 	}
 }
 
+// A clipboard profile uses the clipboard text as it is: no Ctrl+C is sent (the
+// capture seam is never called) and the result is never auto-pasted. A
+// selection profile keeps capturing.
+func TestClipboardInputProfileDoesNotCapture(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": "こんにちは"}}}})
+	}))
+	defer srv.Close()
+
+	a := profilesApp(t,
+		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Input: InputClipboard},
+		Profile{Hotkey: "Ctrl+Alt+S", Languages: []string{"ja", "en"}, Input: InputSelection})
+	a.endpoint = srv.URL
+	a.foreground = func() uintptr { return 1 }
+	pastes := 0
+	a.paste = func(uintptr) error { pastes++; return nil }
+	a.conf.AutoPaste = true
+
+	captures := 0
+	a.capture = func(Clipboard, uintptr) (string, bool, error) {
+		captures++
+		return "Selected text", true, nil
+	}
+
+	// Profile 0: clipboard input.
+	a.cb = &testClipboard{text: "Hello from the clipboard"}
+	a.startTranslation(0)
+	select {
+	case res := <-a.results:
+		if res.original != "Hello from the clipboard" || res.fromSelection {
+			t.Fatalf("clipboard result: original %q, fromSelection %v", res.original, res.fromSelection)
+		}
+		a.handleResult(res)
+	case <-time.After(5 * time.Second):
+		t.Fatal("clipboard profile: no result")
+	}
+	if captures != 0 {
+		t.Fatalf("a clipboard profile must not capture a selection (capture called %d times)", captures)
+	}
+	if got := a.cb.(*testClipboard).text; got != "こんにちは" {
+		t.Fatalf("clipboard = %q, want the translation", got)
+	}
+	if pastes != 0 {
+		t.Fatalf("a clipboard profile must never auto-paste (pastes = %d)", pastes)
+	}
+
+	// Profile 1: selection input still captures.
+	a.cb = &testClipboard{text: "old clipboard"}
+	a.startTranslation(1)
+	select {
+	case res := <-a.results:
+		if res.original != "Selected text" || !res.fromSelection {
+			t.Fatalf("selection result: original %q, fromSelection %v", res.original, res.fromSelection)
+		}
+		a.handleResult(res)
+	case <-time.After(5 * time.Second):
+		t.Fatal("selection profile: no result")
+	}
+	if captures != 1 {
+		t.Fatalf("a selection profile must capture once (capture called %d times)", captures)
+	}
+}
+
+// An empty clipboard with a clipboard profile is a routine skip, not an error.
+func TestClipboardInputProfileEmptyClipboardIsSkipped(t *testing.T) {
+	a := profilesApp(t, Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Input: InputClipboard})
+	a.foreground = func() uintptr { return 1 }
+	a.capture = func(Clipboard, uintptr) (string, bool, error) {
+		t.Error("capture must not be called for a clipboard profile")
+		return "", false, nil
+	}
+	a.cb = &testClipboard{text: ""}
+	a.startTranslation(0)
+	if a.translating {
+		t.Fatal("an empty clipboard must not start a translation")
+	}
+	select {
+	case res := <-a.results:
+		t.Fatalf("unexpected result %+v", res)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestSettingsChangesSaveProfilesWhenTheFileHasThem(t *testing.T) {
 	a := profilesApp(t,
 		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},

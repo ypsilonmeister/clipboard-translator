@@ -102,6 +102,7 @@
         b: (p.languages && p.languages[1]) || 'en',
         target: p.target || 'en',
         output: p.output || 'replace',
+        input: p.input || 'selection',
       })),
     };
   }
@@ -124,7 +125,7 @@
       max_chars: m.max_chars,
       idle_unload_minutes: m.idle_unload_minutes,
       profiles: m.profiles.map((p) => {
-        const out = { ctrl: p.ctrl, alt: p.alt, shift: p.shift, win: p.win, key: p.key, output: p.output || 'replace' };
+        const out = { ctrl: p.ctrl, alt: p.alt, shift: p.shift, win: p.win, key: p.key, output: p.output || 'replace', input: p.input || 'selection' };
         if (p.mode === 'target') out.target = p.target; else out.languages = [p.a, p.b];
         return out;
       }),
@@ -265,6 +266,23 @@
         langSelect(p.target, (v) => { p.target = v; }, 'Target language')));
       card.append(h('p', { class: 'hint', text: 'Any language is translated into this one; the model works out the source language itself.' }));
     }
+
+    const inputId = 'input-' + i;
+    const inputSelect = h('select', {
+      id: inputId,
+      class: 'input',
+      'aria-label': 'Text source for hotkey ' + (i + 1),
+      onchange: (e) => {
+        p.input = e.target.value;
+        dirtyFields.profiles = true;
+        markDirty();
+      },
+    },
+      h('option', { value: 'selection', text: 'Selected text (copied first)' }),
+      h('option', { value: 'clipboard', text: 'Clipboard (no copy, no waiting)' }),
+    );
+    inputSelect.value = p.input || 'selection';
+    card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: inputId, text: 'Text from' }), inputSelect));
 
     const outputId = 'output-' + i;
     const outputSelect = h('select', {
@@ -803,7 +821,7 @@
 
   async function init() {
     $('add').addEventListener('click', () => {
-      model.profiles.push({ ctrl: true, alt: true, shift: false, win: false, key: nextFreeKey(), mode: 'target', a: 'ja', b: 'en', target: 'en', output: 'replace' });
+      model.profiles.push({ ctrl: true, alt: true, shift: false, win: false, key: nextFreeKey(), mode: 'target', a: 'ja', b: 'en', target: 'en', output: 'replace', input: 'selection' });
       dirtyFields.profiles = true;
       markDirty();
       renderHotkeys();

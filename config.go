@@ -47,14 +47,29 @@ const (
 	OutputBilingual = "bilingual"
 )
 
+// Where a profile takes its text from: the selection (Ctrl+C is sent first) or
+// the clipboard as it is (nothing is copied, nothing is waited for).
+const (
+	InputSelection = "selection"
+	InputClipboard = "clipboard"
+)
+
 // Profile is one hotkey and what it translates: either a Languages pair (both
 // directions) or a Target (always into that language, the model detects the source),
-// and an Output mode ("replace" or "bilingual").
+// an Output mode ("replace" or "bilingual") and an Input ("selection" or "clipboard").
 type Profile struct {
 	Hotkey    string   `json:"hotkey"`
 	Languages []string `json:"languages,omitempty"`
 	Target    string   `json:"target,omitempty"`
 	Output    string   `json:"output,omitempty"`
+	Input     string   `json:"input,omitempty"`
+}
+
+func (p Profile) inputMode() string {
+	if p.Input == InputClipboard {
+		return InputClipboard
+	}
+	return InputSelection
 }
 
 func (p Profile) outputMode() string {
@@ -68,12 +83,15 @@ func (p Profile) outputMode() string {
 // Hotkey/Languages. It does not validate.
 func (c *Config) normalizeProfiles() {
 	if len(c.Profiles) == 0 {
-		c.Profiles = []Profile{{Hotkey: c.Hotkey, Languages: append([]string(nil), c.Languages...), Output: OutputReplace}}
+		c.Profiles = []Profile{{Hotkey: c.Hotkey, Languages: append([]string(nil), c.Languages...), Output: OutputReplace, Input: InputSelection}}
 		return
 	}
 	for i := range c.Profiles {
 		if c.Profiles[i].Output == "" {
 			c.Profiles[i].Output = OutputReplace
+		}
+		if c.Profiles[i].Input == "" {
+			c.Profiles[i].Input = InputSelection
 		}
 	}
 	c.Hotkey = c.Profiles[0].Hotkey
@@ -143,6 +161,14 @@ func (c *Config) resolveProfiles(explicit bool) error {
 			p.Output = OutputBilingual
 		default:
 			return fmt.Errorf("%s: output %q is not supported; valid values: %q, %q", where, p.Output, OutputReplace, OutputBilingual)
+		}
+		switch strings.ToLower(strings.TrimSpace(p.Input)) {
+		case "", InputSelection:
+			p.Input = InputSelection
+		case InputClipboard:
+			p.Input = InputClipboard
+		default:
+			return fmt.Errorf("%s: input %q is not supported; valid values: %q, %q", where, p.Input, InputSelection, InputClipboard)
 		}
 	}
 	c.explicitProfiles = true

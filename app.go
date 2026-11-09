@@ -651,7 +651,16 @@ func (a *app) startTranslation(index int) {
 	profile := a.conf.Profiles[index]
 	win := a.foreground()
 	a.abortTranslation()
-	source, fromSelection, err := a.capture(a.cb, win)
+	var source string
+	var fromSelection bool
+	var err error
+	if profile.inputMode() == InputClipboard {
+		// The text is already on the clipboard: no Ctrl+C, no waiting for a copy,
+		// and never a fresh selection (so no auto-paste).
+		source, err = a.cb.Read()
+	} else {
+		source, fromSelection, err = a.capture(a.cb, win)
+	}
 	capturedAt := a.timeNow()
 	if err != nil {
 		log.Printf("cannot capture selection: %v", err)

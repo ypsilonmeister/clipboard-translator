@@ -123,6 +123,8 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
   On Windows the capture waits up to 2 s (`windowsCopyTimeout`) for the copy: a slow web
   page can finish its copy after 1 s, and giving up earlier translates the stale clipboard
   text (the cost: with nothing selected the clipboard text is used 2 s after the key press).
+  A profile with `input: "clipboard"` skips the capture entirely (no Ctrl+C, no wait,
+  never auto-pasted).
 - **Paths in `config.json` are relative to the exe folder** (`pathWithin`
   rejects absolute paths and `..`), and may use `/` or `\`. Unknown keys must
   survive `updateConfigFile`.
