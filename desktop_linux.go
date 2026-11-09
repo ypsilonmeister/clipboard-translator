@@ -56,53 +56,68 @@ type Hotkey interface {
 	Pressed() (bool, error)
 	Close() error
 }
-type linuxHotkey struct{}
 
-func parseX11Hotkey(spec string) (uint32, uint64, error) {
-	var mods uint32
-	var key uint64
-	for _, part := range strings.Split(strings.ToUpper(strings.ReplaceAll(spec, " ", "")), "+") {
-		switch part {
-		case "CTRL", "CONTROL":
-			mods |= 4
-		case "ALT":
-			mods |= 8
-		case "SHIFT":
-			mods |= 1
-		case "WIN", "WINDOWS", "SUPER":
-			mods |= 64
-		default:
-			if key != 0 {
-				return 0, 0, fmt.Errorf("unsupported hotkey %q: use modifiers and one key (A-Z, 0-9, or F1-F12)", spec)
-			}
-			if len(part) == 1 && part[0] >= 'A' && part[0] <= 'Z' {
-				key = uint64(part[0] + ('a' - 'A'))
-			} else if len(part) == 1 && part[0] >= '0' && part[0] <= '9' {
-				key = uint64(part[0])
-			} else if fn, ok := parseFunctionKey(part); ok {
-				key = uint64(0xffbe + fn - 1)
-			} else {
-				return 0, 0, fmt.Errorf("unsupported hotkey %q: use modifiers and one key (A-Z, 0-9, or F1-F12)", spec)
-			}
-		}
-	}
-	if mods == 0 || key == 0 {
-		return 0, 0, errors.New("hotkey must include a modifier and key (A-Z, 0-9, or F1-F12)")
-	}
-	return mods, key, nil
+type linuxHotkey struct {
+	id     int
+	spec   string
+	closed bool
 }
+
+var x11Registry = newHotkeyRegistry(maxHotkeys)
+
 func newHotkey(spec string) (Hotkey, error) {
-	mods, key, err := parseX11Hotkey(spec)
+	if err := platformRuntimeError(); err != nil {
+		return nil, err
+	}
+	rawMods, keysym, err := parseX11Hotkey(spec)
 	if err != nil {
 		return nil, err
 	}
-	if C.ct_grab(C.uint(mods), C.ulong(key)) == 0 {
-		return nil, fmt.Errorf("could not grab %s on X11 (already used by another app?)", spec)
+	keycode := uint32(C.ct_keysym_to_keycode(C.ulong(keysym)))
+	if keycode == 0 {
+		return nil, fmt.Errorf("unsupported key %q: no keycode on X11 display", spec)
 	}
-	return &linuxHotkey{}, nil
+	normMods := normalizeX11Modifiers(rawMods)
+
+	id, err := x11Registry.Register(spec, keycode, rawMods)
+	if err != nil {
+		return nil, err
+	}
+
+	res := C.ct_hotkey_grab(C.int(id), C.uint(normMods), C.uint(keycode))
+	if res != 1 {
+		x11Registry.Unregister(id)
+		switch res {
+		case -1:
+			return nil, fmt.Errorf("cannot register hotkey %s: maximum number of hotkeys (%d) reached; unregister an unused profile in Settings", spec, maxHotkeys)
+		case -2:
+			return nil, fmt.Errorf("hotkey %s is already registered; choose a different key combination in Settings", spec)
+		case -3:
+			return nil, fmt.Errorf("could not grab %s on X11: already used by another application; choose a different key combination in Settings or disable the shortcut in the other app", spec)
+		default:
+			return nil, fmt.Errorf("cannot register hotkey %s: could not initialize X11 hotkey; check your X display session", spec)
+		}
+	}
+	return &linuxHotkey{id: id, spec: spec}, nil
 }
-func (*linuxHotkey) Pressed() (bool, error) { return pumpMessages(), nil }
-func (*linuxHotkey) Close() error           { C.ct_ungrab(); return nil }
+
+func (h *linuxHotkey) Pressed() (bool, error) {
+	if h.closed {
+		return false, nil
+	}
+	pumpMessages()
+	return C.ct_hotkey_check(C.int(h.id)) != 0, nil
+}
+
+func (h *linuxHotkey) Close() error {
+	if h.closed {
+		return nil
+	}
+	h.closed = true
+	x11Registry.Unregister(h.id)
+	C.ct_hotkey_ungrab(C.int(h.id))
+	return nil
+}
 
 func foregroundWindow() uintptr { return uintptr(C.ct_focus()) }
 func waitModifiersReleased(max time.Duration) bool {
@@ -228,6 +243,7 @@ func linuxMenu(items []MenuItem) unsafe.Pointer {
 }
 func pumpMessages() bool {
 	C.ct_pump()
+	C.ct_hotkey_pump()
 	if t := activeLinuxTray; t != nil {
 		for id := int(C.ct_command()); id != 0; id = int(C.ct_command()) {
 			switch id {
@@ -252,7 +268,7 @@ func pumpMessages() bool {
 		items = append(items, MenuItem{Separator: true}, MenuItem{ID: 3, Label: "Start at login", Checked: linuxAutostartEnabled()}, MenuItem{ID: 1, Label: "Open log"}, MenuItem{ID: 2, Label: "Quit"})
 		C.ct_menu_popup(linuxMenu(items))
 	}
-	return C.ct_hotkey() != 0
+	return false
 }
 func dialog(msg string, question, isError bool) bool {
 	answer := false
