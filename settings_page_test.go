@@ -368,8 +368,8 @@ func TestSettingsSavePartialAndTotalHotkeyFailure(t *testing.T) {
 }
 
 func TestSettingsLimitIsReportedNotRefused(t *testing.T) {
-	// On Linux and macOS one hotkey is registered. A config with more loads there,
-	// so the page must be able to save it and say which hotkeys are not active.
+	// When an OS build registers fewer hotkeys than configured (e.g. macOS holding
+	// only one grab), the page must be able to save it and say which hotkeys are not active.
 	f := newSettingsFixture(t)
 	f.a.hotkeyLimit = 1
 	s := f.server(t)
