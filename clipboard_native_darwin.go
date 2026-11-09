@@ -39,12 +39,19 @@ func (*macClipboard) Close() error { return nil }
 
 // NSPasteboard has no atomic compare-and-set. Recheck changeCount immediately
 // before writing; other processes can still race the final write.
-func (*macClipboard) ReplaceIfUnchanged(expected, translated string) (bool, error) {
+func (c *macClipboard) ReplaceIfUnchanged(expected, translated string) (bool, error) {
 	if strings.IndexByte(expected, 0) >= 0 || strings.IndexByte(translated, 0) >= 0 {
 		return false, errors.New("clipboard text contains a NUL byte")
 	}
+	current, err := c.Read()
+	if err != nil {
+		return false, err
+	}
+	if !sameClipboardText(current, expected) {
+		return false, nil
+	}
 	result := 0
-	withCString(expected, func(a *C.char) { withCString(translated, func(b *C.char) { result = int(C.ct_mac_replace(a, b)) }) })
+	withCString(current, func(a *C.char) { withCString(translated, func(b *C.char) { result = int(C.ct_mac_replace(a, b)) }) })
 	if result < 0 {
 		return false, errors.New("macOS pasteboard write failed")
 	}

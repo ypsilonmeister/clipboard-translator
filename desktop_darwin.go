@@ -146,6 +146,7 @@ func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
 		sendCopy:        sendCopy,
 		modifierTimeout: 900 * time.Millisecond,
 		copyTimeout:     700 * time.Millisecond,
+		settleTime:      80 * time.Millisecond,
 	})
 }
 

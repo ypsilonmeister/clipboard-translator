@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -930,6 +932,79 @@ func TestHandleResultBilingualReplaceIfUnchanged(t *testing.T) {
 		if strings.Contains(text, original) || strings.Contains(text, translated) {
 			t.Errorf("notification %q leaked source or translated text", text)
 		}
+	}
+}
+
+func TestHandleResultWhitespaceOnlyRewriteReplaces(t *testing.T) {
+	a, _, cb, _, _ := uxApp(t)
+	original := "Hello\r\n"
+	translated := "こんにちは"
+
+	// Clipboard was rewritten by another app to normalize CRLF to LF and trim trailing space
+	cb.text = "Hello\n  "
+	g := pending(a)
+
+	a.handleResult(result{
+		original:      original,
+		translated:    translated,
+		generation:    g,
+		direction:     translationDirection{"en", "ja"},
+		window:        100,
+		fromSelection: true,
+	})
+
+	if cb.text != translated {
+		t.Fatalf("whitespace-only rewrite should be replaced with translation, got %q", cb.text)
+	}
+}
+
+func TestHandleResultRealChangeDiscardsWithDiagnostics(t *testing.T) {
+	a, tray, cb, _, _ := uxApp(t)
+	original := "Hello"
+	translated := "こんにちは"
+
+	// User changed clipboard text to something different
+	cb.text = "Hello world"
+	g := pending(a)
+
+	var logBuf bytes.Buffer
+	origOutput := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(origOutput)
+
+	capturedAt := a.timeNow().Add(-120 * time.Millisecond)
+
+	a.handleResult(result{
+		original:      original,
+		translated:    translated,
+		generation:    g,
+		direction:     translationDirection{"en", "ja"},
+		window:        100,
+		fromSelection: true,
+		capturedAt:    capturedAt,
+	})
+
+	if cb.text != "Hello world" {
+		t.Fatalf("clipboard was modified: %q", cb.text)
+	}
+	if !strings.Contains(tray.lastNote(), "clipboard changed while translating") {
+		t.Fatalf("notification should mention clipboard changed: %q", tray.lastNote())
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "clipboard text changed during translation; result discarded") {
+		t.Fatalf("missing discard log line in: %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "clipboard change diagnostics:") {
+		t.Fatalf("missing diagnostics line in: %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "expected_len=5") || !strings.Contains(logOutput, "current_len=11") ||
+		!strings.Contains(logOutput, "first_diff=5") || !strings.Contains(logOutput, "ws_only=false") ||
+		!strings.Contains(logOutput, "prefix=true") {
+		t.Fatalf("unexpected diagnostics line content: %q", logOutput)
+	}
+	if strings.Contains(logOutput, original) || strings.Contains(logOutput, cb.text) || strings.Contains(logOutput, translated) {
+		t.Fatalf("diagnostics log leaked clipboard text: %q", logOutput)
 	}
 }
 

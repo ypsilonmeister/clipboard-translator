@@ -109,7 +109,7 @@ func (c *testClipboard) ReplaceIfUnchanged(expected, translated string) (bool, e
 	if c.err != nil {
 		return false, c.err
 	}
-	if c.text != expected {
+	if !sameClipboardText(c.text, expected) {
 		return false, nil
 	}
 	c.text = translated

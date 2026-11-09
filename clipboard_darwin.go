@@ -27,7 +27,7 @@ func (c *macClipboard) ReplaceIfUnchanged(expected, translated string) (bool, er
 	if err != nil {
 		return false, err
 	}
-	if current != expected {
+	if !sameClipboardText(current, expected) {
 		return false, nil
 	}
 	return true, c.Write(translated)

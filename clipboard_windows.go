@@ -125,7 +125,7 @@ func (w *winClipboard) ReplaceIfUnchanged(expected, translated string) (bool, er
 	if err != nil {
 		return false, err
 	}
-	if current != expected {
+	if !sameClipboardText(current, expected) {
 		return false, nil
 	}
 	if err := w.writeLocked(translated); err != nil {

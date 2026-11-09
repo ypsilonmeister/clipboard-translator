@@ -652,6 +652,7 @@ func (a *app) startTranslation(index int) {
 	win := a.foreground()
 	a.abortTranslation()
 	source, fromSelection, err := a.capture(a.cb, win)
+	capturedAt := a.timeNow()
 	if err != nil {
 		log.Printf("cannot capture selection: %v", err)
 		a.cancelTransientStatus()
@@ -730,7 +731,8 @@ func (a *app) startTranslation(index int) {
 		translated, err := translate(ctx, a.endpoint, key, source, direction, a.conf.MaxTokens)
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
-			direction: direction, window: win, fromSelection: fromSelection, output: outputMode}:
+			direction: direction, window: win, fromSelection: fromSelection, output: outputMode,
+			capturedAt: capturedAt}:
 		default:
 		}
 	}()
@@ -778,6 +780,16 @@ func (a *app) handleResult(res result) {
 	}
 	if !applied {
 		log.Print("clipboard text changed during translation; result discarded (new clipboard preserved)")
+		current, readErr := a.cb.Read()
+		if readErr != nil {
+			log.Printf("clipboard change diagnostics: could not read current clipboard: %v", readErr)
+		} else {
+			var elapsed time.Duration
+			if !res.capturedAt.IsZero() {
+				elapsed = a.timeNow().Sub(res.capturedAt)
+			}
+			log.Printf("clipboard change diagnostics: %s", classifyClipboardDiff(res.original, current, elapsed))
+		}
 		a.tray.SetStatus(a.readyTip)
 		a.tray.Notify("Clipboard Translator", "The clipboard changed while translating, so the result was dropped and the new clipboard text was kept.", false)
 		return
