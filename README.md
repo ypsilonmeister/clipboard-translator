@@ -295,7 +295,9 @@ tooltip shows the state and, while loading or translating, the elapsed seconds.
 Select text in your language pair (Japanese or English unless you changed it, see
 `languages` below) and press `Ctrl+Alt+E`. When the translation is
 ready it replaces the clipboard content; press `Ctrl+V` to paste. With no
-selection, the current clipboard text is translated.
+selection, the current clipboard text is translated (on Windows after up to 2 s, the
+time the app gives a slow page to finish its copy; a profile with `"input": "clipboard"`
+skips that wait).
 
 Right-click the tray icon:
 

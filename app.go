@@ -663,7 +663,11 @@ func (a *app) startTranslation(index int) {
 	}
 	capturedAt := a.timeNow()
 	if err != nil {
-		log.Printf("cannot capture selection: %v", err)
+		if profile.inputMode() == InputClipboard {
+			log.Printf("cannot read the clipboard: %v", err)
+		} else {
+			log.Printf("cannot capture selection: %v", err)
+		}
 		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
 		if errors.Is(err, errCaptureModifiersHeld) || errors.Is(err, errCaptureFocusChanged) {
