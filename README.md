@@ -382,7 +382,11 @@ use* for how it is served). It edits:
   progress and *Cancel*; the 31B model is not offered), *Use this model* switches
   to one that is installed. Switching restarts `llama-server`, which takes a
   moment; if the new model cannot be loaded (for example for lack of memory) the
-  previous one is put back and the page says so.
+  previous one is put back and the page says so. *Delete* removes an installed model
+  you are no longer using or an incomplete file (with inline confirmation), and
+  *Remove partial download* cleans up an interrupted download to free disk space
+  (available for installed and active models too). The active model's file and the
+  shared chat template are never deleted.
 - the **engine** (CPU, CUDA, Vulkan), when more than one is installed.
 
 Everything else stays in `config.json`.

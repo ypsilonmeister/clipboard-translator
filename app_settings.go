@@ -84,6 +84,9 @@ func (a *app) handleSettingsRequest(req settingsRequest) {
 	case "use_model":
 		a.startModelSwitch(req)
 		return
+	case "delete_model":
+		a.handleDeleteModelRequest(req)
+		return
 	case "engine":
 		a.startEngineSwitch(req)
 		return

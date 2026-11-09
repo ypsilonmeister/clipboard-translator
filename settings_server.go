@@ -87,6 +87,13 @@ type modelState struct {
 	TemplateInstalled bool   `json:"template_installed"`
 	Active            bool   `json:"active"`
 	Downloading       bool   `json:"downloading"`
+	Partial           bool   `json:"partial"`
+	PartialBytes      int64  `json:"partial_bytes"`
+	HasFile           bool   `json:"has_file"`
+	FileBytes         int64  `json:"file_bytes"`
+	CanDelete         bool   `json:"can_delete"`
+	CanDeletePartial  bool   `json:"can_delete_partial"`
+	DeleteBlocked     string `json:"delete_blocked,omitempty"`
 }
 
 type engineState struct {
@@ -102,6 +109,7 @@ type settingsRequest struct {
 	save     *settingsForm
 	action   string // "" (state or save), "use_model" or "engine"
 	arg      string // the model key or the engine name
+	kind     string // for "delete_model": "model" or "partial"
 	deadline time.Time
 	reply    chan settingsReply // buffered: the loop never blocks on a reader that gave up
 }
@@ -109,6 +117,7 @@ type settingsRequest struct {
 type settingsReply struct {
 	state    settingsState
 	warnings []string
+	notice   string
 	err      error
 }
 
@@ -160,6 +169,7 @@ func startSettingsServer(ask func(settingsRequest) settingsReply, dl *downloadMa
 	mux.HandleFunc("/api/model/download", s.guard(true, s.handleDownload))
 	mux.HandleFunc("/api/model/cancel", s.guard(true, s.handleCancelDownload))
 	mux.HandleFunc("/api/model/use", s.guard(true, s.handleAction("use_model", "key")))
+	mux.HandleFunc("/api/model/delete", s.guard(true, s.handleDeleteModel))
 	mux.HandleFunc("/api/engine", s.guard(true, s.handleAction("engine", "name")))
 	mux.HandleFunc("/api/ping", s.guard(true, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	mux.HandleFunc("/api/bye", s.guard(true, func(w http.ResponseWriter, r *http.Request) {
@@ -291,6 +301,7 @@ func (s *settingsServer) serveAsset(name, contentType string) http.HandlerFunc {
 type apiResponse struct {
 	State    *settingsState `json:"state,omitempty"`
 	Warnings []string       `json:"warnings,omitempty"`
+	Notice   string         `json:"notice,omitempty"`
 	Error    string         `json:"error,omitempty"`
 }
 
@@ -438,6 +449,36 @@ func (s *settingsServer) handleCancelDownload(w http.ResponseWriter, r *http.Req
 		s.dl.Cancel()
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *settingsServer) handleDeleteModel(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Key  string `json:"key"`
+		Kind string `json:"kind"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Kind != "model" && body.Kind != "partial" {
+		writeJSON(w, http.StatusUnprocessableEntity, apiResponse{Error: "kind must be 'model' or 'partial'"})
+		return
+	}
+	rep, ok := s.roundTrip(settingsRequest{
+		action:   "delete_model",
+		arg:      body.Key,
+		kind:     body.Kind,
+		deadline: time.Now().Add(8 * time.Second),
+		reply:    make(chan settingsReply, 1),
+	})
+	if !ok {
+		status := http.StatusUnprocessableEntity
+		if errors.Is(rep.err, errSettingsBusy) {
+			status = http.StatusServiceUnavailable
+		}
+		writeJSON(w, status, apiResponse{State: stateOf(rep), Error: rep.err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, apiResponse{State: &rep.state, Warnings: rep.warnings, Notice: rep.notice})
 }
 
 // languageOptions lists the model's languages by name, Japanese and English first.
