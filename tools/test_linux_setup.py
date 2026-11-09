@@ -32,6 +32,7 @@ def runtime_archive(unsafe=False):
 
 FIXTURE_ARCHIVE = runtime_archive()
 FIXTURE_SHA256 = hashlib.sha256(FIXTURE_ARCHIVE).hexdigest()
+FIXTURE_TEMPLATE_SHA256 = hashlib.sha256(b"x" * 101).hexdigest()
 
 
 # Scale only the fixture catalog's minimum sizes; NTFS truncate is not sparse.
@@ -39,6 +40,7 @@ def fixture_program(source, filename, archive_sha256=FIXTURE_SHA256):
     source = source.replace('minimum=400 * 1024**2', 'minimum=400')
     source = source.replace('minimum=1024**3', 'minimum=1024')
     source = source.replace('minimum=4 * 1024**3', 'minimum=4096')
+    source = re.sub(r"template_sha256='[0-9a-fA-F]{64}'", f"template_sha256='{FIXTURE_TEMPLATE_SHA256}'", source)
     if archive_sha256:
         source = re.sub(r"'sha256': '[0-9a-fA-F]{64}'", f"'sha256': '{archive_sha256}'", source)
     return compile(source.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0], filename, "exec")
@@ -57,6 +59,7 @@ class SetupTests(unittest.TestCase):
         with (self.root / "models/plamo-3-translate-2b-Q4_K_M.gguf").open("wb") as f:
             f.truncate(1024)
         (self.root / "models/chat_template.jinja").write_text("x" * 101)
+        (self.root / "models/chat_template.2b.jinja").write_text("x" * 101)
         (self.root / "config.json").write_text(json.dumps({"hotkey": "Ctrl+Alt+T", "future_key": {"keep": True}}))
         self.archive = FIXTURE_ARCHIVE
         self.calls = []
@@ -124,6 +127,7 @@ class SetupTests(unittest.TestCase):
         self.put_model("plamo-3-translate-0.8b-Q4_K_M.gguf", 400)
         self.run_setup(None, "0.8b")
         config["model_file"] = "models/plamo-3-translate-0.8b-Q4_K_M.gguf"
+        config["template_file"] = "models/chat_template.0.8b.jinja"
         self.assertEqual(self.read_config(), config)
 
     def test_explicit_backend_replaces_configured_engine(self):
