@@ -137,3 +137,25 @@ func TestApplyTranslationPreservesClipboard(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatBilingual(t *testing.T) {
+	cases := []struct {
+		name, source, translated, want string
+	}{
+		{"plain", "Hello", "こんにちは", "Hello\nこんにちは"},
+		{"trailing CRLF", "Hello\r\n", "こんにちは", "Hello\nこんにちは"},
+		{"trailing LF", "Hello\n", "こんにちは", "Hello\nこんにちは"},
+		{"trailing CR", "Hello\r", "こんにちは", "Hello\nこんにちは"},
+		{"multiple trailing newlines", "Hello\r\n\r\n\n", "こんにちは", "Hello\nこんにちは"},
+		{"multiline text", "Line 1\r\nLine 2\r\n", "行1\n行2", "Line 1\r\nLine 2\n行1\n行2"},
+		{"preserves trailing spaces before newline", "Hello   \r\n", "こんにちは", "Hello   \nこんにちは"},
+		{"empty source with newlines", "\r\n", "こんにちは", "\nこんにちは"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatBilingual(tc.source, tc.translated); got != tc.want {
+				t.Fatalf("formatBilingual(%q, %q) = %q, want %q", tc.source, tc.translated, got, tc.want)
+			}
+		})
+	}
+}

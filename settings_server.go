@@ -43,6 +43,7 @@ type profileForm struct {
 	Key       string   `json:"key"`
 	Languages []string `json:"languages,omitempty"`
 	Target    string   `json:"target,omitempty"`
+	Output    string   `json:"output,omitempty"`
 }
 
 // settingsForm is everything the page edits.
@@ -534,7 +535,7 @@ func formFromProfile(p Profile, goos string) (profileForm, error) {
 		return profileForm{}, err
 	}
 	return profileForm{Ctrl: spec.ctrl, Alt: spec.alt, Shift: spec.shift, Win: spec.win, Key: spec.key,
-		Languages: append([]string(nil), p.Languages...), Target: p.Target}, nil
+		Languages: append([]string(nil), p.Languages...), Target: p.Target, Output: p.outputMode()}, nil
 }
 
 // hotkeyString writes the form's hotkey the way config.json does.
@@ -575,7 +576,7 @@ func (f settingsForm) toConfig(base Config) (Config, error) {
 			if p.Target != "" && len(p.Languages) > 0 {
 				return base, fmt.Errorf("profiles[%d]: use either two languages or one target language, not both", i)
 			}
-			c.Profiles[i] = Profile{Hotkey: p.hotkeyString()}
+			c.Profiles[i] = Profile{Hotkey: p.hotkeyString(), Output: p.Output}
 			if p.Target != "" {
 				c.Profiles[i].Target = p.Target
 			} else {

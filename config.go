@@ -42,20 +42,39 @@ type Config struct {
 	explicitProfiles bool // config.json has a "profiles" key; the tray saves that instead of hotkey/languages
 }
 
+const (
+	OutputReplace   = "replace"
+	OutputBilingual = "bilingual"
+)
+
 // Profile is one hotkey and what it translates: either a Languages pair (both
-// directions) or a Target (always into that language, the model detects the source).
+// directions) or a Target (always into that language, the model detects the source),
+// and an Output mode ("replace" or "bilingual").
 type Profile struct {
 	Hotkey    string   `json:"hotkey"`
 	Languages []string `json:"languages,omitempty"`
 	Target    string   `json:"target,omitempty"`
+	Output    string   `json:"output,omitempty"`
+}
+
+func (p Profile) outputMode() string {
+	if p.Output == OutputBilingual {
+		return OutputBilingual
+	}
+	return OutputReplace
 }
 
 // normalizeProfiles makes Profiles non-empty and mirrors profile 0 into
 // Hotkey/Languages. It does not validate.
 func (c *Config) normalizeProfiles() {
 	if len(c.Profiles) == 0 {
-		c.Profiles = []Profile{{Hotkey: c.Hotkey, Languages: append([]string(nil), c.Languages...)}}
+		c.Profiles = []Profile{{Hotkey: c.Hotkey, Languages: append([]string(nil), c.Languages...), Output: OutputReplace}}
 		return
+	}
+	for i := range c.Profiles {
+		if c.Profiles[i].Output == "" {
+			c.Profiles[i].Output = OutputReplace
+		}
 	}
 	c.Hotkey = c.Profiles[0].Hotkey
 	if c.Profiles[0].Languages != nil {
@@ -115,6 +134,15 @@ func (c *Config) resolveProfiles(explicit bool) error {
 				return fmt.Errorf("%s: %w", where, err)
 			}
 			p.Languages = langs
+		}
+		out := strings.ToLower(strings.TrimSpace(p.Output))
+		switch out {
+		case "", OutputReplace:
+			p.Output = OutputReplace
+		case OutputBilingual:
+			p.Output = OutputBilingual
+		default:
+			return fmt.Errorf("%s: output %q is not supported; valid values: %q, %q", where, p.Output, OutputReplace, OutputBilingual)
 		}
 	}
 	c.explicitProfiles = true
