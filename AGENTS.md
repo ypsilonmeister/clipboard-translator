@@ -84,7 +84,7 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 | `languages.go` | The 53 model languages, `validateLanguages`, and `directionFor`: the script of the text picks the direction of a language pair (URLs are skipped) |
 | `app.go` | `app` struct and the main loop `serve`: hotkeys (one per profile), tray commands, update results, translation results, Settings-page requests, download results. `startTranslation` / `handleResult` / `abortTranslation` |
 | `app_menu.go`, `app_idle.go` | Daily tray commands (Settings first, cancel, unload, model switch when multiple are installed, history, updates, config and license); configuration is edited in Settings; UI-thread idle timer and intentional unload/reload state |
-| `capture.go` | `captureWith`: the ordering rules of selection capture (modifiers released, focus unchanged, clipboard sequence) over per-OS pieces, so they are tested without a desktop |
+| `capture.go` | `captureJob`: the ordering rules of selection capture (modifiers released, focus unchanged, clipboard sequence) over per-OS pieces, so they are tested without a desktop. `serve` steps the job (`stepCapture`) every ~15 ms instead of sleeping, so a slow copy never blocks the UI thread |
 | `settings_server.go`, `app_settings.go`, `settings_web/` | The Settings page: `settings_server.go` serves it on 127.0.0.1 while it is open (token, Host/Origin checks, CSP) and never touches app state; `app_settings.go` answers its requests on the UI thread and applies hotkeys, auto-paste, notifications, `max_chars` and `idle_unload_minutes`; `settings_web/` is the embedded HTML/CSS/JS |
 | `models.go`, `modeldl.go`, `app_models.go` | `models.go` is the model catalog (pinned revision and SHA-256, kept equal to `setup.ps1`, `setup.sh` and `setup-macos.sh`; tests compare them); `modeldl.go` is the download manager (resume, SHA-256 check, cancel; owned by `app`, not by the settings server); `app_models.go` switches model and engine for the page, answers it while the server loads, and deletes unused models or partials |
 | `server.go` | `supervisor` for `llama-server` (start, stop, exit detection), `restartLimiter` (max 3 per 10 min) and backoff |
@@ -120,6 +120,12 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
   is in front. Selection capture waits for the sequence to settle (~80 ms) to
   avoid intermediate clipboard writes, and `ReplaceIfUnchanged` tolerates harmless
   line-break (CRLF/CR) and trailing whitespace changes while protecting newer user copies.
+  On Windows the capture waits up to 2 s (`windowsCopyTimeout`) for the copy, without
+  blocking the UI thread (a new hotkey or an abort drops the pending copy): a slow web
+  page can finish its copy after 1 s, and giving up earlier translates the stale clipboard
+  text (the cost: with nothing selected the clipboard text is used 2 s after the key press).
+  A profile with `input: "clipboard"` skips the capture entirely (no Ctrl+C, no wait,
+  never auto-pasted).
 - **Paths in `config.json` are relative to the exe folder** (`pathWithin`
   rejects absolute paths and `..`), and may use `/` or `\`. Unknown keys must
   survive `updateConfigFile`.

@@ -13,20 +13,28 @@ var (
 )
 
 // captureOps are the OS pieces of selection capture, so the ordering rules in
-// captureWith can be tested without a desktop.
+// captureJob can be tested without a desktop.
 type captureOps struct {
 	foreground      func() uintptr
-	waitModifiers   func(time.Duration) bool // true once Ctrl/Alt/Shift/Win are all up
-	sequence        func() uint32            // clipboard sequence number
-	sendCopy        func() error             // synthetic Ctrl+C
+	modifiersUp     func() bool   // true when Ctrl/Alt/Shift/Win are all up
+	sequence        func() uint32 // clipboard sequence number
+	sendCopy        func() error  // synthetic Ctrl+C
 	modifierTimeout time.Duration
 	copyTimeout     time.Duration
 	settleTime      time.Duration
 	now             func() time.Time
-	sleep           func(time.Duration)
+	sleep           func(time.Duration) // only captureWith sleeps; the app polls instead
 }
 
-// captureWith copies the selection of window win and reports the clipboard text
+// captureTask is a selection capture in progress. The UI thread calls step
+// until it reports done, waiting about wait() in between while it keeps pumping
+// messages, so a slow copy never freezes the tray or the other hotkeys.
+type captureTask interface {
+	step() (done bool, text string, fromSelection bool, err error)
+	wait() time.Duration
+}
+
+// captureJob copies the selection of window win and reports the clipboard text
 // and whether it came from a fresh selection (Ctrl+C changed the clipboard).
 // When Ctrl+C changes nothing it returns the existing clipboard text with
 // fromSelection false, which is the "translate what I copied" path.
@@ -36,70 +44,130 @@ type captureOps struct {
 // the keys are injected. A hotkey whose modifiers stay held, or whose window
 // lost focus meanwhile, aborts instead of copying into another window or
 // falling back to unrelated clipboard text.
+type captureJob struct {
+	cb  Clipboard
+	win uintptr
+	ops captureOps
+
+	copying     bool // Ctrl+C has been sent
+	modDeadline time.Time
+	deadline    time.Time // for the copy
+	old         string    // the clipboard text before Ctrl+C
+	before      uint32    // the sequence number before Ctrl+C
+	lastSeq     uint32
+	stableSince time.Time
+}
+
+const capturePollStep = 15 * time.Millisecond
+
+func newCaptureJob(cb Clipboard, win uintptr, ops captureOps) *captureJob {
+	if ops.now == nil {
+		ops.now = time.Now
+	}
+	if ops.sleep == nil {
+		ops.sleep = time.Sleep
+	}
+	return &captureJob{cb: cb, win: win, ops: ops, modDeadline: ops.now().Add(ops.modifierTimeout)}
+}
+
+func (j *captureJob) focusLost() bool {
+	return j.ops.foreground != nil && j.ops.foreground() != j.win
+}
+
+// step does whatever can be done now. It never sleeps itself (opening a
+// clipboard another program holds may retry briefly, as every Read does).
+func (j *captureJob) step() (done bool, text string, fromSelection bool, err error) {
+	if !j.copying {
+		if !j.ops.modifiersUp() {
+			if !j.ops.now().Before(j.modDeadline) {
+				return true, "", false, errCaptureModifiersHeld
+			}
+			return false, "", false, nil
+		}
+		old, err := j.cb.Read()
+		if err != nil {
+			return true, "", false, err
+		}
+		j.before = j.ops.sequence()
+		if j.focusLost() {
+			return true, "", false, errCaptureFocusChanged
+		}
+		if err := j.ops.sendCopy(); err != nil {
+			return true, old, false, nil // cannot inject keys: fall back to the existing clipboard text
+		}
+		j.copying, j.old, j.lastSeq = true, old, j.before
+		j.deadline = j.ops.now().Add(j.ops.copyTimeout)
+		// Fall through: a copy that is already done is picked up without a wait.
+	}
+	if j.focusLost() {
+		return true, "", false, errCaptureFocusChanged
+	}
+	now := j.ops.now()
+	seq := j.ops.sequence()
+	if seq == j.before {
+		if !now.Before(j.deadline) {
+			return true, j.old, false, nil
+		}
+		return false, "", false, nil
+	}
+	if seq != j.lastSeq {
+		j.lastSeq = seq
+		j.stableSince = now
+	}
+	if j.ops.settleTime <= 0 || now.Sub(j.stableSince) >= j.ops.settleTime || !now.Before(j.deadline) {
+		picked, err := j.cb.Read()
+		if err != nil {
+			return true, "", false, err
+		}
+		if j.focusLost() {
+			return true, "", false, errCaptureFocusChanged
+		}
+		return true, picked, true, nil
+	}
+	return false, "", false, nil
+}
+
+// wait is how long until the next step can tell something new: the poll step,
+// shortened so that the copy deadline and the end of the settle time are hit
+// exactly.
+func (j *captureJob) wait() time.Duration {
+	d := capturePollStep
+	if !j.copying {
+		return d
+	}
+	now := j.ops.now()
+	if rem := j.deadline.Sub(now); rem > 0 && rem < d {
+		d = rem
+	}
+	if j.ops.settleTime > 0 && j.lastSeq != j.before {
+		if rem := j.ops.settleTime - now.Sub(j.stableSince); rem > 0 && rem < d {
+			d = rem
+		}
+	}
+	return d
+}
+
+// captureWith runs a captureJob to the end, sleeping between steps.
 func captureWith(cb Clipboard, win uintptr, ops captureOps) (text string, fromSelection bool, err error) {
-	nowFn := ops.now
-	if nowFn == nil {
-		nowFn = time.Now
-	}
-	sleepFn := ops.sleep
-	if sleepFn == nil {
-		sleepFn = time.Sleep
-	}
-
-	if !ops.waitModifiers(ops.modifierTimeout) {
-		return "", false, errCaptureModifiersHeld
-	}
-	old, err := cb.Read()
-	if err != nil {
-		return "", false, err
-	}
-	before := ops.sequence()
-	if ops.foreground != nil && ops.foreground() != win {
-		return "", false, errCaptureFocusChanged
-	}
-	if err := ops.sendCopy(); err != nil {
-		return old, false, nil // cannot inject keys: fall back to the existing clipboard text
-	}
-	deadline := nowFn().Add(ops.copyTimeout)
-	lastSeq := before
-	var stableSince time.Time
-
+	j := newCaptureJob(cb, win, ops)
 	for {
-		if ops.foreground != nil && ops.foreground() != win {
-			return "", false, errCaptureFocusChanged
+		done, text, fresh, err := j.step()
+		if done {
+			return text, fresh, err
 		}
-		now := nowFn()
-		seq := ops.sequence()
-		if seq != before {
-			if seq != lastSeq {
-				lastSeq = seq
-				stableSince = now
-			}
-			if ops.settleTime <= 0 || now.Sub(stableSince) >= ops.settleTime || !now.Before(deadline) {
-				picked, err := cb.Read()
-				if err != nil {
-					return "", false, err
-				}
-				if ops.foreground != nil && ops.foreground() != win {
-					return "", false, errCaptureFocusChanged
-				}
-				return picked, true, nil
-			}
-		} else if !now.Before(deadline) {
-			break
-		}
-		sleepStep := 15 * time.Millisecond
-		if rem := deadline.Sub(now); rem > 0 && rem < sleepStep {
-			sleepStep = rem
-		}
-		if ops.settleTime > 0 && lastSeq != before {
-			if rem := ops.settleTime - now.Sub(stableSince); rem > 0 && rem < sleepStep {
-				sleepStep = rem
-			}
-		}
-		sleepFn(sleepStep)
+		j.ops.sleep(j.wait())
 	}
-	return old, false, nil
+}
+
+// runCapture runs a capture task to the end on a real clock.
+func runCapture(t captureTask) (string, bool, error) {
+	for {
+		done, text, fresh, err := t.step()
+		if done {
+			return text, fresh, err
+		}
+		time.Sleep(t.wait())
+	}
 }
 
 // primaryOps are the OS pieces of X11 PRIMARY selection capture.

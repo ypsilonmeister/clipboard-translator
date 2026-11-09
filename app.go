@@ -78,12 +78,28 @@ type app struct {
 	foreground     func() uintptr                                        // foregroundWindow, replaceable in tests
 	paste          func(target uintptr) error                            // pasteIntoForeground, replaceable in tests
 	capture        func(cb Clipboard, win uintptr) (string, bool, error) // captureSelectedText, replaceable in tests
+	beginCapture   func(cb Clipboard, win uintptr) captureTask           // beginSelectionCapture; nil (or a nil task) uses capture
+	capturing      *pendingCapture                                       // a selection copy the serve loop is still waiting for
 
 	statusResetAt  time.Time
 	lastSkipReason skipReason
 	lastSkipNotify time.Time
 	now            func() time.Time // time.Now, replaceable in tests
 }
+
+// pendingCapture is a hotkey press whose selection is still being copied. The
+// profile is a copy, so a Settings change meanwhile does not move it.
+type pendingCapture struct {
+	task    captureTask
+	profile Profile
+	win     uintptr
+	started time.Time
+	noted   bool // the tray says "copying the selection..."
+}
+
+// copyingNoteAfter is how long a copy may take before the tray says so. Most
+// copies finish well within it, so a normal press shows no extra status.
+const copyingNoteAfter = 300 * time.Millisecond
 
 type extraHotkey struct {
 	profile int // index into conf.Profiles
@@ -113,14 +129,15 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 		limiter:             restartLimiter{max: 3, window: 10 * time.Minute},
 		readyTip:            "Clipboard Translator - ready (" + conf.Hotkey + ")",
 
-		newHotkey:  newHotkey,
-		showErr:    showError,
-		updates:    make(chan updateResult, 1),
-		results:    make(chan result, 16),
-		foreground: foregroundWindow,
-		paste:      pasteIntoForeground,
-		capture:    captureSelectedText,
-		now:        time.Now,
+		newHotkey:    newHotkey,
+		showErr:      showError,
+		updates:      make(chan updateResult, 1),
+		results:      make(chan result, 16),
+		foreground:   foregroundWindow,
+		paste:        pasteIntoForeground,
+		capture:      captureSelectedText,
+		beginCapture: beginSelectionCapture,
+		now:          time.Now,
 	}
 	tray.SetMenu(a.buildMenu)
 	a.sup = &supervisor{
@@ -474,7 +491,15 @@ func (a *app) serve(cb Clipboard) {
 			a.cancelTranslation()
 			return
 		}
+		// While a selection is being copied, check it every few milliseconds
+		// instead of blocking this thread until the copy is done.
+		var captureDue <-chan time.Time
+		if a.capturing != nil {
+			captureDue = time.After(a.capturing.task.wait())
+		}
 		select {
+		case <-captureDue:
+			a.stepCapture()
 		case <-sig:
 			log.Print("stopping")
 			a.cancelTranslation()
@@ -630,6 +655,10 @@ func (a *app) abortTranslation() {
 	}
 	a.resetIdleTimer()
 	a.cancelTransientStatus()
+	if a.capturing != nil {
+		a.capturing = nil
+		a.tray.SetStatus(a.readyTip) // do not leave "copying the selection..." behind
+	}
 }
 
 // tickTranslationStatus keeps the tooltip's elapsed seconds current.
@@ -651,10 +680,51 @@ func (a *app) startTranslation(index int) {
 	profile := a.conf.Profiles[index]
 	win := a.foreground()
 	a.abortTranslation()
+	if profile.inputMode() == InputClipboard {
+		// The text is already on the clipboard: no Ctrl+C, no waiting for a copy,
+		// and never a fresh selection (so no auto-paste).
+		source, err := a.cb.Read()
+		a.translateCaptured(profile, win, source, false, err)
+		return
+	}
+	if a.beginCapture != nil {
+		if task := a.beginCapture(a.cb, win); task != nil {
+			a.capturing = &pendingCapture{task: task, profile: profile, win: win, started: a.timeNow()}
+			a.stepCapture() // a copy that is already done goes on at once
+			return
+		}
+	}
 	source, fromSelection, err := a.capture(a.cb, win)
+	a.translateCaptured(profile, win, source, fromSelection, err)
+}
+
+// stepCapture moves the pending selection copy on, and translates once it is done.
+func (a *app) stepCapture() {
+	p := a.capturing
+	if p == nil {
+		return
+	}
+	done, source, fromSelection, err := p.task.step()
+	if !done {
+		if !p.noted && a.timeNow().Sub(p.started) >= copyingNoteAfter {
+			p.noted = true
+			a.tray.SetStatus("Clipboard Translator - copying the selection...")
+		}
+		return
+	}
+	a.capturing = nil
+	a.translateCaptured(p.profile, p.win, source, fromSelection, err)
+}
+
+// translateCaptured checks the captured text and translates it in the background.
+func (a *app) translateCaptured(profile Profile, win uintptr, source string, fromSelection bool, err error) {
 	capturedAt := a.timeNow()
 	if err != nil {
-		log.Printf("cannot capture selection: %v", err)
+		if profile.inputMode() == InputClipboard {
+			log.Printf("cannot read the clipboard: %v", err)
+		} else {
+			log.Printf("cannot capture selection: %v", err)
+		}
 		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
 		if errors.Is(err, errCaptureModifiersHeld) || errors.Is(err, errCaptureFocusChanged) {

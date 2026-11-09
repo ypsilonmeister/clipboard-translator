@@ -147,6 +147,9 @@ func primarySelectedIn(win uintptr) bool {
 	return C.ct_primary_selected_in(C.ulong(win)) != 0
 }
 
+// beginSelectionCapture is nil on X11: PRIMARY is read at once, nothing waits.
+func beginSelectionCapture(Clipboard, uintptr) captureTask { return nil }
+
 func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
 	text, fresh, err := captureWithPrimary(cb, win, primaryOps{
 		selectedIn:  primarySelectedIn,

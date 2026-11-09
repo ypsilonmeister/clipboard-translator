@@ -379,6 +379,38 @@ func TestProfileOutputConfig(t *testing.T) {
 	}
 }
 
+func TestProfileInputConfig(t *testing.T) {
+	// Legacy config without profiles defaults to selection.
+	c, err := loadConfig(writeConfig(t, `{"hotkey": "Ctrl+Alt+E"}`))
+	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Input != InputSelection {
+		t.Fatalf("legacy config input: %+v, %v", c.Profiles, err)
+	}
+	// Omitted input defaults to selection; case and spaces are ignored.
+	c, err = loadConfig(writeConfig(t, `{"profiles": [
+		{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]},
+		{"hotkey": "Ctrl+Alt+K", "target": "ko", "input": " Clipboard "},
+		{"hotkey": "Ctrl+Alt+D", "target": "de", "input": "SELECTION"}
+	]}`))
+	if err != nil || len(c.Profiles) != 3 {
+		t.Fatalf("explicit input modes: %+v, %v", c.Profiles, err)
+	}
+	for i, want := range []string{InputSelection, InputClipboard, InputSelection} {
+		if c.Profiles[i].Input != want || c.Profiles[i].inputMode() != want {
+			t.Errorf("profile %d input = %q, want %q", i, c.Profiles[i].Input, want)
+		}
+	}
+	// An unknown value is rejected with an error that lists the valid values.
+	err = loadConfig2(t, `{"profiles": [{"hotkey": "Ctrl+Alt+E", "target": "ko", "input": "mouse"}]}`)
+	if err == nil {
+		t.Fatal("unknown input mode must be rejected")
+	}
+	for _, want := range []string{"profiles[0]", "mouse", "selection", "clipboard"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should contain %q", err.Error(), want)
+		}
+	}
+}
+
 func TestUpdateConfigFilePreservesUnknownKeysWithProfileOutput(t *testing.T) {
 	dir := writeConfig(t, `{
   "custom_unknown_key": "custom_value",

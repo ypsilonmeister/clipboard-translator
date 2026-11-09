@@ -23,9 +23,9 @@ type captureEnv struct {
 
 func (e *captureEnv) ops() captureOps {
 	return captureOps{
-		foreground:    func() uintptr { return e.fg },
-		waitModifiers: func(time.Duration) bool { return e.onWait == nil || e.onWait(e) },
-		sequence:      func() uint32 { return e.seq },
+		foreground:  func() uintptr { return e.fg },
+		modifiersUp: func() bool { return e.onWait == nil || e.onWait(e) },
+		sequence:    func() uint32 { return e.seq },
 		sendCopy: func() error {
 			e.copies++
 			if e.onCopy != nil {
@@ -33,7 +33,7 @@ func (e *captureEnv) ops() captureOps {
 			}
 			return e.copyError
 		},
-		modifierTimeout: time.Second,
+		modifierTimeout: 50 * time.Millisecond,
 		copyTimeout:     50 * time.Millisecond,
 	}
 }
@@ -145,8 +145,8 @@ func TestCaptureSettlesBeforeReading(t *testing.T) {
 	}
 
 	ops := captureOps{
-		foreground:    func() uintptr { return 7 },
-		waitModifiers: func(time.Duration) bool { return true },
+		foreground:  func() uintptr { return 7 },
+		modifiersUp: func() bool { return true },
 		sequence: func() uint32 {
 			elapsed := clk.time().Sub(start)
 			if elapsed >= lastChange {
@@ -200,8 +200,8 @@ func TestCaptureNeverSettlesReadsAtDeadline(t *testing.T) {
 
 	seqStep := uint32(0)
 	ops := captureOps{
-		foreground:    func() uintptr { return 7 },
-		waitModifiers: func(time.Duration) bool { return true },
+		foreground:  func() uintptr { return 7 },
+		modifiersUp: func() bool { return true },
 		sequence: func() uint32 {
 			seqStep++
 			clip.text = fmt.Sprintf("unsettled-%d", seqStep)
@@ -244,9 +244,9 @@ func TestCaptureZeroSettleTimeNoExtraSleep(t *testing.T) {
 
 	seq := uint32(0)
 	ops := captureOps{
-		foreground:    func() uintptr { return 7 },
-		waitModifiers: func(time.Duration) bool { return true },
-		sequence:      func() uint32 { return seq },
+		foreground:  func() uintptr { return 7 },
+		modifiersUp: func() bool { return true },
+		sequence:    func() uint32 { return seq },
 		sendCopy: func() error {
 			seq = 1
 			clip.text = "fresh selection"
@@ -286,7 +286,7 @@ func TestCaptureNoExtraDelayWhenSequenceNeverChanges(t *testing.T) {
 
 	ops := captureOps{
 		foreground:      func() uintptr { return 7 },
-		waitModifiers:   func(time.Duration) bool { return true },
+		modifiersUp:     func() bool { return true },
 		sequence:        func() uint32 { return 0 }, // never changes
 		sendCopy:        func() error { return nil },
 		modifierTimeout: time.Second,
@@ -325,9 +325,9 @@ func TestCaptureAbortsWhenFocusChangesDuringSettling(t *testing.T) {
 	}
 
 	ops := captureOps{
-		foreground:    func() uintptr { return fg },
-		waitModifiers: func(time.Duration) bool { return true },
-		sequence:      func() uint32 { return seq },
+		foreground:  func() uintptr { return fg },
+		modifiersUp: func() bool { return true },
+		sequence:    func() uint32 { return seq },
 		sendCopy: func() error {
 			seq = 1
 			clip.text = "selection from win 7"
@@ -371,9 +371,9 @@ func TestCaptureAbortsWhenFocusChangesAfterFinalRead(t *testing.T) {
 	}
 
 	ops := captureOps{
-		foreground:    func() uintptr { return fg },
-		waitModifiers: func(time.Duration) bool { return true },
-		sequence:      func() uint32 { return seq },
+		foreground:  func() uintptr { return fg },
+		modifiersUp: func() bool { return true },
+		sequence:    func() uint32 { return seq },
 		sendCopy: func() error {
 			seq = 1
 			clip.text = "selection"
