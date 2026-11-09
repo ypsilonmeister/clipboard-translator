@@ -180,7 +180,10 @@ func startSettingsServer(ask func(settingsRequest) settingsReply, dl *downloadMa
 		go s.shutdown()
 	}))
 	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second}
+	// Close may run before AfterFunc returns, so publish the timer under its lock.
+	s.mu.Lock()
 	s.timer = time.AfterFunc(idle, s.Close)
+	s.mu.Unlock()
 	go func() { _ = s.srv.Serve(ln) }()
 	return s, nil
 }

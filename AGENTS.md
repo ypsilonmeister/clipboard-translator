@@ -188,6 +188,7 @@ release:
    job (native smoke checks, setup fixtures, app bundle) on arm64 and Intel, plus
    `.github/workflows/llama-smoke.yml` for real-binary smoke tests with pinned
    llama-server and the 0.8B model).
+   The Linux CI job also runs `go test -race -count=1 ./...` to detect data races.
 2. Tag `vX.Y.Z` (or `gh release create vX.Y.Z --target main`). `release.yml`
    builds `Portable-Clipboard-Translator-Windows-x64-vX.Y.Z.zip` (flat: exe,
    Setup.cmd, Start.cmd, Stop.cmd, setup.ps1, config.json, README.txt, LICENSE),
