@@ -176,6 +176,7 @@ func (a *app) checkModelSwitch(key string) (modelEntry, error) {
 // again, because the main loop's recovery reads the model from the supervisor.
 // config.json changes only once the new model works.
 func (a *app) switchModel(e modelEntry) error {
+	defer a.beginServerWork()()
 	oldModel := a.sup.model
 	wasFallback := a.onFallback()
 	newConf := a.conf
@@ -186,6 +187,8 @@ func (a *app) switchModel(e modelEntry) error {
 	}
 	log.Printf("switching model to %s", e.Name)
 	a.abortTranslation() // the server it was talking to is about to go away
+	a.modelUnloaded = false
+	a.updateReadyTip()
 	a.sup.Stop()
 	a.sup.model = paths.model
 	bin := a.paths.server

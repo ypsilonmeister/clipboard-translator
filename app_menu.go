@@ -21,6 +21,7 @@ const (
 	cmdHistoryClear     = firstAppCommand + 7
 	cmdSettings         = firstAppCommand + 8
 	cmdNotifyOnComplete = firstAppCommand + 9
+	cmdUnloadModel      = firstAppCommand + 10
 	cmdHotkeyBase       = firstAppCommand + 100 // + index into hotkeyChoices
 	cmdBackendBase      = firstAppCommand + 200 // + index into availableBackends
 	cmdHistoryBase      = firstAppCommand + 300 // + index into history (newest first)
@@ -55,6 +56,7 @@ func (a *app) buildMenu() []MenuItem {
 	if a.translating {
 		items = append(items, MenuItem{ID: cmdCancel, Label: "Cancel translation"}, MenuItem{Separator: true})
 	}
+	items = append(items, MenuItem{ID: cmdUnloadModel, Label: "Unload model", Disabled: !a.canUnloadModel()})
 	var recent []MenuItem
 	for i, e := range a.hist.Items() {
 		recent = append(recent, MenuItem{ID: cmdHistoryBase + i, Label: historyLabel(e)})
@@ -132,6 +134,8 @@ func (a *app) handleCommand(id int) {
 		if backends := availableBackends(a.dir); id-cmdBackendBase < len(backends) {
 			a.switchBackend(backends[id-cmdBackendBase])
 		}
+	case id == cmdUnloadModel:
+		a.unloadModel()
 	case id == cmdCancel:
 		if a.translating {
 			log.Print("translation cancelled from the menu")
@@ -292,6 +296,7 @@ func (noHotkey) Close() error           { return nil }
 // "another" build is decided by the server that runs, not by config.json: after
 // a CPU fallback, choosing the configured GPU tries it again.
 func (a *app) switchBackend(name string) {
+	defer a.beginServerWork()()
 	if name == a.runningBackend() {
 		if name != currentBackend(a.conf.ServerFile) {
 			a.keepRunningBackend(name)
@@ -311,6 +316,8 @@ func (a *app) switchBackend(name string) {
 	}
 	log.Printf("switching engine to %s", name)
 	a.abortTranslation() // the server it was talking to is about to go away
+	a.modelUnloaded = false
+	a.updateReadyTip()
 	a.sup.Stop()
 	// Start the chosen build itself, without the CPU fallback of startServer:
 	// silently running on the CPU would make the menu check mark a lie.

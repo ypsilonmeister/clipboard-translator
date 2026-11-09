@@ -28,6 +28,16 @@ type app struct {
 	limiter  restartLimiter
 	readyTip string
 
+	modelUnloaded   bool // intentional stop; hotkeys load it again
+	serverWork      int  // nested start/switch/recovery calls on the UI thread
+	settingsServing bool
+	idleSince       time.Time
+	idleUnloadRev   int
+
+	pendingDuringLoad *int
+	sig               chan os.Signal
+	sigQuit           bool
+
 	activeBackend string // last known working backend ("cpu", "cuda", ...)
 
 	hotkey    Hotkey                            // profile 0, the one the tray menu edits
@@ -112,20 +122,51 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 		model: paths.model, template: paths.template,
 		contextTokens: conf.ContextTokens, port: conf.Port, endpoint: a.endpoint,
 		logOut:         serverLog,
+		onStarted:      a.serverStarted,
 		startupTimeout: time.Duration(conf.StartupTimeoutSec) * time.Second,
 		pidFile:        childRecordPath(dir, conf.Port),
 	}
 	lastSec := time.Duration(-1)
 	a.sup.ui = func(label string, elapsed time.Duration) bool {
-		pumpMessages()
+		if a.pendingDuringLoad != nil {
+			if pressed, profile, err := a.pollHotkeys(); err == nil && pressed {
+				*a.pendingDuringLoad = profile
+			}
+			if a.hotkey == nil {
+				pumpMessages()
+			}
+		} else {
+			pumpMessages()
+		}
+		if a.quitRequested() {
+			return true
+		}
 		a.serviceSettingsWhileBusy(label)
 		if sec := elapsed / time.Second; sec != lastSec {
 			lastSec = sec
 			tray.SetStatus(fmt.Sprintf("Clipboard Translator - %s... (%ds)", label, sec))
 		}
-		return tray.QuitRequested()
+		return a.quitRequested()
 	}
 	return a
+}
+
+func (a *app) quitRequested() bool {
+	if a.tray != nil && a.tray.QuitRequested() {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(a.dir, "STOP")); err == nil {
+		return true
+	}
+	if a.sig != nil {
+		select {
+		case <-a.sig:
+			a.sigQuit = true
+			return true
+		default:
+		}
+	}
+	return a.sigQuit
 }
 
 // failed reports an unrecoverable problem in the log and to the user.
@@ -140,6 +181,7 @@ func (a *app) failed(err error) {
 // The fallback leaves conf.ServerFile alone: the preferred engine is tried
 // again at the next start, and runningBackend tells what runs now.
 func (a *app) startServer() error {
+	defer a.beginServerWork()()
 	err := a.sup.start(a.paths.server, a.conf.GPULayers, "loading model")
 	if err == nil {
 		a.activeBackend = currentBackend(a.conf.ServerFile)
@@ -189,6 +231,7 @@ func (a *app) onFallback() bool {
 
 // startFallback starts the CPU fallback build.
 func (a *app) startFallback() error {
+	defer a.beginServerWork()()
 	if statErr := checkFile(a.paths.fallback); statErr != nil {
 		return fmt.Errorf("CPU fallback unavailable: %w", statErr)
 	}
@@ -227,6 +270,7 @@ func (a *app) sleepPumping(d time.Duration) bool {
 // restartServer brings the server back after it died. It gives up (and reports
 // false) when the user quits or the server keeps dying.
 func (a *app) restartServer() bool {
+	defer a.beginServerWork()()
 	for {
 		if !a.limiter.Allow(time.Now()) {
 			a.failed(fmt.Errorf("The translation server keeps stopping (%d times in %s), so the app is quitting",
@@ -379,6 +423,10 @@ func (a *app) registerStartupHotkey() {
 
 // updateReadyTip sets the idle tooltip from the hotkeys that work.
 func (a *app) updateReadyTip() {
+	if a.modelUnloaded {
+		a.readyTip = "Clipboard Translator - idle (model unloaded); next hotkey loads the model"
+		return
+	}
 	if s := a.hotkeySummary(); s != "" {
 		a.readyTip = "Clipboard Translator - ready (" + s + ")"
 	} else {
@@ -403,6 +451,8 @@ func (a *app) serve(cb Clipboard) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
+	a.sig = sig
+	defer func() { a.sig = nil }()
 	// The same tick also services the tray window, so never poll slower than 100ms
 	// or the tray menu would feel frozen.
 	pollInterval := time.Duration(a.conf.PollMS) * time.Millisecond
@@ -414,6 +464,11 @@ func (a *app) serve(cb Clipboard) {
 	stopFile := filepath.Join(a.dir, "STOP")
 	defer os.Remove(stopFile)
 	for {
+		if a.quitRequested() {
+			log.Print("stop requested")
+			a.cancelTranslation()
+			return
+		}
 		select {
 		case <-sig:
 			log.Print("stopping")
@@ -425,8 +480,7 @@ func (a *app) serve(cb Clipboard) {
 				return
 			}
 		case <-ticker.C:
-			_, statErr := os.Stat(stopFile)
-			if statErr == nil || tray.QuitRequested() {
+			if a.quitRequested() {
 				log.Print("stop requested")
 				a.cancelTranslation()
 				return
@@ -437,13 +491,13 @@ func (a *app) serve(cb Clipboard) {
 				continue
 			}
 			// Pressed pumps messages, so "Quit" or a menu item may have been chosen just now.
-			if tray.QuitRequested() {
+			if a.quitRequested() {
 				log.Print("stop requested")
 				a.cancelTranslation()
 				return
 			}
 			for {
-				if tray.QuitRequested() {
+				if a.quitRequested() {
 					break
 				}
 				id, ok := tray.NextCommand()
@@ -451,18 +505,19 @@ func (a *app) serve(cb Clipboard) {
 					break
 				}
 				a.handleCommand(id)
-				if tray.QuitRequested() {
+				if a.quitRequested() {
 					break
 				}
 			}
-			if tray.QuitRequested() { // e.g. Quit during an engine switch
+			if a.quitRequested() { // e.g. Quit during an engine switch
 				log.Print("stop requested")
 				a.cancelTranslation()
 				return
 			}
 			// An engine switch that failed twice leaves no server at all, and
 			// Exited() is nil then; recover (or quit) rather than serve nothing.
-			if !a.sup.Running() {
+			// An intentional unload instead waits for the next hotkey.
+			if !a.sup.Running() && !a.modelUnloaded {
 				log.Print("no translation server is running")
 				if !a.recoverServer() {
 					return
@@ -474,6 +529,7 @@ func (a *app) serve(cb Clipboard) {
 			if pressed {
 				a.startTranslation(pressedProfile)
 			}
+			a.tickIdleUnload()
 		case req := <-a.settingsReqs:
 			a.handleSettingsRequest(req)
 		case st := <-a.dl.events:
@@ -492,9 +548,11 @@ func (a *app) serve(cb Clipboard) {
 // fired in one tick the later profile wins, as a newer request replaces an older
 // one. An error from profile 0 is returned; one from another profile is logged.
 func (a *app) pollHotkeys() (pressed bool, profile int, err error) {
-	pressed, err = a.hotkey.Pressed()
-	if err != nil {
-		return false, 0, err
+	if a.hotkey != nil {
+		pressed, err = a.hotkey.Pressed()
+		if err != nil {
+			return false, 0, err
+		}
 	}
 	for _, e := range a.extras {
 		if e.hk == nil {
@@ -562,6 +620,10 @@ func (a *app) abortTranslation() {
 	a.cancelTranslation()
 	a.generation++
 	a.translating = false
+	if a.pendingDuringLoad != nil {
+		*a.pendingDuringLoad = -1
+	}
+	a.resetIdleTimer()
 	a.cancelTransientStatus()
 }
 
@@ -580,6 +642,7 @@ func (a *app) tickTranslationStatus() {
 // selection (or the clipboard) and translates it in the background. A new
 // request cancels the older one and invalidates its result.
 func (a *app) startTranslation(index int) {
+	a.resetIdleTimer()
 	profile := a.conf.Profiles[index]
 	win := a.foreground()
 	a.abortTranslation()
@@ -604,6 +667,46 @@ func (a *app) startTranslation(index int) {
 			a.tray.Notify("Clipboard Translator", msg, true)
 		}
 		return
+	}
+	if a.modelUnloaded {
+		a.tray.SetStatus("Clipboard Translator - loading model...")
+		a.translating = true
+		initialGen := a.generation
+		pendingProfile := -1
+		a.pendingDuringLoad = &pendingProfile
+		err := a.startServer()
+		a.pendingDuringLoad = nil
+		if err != nil {
+			a.translating = false
+			a.modelUnloaded = true
+			a.updateReadyTip()
+			a.refreshStatus()
+			if !errors.Is(err, errQuit) {
+				a.failed(err)
+			}
+			return
+		}
+		for {
+			if a.quitRequested() {
+				break
+			}
+			id, ok := a.tray.NextCommand()
+			if !ok {
+				break
+			}
+			a.handleCommand(id)
+		}
+		if a.quitRequested() || !a.translating || a.generation != initialGen {
+			if a.translating {
+				a.abortTranslation()
+			}
+			return
+		}
+		if pendingProfile >= 0 {
+			a.abortTranslation()
+			a.startTranslation(pendingProfile)
+			return
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.conf.TranslationTimeoutSec)*time.Second)
 	a.cancelCurrent = cancel
@@ -634,6 +737,7 @@ func (a *app) handleResult(res result) {
 		return
 	}
 	a.translating = false
+	a.resetIdleTimer()
 	if res.err != nil {
 		if !errors.Is(res.err, context.Canceled) {
 			log.Printf("translation failed: %v", res.err)

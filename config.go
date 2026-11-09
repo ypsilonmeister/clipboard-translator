@@ -15,6 +15,7 @@ type Config struct {
 	Hotkey                string `json:"hotkey"`
 	Port                  int    `json:"port"`
 	PollMS                int    `json:"poll_ms"`
+	IdleUnloadMinutes     int    `json:"idle_unload_minutes"`
 	MaxChars              int    `json:"max_chars"`
 	MaxTokens             int    `json:"max_tokens"`
 	ContextTokens         int    `json:"context_tokens"`
@@ -261,6 +262,14 @@ func validateHotkeyFor(goos, s string) error {
 	return err
 }
 
+// Shared validation keeps config.json and the Settings page consistent.
+func validateIdleUnloadMinutes(n int) error {
+	if n < 0 || n > 1440 {
+		return errors.New("idle_unload_minutes must be a whole number from 0 to 1440 (0 disables automatic unloading)")
+	}
+	return nil
+}
+
 // validateMaxChars is the one check of max_chars, for config.json and the settings page.
 func validateMaxChars(n int) error {
 	if n < 1 || n > 100000 {
@@ -290,6 +299,9 @@ func loadConfig(dir string) (Config, error) {
 	}
 	if c.PollMS < 20 || c.PollMS > 10000 {
 		return c, errors.New("poll_ms must be 20..10000")
+	}
+	if err := validateIdleUnloadMinutes(c.IdleUnloadMinutes); err != nil {
+		return c, err
 	}
 	if err := validateMaxChars(c.MaxChars); err != nil {
 		return c, err

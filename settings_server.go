@@ -47,12 +47,13 @@ type profileForm struct {
 
 // settingsForm is everything the page edits.
 type settingsForm struct {
-	BaseRevision     int           `json:"base_revision,omitempty"`
-	Profiles         []profileForm `json:"profiles,omitempty"`
-	AutoPaste        bool          `json:"auto_paste"`
-	NotifyOnComplete bool          `json:"notify_on_complete"`
-	MaxChars         int           `json:"max_chars"`
-	Changed          []string      `json:"changed,omitempty"`
+	BaseRevision      int           `json:"base_revision,omitempty"`
+	Profiles          []profileForm `json:"profiles,omitempty"`
+	AutoPaste         bool          `json:"auto_paste"`
+	NotifyOnComplete  bool          `json:"notify_on_complete"`
+	IdleUnloadMinutes int           `json:"idle_unload_minutes"`
+	MaxChars          int           `json:"max_chars"`
+	Changed           []string      `json:"changed,omitempty"`
 }
 
 type languageOption struct {
@@ -337,12 +338,13 @@ func (s *settingsServer) handleState(w http.ResponseWriter, r *http.Request) {
 
 func (s *settingsServer) handleSave(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		BaseRevision     *int           `json:"base_revision"`
-		Profiles         *[]profileForm `json:"profiles"`
-		AutoPaste        *bool          `json:"auto_paste"`
-		NotifyOnComplete *bool          `json:"notify_on_complete"`
-		MaxChars         *int           `json:"max_chars"`
-		Changed          []string       `json:"changed"`
+		BaseRevision      *int           `json:"base_revision"`
+		Profiles          *[]profileForm `json:"profiles"`
+		AutoPaste         *bool          `json:"auto_paste"`
+		NotifyOnComplete  *bool          `json:"notify_on_complete"`
+		IdleUnloadMinutes *int           `json:"idle_unload_minutes"`
+		MaxChars          *int           `json:"max_chars"`
+		Changed           []string       `json:"changed"`
 	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -378,6 +380,12 @@ func (s *settingsServer) handleSave(w http.ResponseWriter, r *http.Request) {
 		form.MaxChars = *payload.MaxChars
 		if len(payload.Changed) == 0 {
 			form.Changed = append(form.Changed, "max_chars")
+		}
+	}
+	if payload.IdleUnloadMinutes != nil {
+		form.IdleUnloadMinutes = *payload.IdleUnloadMinutes
+		if len(payload.Changed) == 0 {
+			form.Changed = append(form.Changed, "idle_unload_minutes")
 		}
 	}
 	rep, ok := s.roundTrip(newSettingsRequest(&form, 8*time.Second))
@@ -577,6 +585,12 @@ func (f settingsForm) toConfig(base Config) (Config, error) {
 	}
 	if hasField("notify_on_complete") {
 		c.NotifyOnComplete = f.NotifyOnComplete
+	}
+	if hasField("idle_unload_minutes") {
+		if err := validateIdleUnloadMinutes(f.IdleUnloadMinutes); err != nil {
+			return base, err
+		}
+		c.IdleUnloadMinutes = f.IdleUnloadMinutes
 	}
 	if hasField("max_chars") {
 		if err := validateMaxChars(f.MaxChars); err != nil {
