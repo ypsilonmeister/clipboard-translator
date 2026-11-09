@@ -63,7 +63,8 @@ jobs:
           LLAMA_SHA: ${{ steps.llama-info.outputs.sha256 }}
         run: |
           mkdir -p /tmp/llama-download /tmp/llama-extracted
-          curl -fL -o /tmp/llama-download/llama.tar.gz "$LLAMA_URL"
+          # ubuntu-24.04 ships curl 8.x (>= 7.71 supports --retry-all-errors)
+          curl -fL --retry 5 --retry-delay 5 --retry-all-errors -o /tmp/llama-download/llama.tar.gz "$LLAMA_URL"
           echo "$LLAMA_SHA  /tmp/llama-download/llama.tar.gz" | sha256sum --check --strict -
           tar -xzf /tmp/llama-download/llama.tar.gz -C /tmp/llama-extracted
           mapfile -t SERVERS < <(find /tmp/llama-extracted -type f -name llama-server)
@@ -95,7 +96,8 @@ jobs:
           MODEL_DEST="/tmp/models/$MODEL_FILE"
           if [ ! -f "$MODEL_DEST" ]; then
             echo "Downloading model from $MODEL_URL ..."
-            curl -fL -o "$MODEL_DEST.partial" "$MODEL_URL"
+            # ubuntu-24.04 ships curl 8.x (>= 7.71 supports --retry-all-errors)
+            curl -fL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 900 -o "$MODEL_DEST.partial" "$MODEL_URL"
             mv "$MODEL_DEST.partial" "$MODEL_DEST"
           else
             echo "Model found in cache: $MODEL_DEST"
@@ -104,7 +106,7 @@ jobs:
 
           TEMPLATE_DEST="/tmp/models/chat_template.jinja"
           echo "Downloading chat template from $TEMPLATE_URL ..."
-          curl -fL -o "$TEMPLATE_DEST.partial" "$TEMPLATE_URL"
+          curl -fL --retry 5 --retry-delay 5 --retry-all-errors -o "$TEMPLATE_DEST.partial" "$TEMPLATE_URL"
           mv "$TEMPLATE_DEST.partial" "$TEMPLATE_DEST"
           echo "$TEMPLATE_SHA  $TEMPLATE_DEST" | sha256sum --check --strict -
 
