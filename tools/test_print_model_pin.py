@@ -19,10 +19,10 @@ var modelCatalog = []modelEntry{
 		SizeLabel:      "0.6 GB", MinBytes: 400 << 20, Bytes: 573125952},
 	{Key: "2b", Name: "PLaMo 3 Translate 2B", Note: "The default.",
 		File: "plamo-3-translate-2b-Q4_K_M.gguf", Repo: "plamo-3-translate-2b-GGUF",
-		Revision:       "232fbd7916519edecddfdae0beae7e76fe70453f",
-		Sha256:         "f36d0813dd95573a852ab5d76e374c543632d9e292929e922bcdbf7e53b494e0",
-		TemplateSha256: "18dcc169548d794897084a04cd150a5a633717f1eb6e62de4a0e0973b377e02a",
-		SizeLabel:      "1.8 GB", MinBytes: 1 << 30, Bytes: 1807199392},
+		Revision:       "228a27cc0bb4f111219963848d50a3127c16ca73",
+		Sha256:         "1ffd9073afcc70e35ccc942428aa2b73d7aa2b9ea779bf504b775369e0276c13",
+		TemplateSha256: "ad7eb87b161c6792be070d777a9f9da50c9e57a77e1fa5cca3a24b91b6bdb9e9",
+		SizeLabel:      "1.8 GB", MinBytes: 1 << 30, Bytes: 1807203040},
 }
 '''
 

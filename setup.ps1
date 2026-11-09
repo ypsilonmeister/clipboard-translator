@@ -29,9 +29,9 @@ function Get-ModelCatalog {
             Sha256 = '73a1d942d8ab1e654d83898d997b8b4808c32ba669b378df612230989d18f079'
             TemplateSha256 = '084af862c7844bdca74e8dca5516fde1f446919e00650ee4d8fae5b193fd064e' }
         '2b' = @{ Repo = 'plamo-3-translate-2b-GGUF'; File = 'plamo-3-translate-2b-Q4_K_M.gguf'; Size = '1.8 GB'; MinBytes = 1GB
-            Revision = '232fbd7916519edecddfdae0beae7e76fe70453f'
-            Sha256 = 'f36d0813dd95573a852ab5d76e374c543632d9e292929e922bcdbf7e53b494e0'
-            TemplateSha256 = '18dcc169548d794897084a04cd150a5a633717f1eb6e62de4a0e0973b377e02a' }
+            Revision = '228a27cc0bb4f111219963848d50a3127c16ca73'
+            Sha256 = '1ffd9073afcc70e35ccc942428aa2b73d7aa2b9ea779bf504b775369e0276c13'
+            TemplateSha256 = 'ad7eb87b161c6792be070d777a9f9da50c9e57a77e1fa5cca3a24b91b6bdb9e9' }
         '8b' = @{ Repo = 'plamo-3-translate-8b-GGUF'; File = 'plamo-3-translate-8b-Q4_K_M.gguf'; Size = '5.3 GB'; MinBytes = 4GB
             Revision = '407c15bc44f6968e6734bc047d92f766c163bbec'
             Sha256 = 'e021fb83dcda393a4f866291caa53380eebbe2f25be4c7585fb19e8486828bbf'
