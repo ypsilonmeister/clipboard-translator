@@ -2,6 +2,9 @@
 #include "portal_native_linux.h"
 #include <gio/gio.h>
 #include <string.h>
+#include <unistd.h>
+#include <gio/gunixinputstream.h>
+#include <gio/gunixoutputstream.h>
 
 #define DEST "org.freedesktop.portal.Desktop"
 #define PATH "/org/freedesktop/portal/desktop"
@@ -10,21 +13,22 @@ struct CTPortal {
     GDBusConnection *bus;
     GCancellable *cancel;
     GQueue events;
-    guint response_sub, session_sub, owner_sub, shortcut_sub;
+    guint response_sub, session_sub, owner_sub, shortcut_sub, clipboard_sub;
+    GHashTable *ios;
     gulong closed_handler;
     char *request_prefix, *session_prefix;
 };
 typedef struct { CTPortal *p; int registered; char *token; } Call;
 
 static void retain(CTPortal *p) { p->refs++; }
-void ct_portal_event_free(CTPortalEvent *e) { g_free(e->token); g_free(e->session); g_free(e->id); if (e->bindings) g_variant_unref(e->bindings); }
+void ct_portal_event_free(CTPortalEvent *e) { g_free(e->token); g_free(e->session); g_free(e->id); g_free(e->restore); g_free(e->mime); g_free(e->data); if (e->bindings) g_variant_unref(e->bindings); }
 static void release(CTPortal *p) {
     if (--p->refs) return;
     while (!g_queue_is_empty(&p->events)) {
         CTPortalEvent *e = g_queue_pop_head(&p->events);
         ct_portal_event_free(e); g_free(e);
     }
-    g_object_unref(p->cancel); g_object_unref(p->bus);
+    g_object_unref(p->cancel); g_object_unref(p->bus); g_hash_table_unref(p->ios);
     g_free(p->request_prefix); g_free(p->session_prefix); g_free(p);
 }
 static CTPortalEvent *enqueue(CTPortal *p, int kind, const char *token, const char *session, guint32 code) {
@@ -46,7 +50,12 @@ static void response(GDBusConnection *bus, const gchar *sender, const gchar *pat
     if (session && (!g_variant_is_object_path(session) || !g_str_has_prefix(session,p->session_prefix))) { session=NULL; code=2; }
     const char *token=strrchr(path,'/');
     CTPortalEvent *e=enqueue(p,2,token ? token+1 : "",session,code);
-    if (e) e->bindings=g_variant_lookup_value(results,"shortcuts",G_VARIANT_TYPE("a(sa{sv})"));
+    if (e) {
+        e->bindings=g_variant_lookup_value(results,"shortcuts",G_VARIANT_TYPE("a(sa{sv})"));
+        g_variant_lookup(results,"devices","u",&e->devices);
+        g_variant_lookup(results,"clipboard_enabled","b",&e->clipboard);
+        const char *restore=NULL;g_variant_lookup(results,"restore_token","&s",&restore);e->restore=g_strdup(restore);
+    }
     if (handle) g_variant_unref(handle);
     g_variant_unref(results);
 }
@@ -71,6 +80,35 @@ static void shortcut_signal(GDBusConnection *bus, const gchar *sender, const gch
         g_variant_unref(value);
     }
 }
+static void clipboard_signal(GDBusConnection *bus, const gchar *sender, const gchar *path,
+                             const gchar *iface, const gchar *name, GVariant *args, gpointer data) {
+    CTPortal *p=data; const char *session,*mime; GVariant *opts;
+    if (!strcmp(name,"SelectionOwnerChanged") && g_variant_is_of_type(args,G_VARIANT_TYPE("(oa{sv})"))) {
+        g_variant_get(args,"(&o@a{sv})",&session,&opts);
+        if (g_str_has_prefix(session,p->session_prefix)) {
+            CTPortalEvent *e=enqueue(p,9,NULL,session,0);
+            if (e) {
+                g_variant_lookup(opts,"session_is_owner","b",&e->owner);
+                GVariant *types=g_variant_lookup_value(opts,"mime_types",G_VARIANT_TYPE_STRING_ARRAY);
+                if (types) {
+                    GVariantIter iter;g_variant_iter_init(&iter,types);
+                    while (g_variant_iter_next(&iter,"&s",&mime)) {
+                        if (!g_ascii_strcasecmp(mime,"text/plain;charset=utf-8")) {g_free(e->mime);e->mime=g_strdup(mime);break;}
+                        if (!strcmp(mime,"text/plain") && !e->mime) e->mime=g_strdup(mime);
+                    }
+                    g_variant_unref(types);
+                }
+            }
+        }
+        g_variant_unref(opts);
+    } else if (!strcmp(name,"SelectionTransfer") && g_variant_is_of_type(args,G_VARIANT_TYPE("(osu)"))) {
+        guint32 serial;g_variant_get(args,"(&o&su)",&session,&mime,&serial);
+        if (g_str_has_prefix(session,p->session_prefix)) {
+            CTPortalEvent *e=enqueue(p,10,NULL,session,0);
+            if (e) {e->mime=g_strdup(mime);e->serial=serial;}
+        }
+    }
+}
 static void owner_changed(GDBusConnection *bus, const gchar *sender, const gchar *path,
                           const gchar *iface, const gchar *name, GVariant *args, gpointer data) {
     const char *service,*old_owner,*new_owner;
@@ -84,7 +122,7 @@ static void call_done(GObject *obj, GAsyncResult *result, gpointer data) {
     Call *c=data; GError *error=NULL;
     GVariant *reply=g_dbus_connection_call_finish(G_DBUS_CONNECTION(obj),result,&error);
     if (!reply) enqueue(c->p,4,c->token,NULL,0);
-    else if (c->registered) enqueue(c->p,1,NULL,NULL,0);
+    else if (c->registered) enqueue(c->p,c->registered,c->token,NULL,0);
     if (reply) g_variant_unref(reply);
     if (error) g_error_free(error); // Never copy a portal error body into app logs.
     release(c->p); g_free(c->token); g_free(c);
@@ -101,6 +139,7 @@ CTPortal *ct_portal_open(void) {
     if (!bus) { g_clear_error(&error); return NULL; }
     g_dbus_connection_set_exit_on_close(bus,FALSE);
     CTPortal *p=g_new0(CTPortal,1);p->refs=1;p->bus=bus;p->cancel=g_cancellable_new();
+    p->ios=g_hash_table_new_full(g_str_hash,g_str_equal,g_free,g_object_unref);
     char *sender=g_strdup(g_dbus_connection_get_unique_name(bus)+1);
     for (char *c=sender;*c;c++) if (*c=='.') *c='_';
     p->request_prefix=g_strdup_printf(PATH "/request/%s/",sender);
@@ -111,6 +150,7 @@ CTPortal *ct_portal_open(void) {
     p->session_sub=g_dbus_connection_signal_subscribe(bus,DEST,"org.freedesktop.portal.Session","Closed",NULL,NULL,0,session_closed,p,NULL);
     p->owner_sub=g_dbus_connection_signal_subscribe(bus,"org.freedesktop.DBus","org.freedesktop.DBus","NameOwnerChanged","/org/freedesktop/DBus",DEST,0,owner_changed,p,NULL);
     p->shortcut_sub=g_dbus_connection_signal_subscribe(bus,DEST,"org.freedesktop.portal.GlobalShortcuts",NULL,PATH,NULL,0,shortcut_signal,p,NULL);
+    p->clipboard_sub=g_dbus_connection_signal_subscribe(bus,DEST,"org.freedesktop.portal.Clipboard",NULL,PATH,NULL,0,clipboard_signal,p,NULL);
     p->closed_handler=g_signal_connect(bus,"closed",G_CALLBACK(connection_closed),p);
     return p;
 }
@@ -165,6 +205,109 @@ static const char *binding_field(CTPortalEvent *e, int index, int trigger) {
 }
 const char *ct_portal_binding_id(CTPortalEvent *e,int index) { return binding_field(e,index,0); }
 const char *ct_portal_binding_trigger(CTPortalEvent *e,int index) { return binding_field(e,index,1); }
+void ct_portal_select_devices(CTPortal *p,const char *session,const char *token,const char *restore) {
+    GVariantBuilder opts;g_variant_builder_init(&opts,G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&opts,"{sv}","handle_token",g_variant_new_string(token));
+    g_variant_builder_add(&opts,"{sv}","types",g_variant_new_uint32(1));
+    g_variant_builder_add(&opts,"{sv}","persist_mode",g_variant_new_uint32(2));
+    if (*restore) g_variant_builder_add(&opts,"{sv}","restore_token",g_variant_new_string(restore));
+    call(p,"org.freedesktop.portal.RemoteDesktop","SelectDevices",g_variant_new("(oa{sv})",session,&opts),G_VARIANT_TYPE("(o)"),0,token);
+}
+void ct_portal_request_clipboard(CTPortal *p,const char *session,const char *token) {
+    GVariantBuilder opts;g_variant_builder_init(&opts,G_VARIANT_TYPE_VARDICT);
+    call(p,"org.freedesktop.portal.Clipboard","RequestClipboard",g_variant_new("(oa{sv})",session,&opts),G_VARIANT_TYPE_UNIT,8,token);
+}
+void ct_portal_start_remote(CTPortal *p,const char *session,const char *token) {
+    GVariantBuilder opts;g_variant_builder_init(&opts,G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&opts,"{sv}","handle_token",g_variant_new_string(token));
+    call(p,"org.freedesktop.portal.RemoteDesktop","Start",g_variant_new("(osa{sv})",session,"",&opts),G_VARIANT_TYPE("(o)"),0,token);
+}
+void ct_portal_set_selection(CTPortal *p,const char *session,const char *token) {
+    const char *mimes[]={"text/plain;charset=utf-8","text/plain",NULL};
+    GVariantBuilder opts;g_variant_builder_init(&opts,G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&opts,"{sv}","mime_types",g_variant_new_strv(mimes,-1));
+    call(p,"org.freedesktop.portal.Clipboard","SetSelection",g_variant_new("(oa{sv})",session,&opts),G_VARIANT_TYPE_UNIT,8,token);
+}
+void ct_portal_key(CTPortal *p,const char *session,const char *token,int keysym,int down) {
+    GVariantBuilder opts;g_variant_builder_init(&opts,G_VARIANT_TYPE_VARDICT);
+    call(p,"org.freedesktop.portal.RemoteDesktop","NotifyKeyboardKeysym",g_variant_new("(oa{sv}iu)",session,&opts,keysym,(guint32)down),G_VARIANT_TYPE_UNIT,8,token);
+}
+void ct_portal_write_done(CTPortal *p,const char *session,uint32_t serial,int success) {
+    if (!p->closed) g_dbus_connection_call(p->bus,DEST,PATH,"org.freedesktop.portal.Clipboard","SelectionWriteDone",g_variant_new("(oub)",session,serial,success),NULL,0,10000,NULL,NULL,NULL);
+}
+
+#define TEXT_LIMIT (32*1024*1024)
+typedef struct {
+    CTPortal *p; char *token,*session; int writing;
+    GCancellable *cancel; GSource *timer;
+    GInputStream *input; GOutputStream *output;
+    GByteArray *buffer; void *data; int length;
+} ClipboardIO;
+static gboolean io_timeout(gpointer data) {g_cancellable_cancel(G_CANCELLABLE(data));return G_SOURCE_REMOVE;}
+static void io_finish(ClipboardIO *op,int code) {
+    CTPortalEvent *e=enqueue(op->p,op->writing ? 12 : 11,op->token,op->session,code);
+    if (e && !code && !op->writing) {e->length=op->buffer->len;e->data=g_memdup(op->buffer->data,op->buffer->len);}
+    g_source_destroy(op->timer);g_source_unref(op->timer);
+    g_hash_table_remove(op->p->ios,op->token);
+    if (op->input) g_object_unref(op->input);
+    if (op->output) g_object_unref(op->output);
+    g_byte_array_unref(op->buffer);g_free(op->data);g_object_unref(op->cancel);
+    g_free(op->token);g_free(op->session);release(op->p);g_free(op);
+}
+static void read_chunk(ClipboardIO *op);
+static void read_done(GObject *obj,GAsyncResult *result,gpointer data) {
+    ClipboardIO *op=data;GError *error=NULL;
+    GBytes *bytes=g_input_stream_read_bytes_finish(G_INPUT_STREAM(obj),result,&error);
+    if (!bytes) {g_clear_error(&error);io_finish(op,1);return;}
+    gsize length;const void *chunk=g_bytes_get_data(bytes,&length);
+    if (length>TEXT_LIMIT-op->buffer->len) {g_bytes_unref(bytes);io_finish(op,1);return;}
+    if (length) g_byte_array_append(op->buffer,chunk,length);
+    g_bytes_unref(bytes);
+    if (!length) io_finish(op,0);else read_chunk(op);
+}
+static void read_chunk(ClipboardIO *op) {g_input_stream_read_bytes_async(op->input,65536,G_PRIORITY_DEFAULT,op->cancel,read_done,op);}
+static void write_done(GObject *obj,GAsyncResult *result,gpointer data) {
+    ClipboardIO *op=data;GError *error=NULL;gsize written;
+    gboolean ok=g_output_stream_write_all_finish(G_OUTPUT_STREAM(obj),result,&written,&error);
+    g_clear_error(&error);io_finish(op,ok && written==(gsize)op->length ? 0 : 1);
+}
+static void fd_done(GObject *obj,GAsyncResult *result,gpointer data) {
+    ClipboardIO *op=data;GError *error=NULL;GUnixFDList *fds=NULL;
+    GVariant *reply=g_dbus_connection_call_with_unix_fd_list_finish(G_DBUS_CONNECTION(obj),&fds,result,&error);
+    if (!reply) {
+        int code=op->writing ? 1 : 2;
+        if (g_error_matches(error,G_IO_ERROR,G_IO_ERROR_CANCELLED) || g_error_matches(error,G_IO_ERROR,G_IO_ERROR_TIMED_OUT) || g_error_matches(error,G_DBUS_ERROR,G_DBUS_ERROR_NO_REPLY)) code=1;
+        g_clear_error(&error);if (fds) g_object_unref(fds);io_finish(op,code);return;
+    }
+    gint index;g_variant_get(reply,"(h)",&index);g_variant_unref(reply);
+    int fd=fds ? g_unix_fd_list_get(fds,index,&error) : -1;
+    if (fds) g_object_unref(fds);
+    if (fd<0) {g_clear_error(&error);io_finish(op,1);return;}
+    if (op->writing) {
+        op->output=g_unix_output_stream_new(fd,TRUE);
+        g_output_stream_write_all_async(op->output,op->data,op->length,G_PRIORITY_DEFAULT,op->cancel,write_done,op);
+    } else {op->input=g_unix_input_stream_new(fd,TRUE);read_chunk(op);}
+}
+static ClipboardIO *new_io(CTPortal *p,const char *session,const char *token,int writing) {
+    if (p->closed || g_hash_table_size(p->ios)>=16) {enqueue(p,writing ? 12 : 11,token,session,1);return NULL;}
+    ClipboardIO *op=g_new0(ClipboardIO,1);op->p=p;retain(p);op->session=g_strdup(session);op->token=g_strdup(token);op->writing=writing;
+    op->buffer=g_byte_array_new();op->cancel=g_cancellable_new();
+    g_hash_table_insert(p->ios,g_strdup(token),g_object_ref(op->cancel));
+    op->timer=g_timeout_source_new(5000);g_source_set_callback(op->timer,io_timeout,g_object_ref(op->cancel),g_object_unref);g_source_attach(op->timer,NULL);
+    return op;
+}
+void ct_portal_read_selection(CTPortal *p,const char *session,const char *token,const char *mime) {
+    ClipboardIO *op=new_io(p,session,token,0);if (!op) return;
+    g_dbus_connection_call_with_unix_fd_list(p->bus,DEST,PATH,"org.freedesktop.portal.Clipboard","SelectionRead",g_variant_new("(os)",session,mime),G_VARIANT_TYPE("(h)"),0,5000,NULL,op->cancel,fd_done,op);
+}
+void ct_portal_write_selection(CTPortal *p,const char *session,const char *token,uint32_t serial,const void *data,int length) {
+    if (length<0 || length>TEXT_LIMIT) {enqueue(p,12,token,session,1);return;}
+    ClipboardIO *op=new_io(p,session,token,1);if (!op) return;
+    op->length=length;op->data=g_malloc(MAX(1,length));if (length) memcpy(op->data,data,length);
+    g_dbus_connection_call_with_unix_fd_list(p->bus,DEST,PATH,"org.freedesktop.portal.Clipboard","SelectionWrite",g_variant_new("(ou)",session,serial),G_VARIANT_TYPE("(h)"),0,5000,NULL,op->cancel,fd_done,op);
+}
+void ct_portal_cancel_io(CTPortal *p,const char *token) {GCancellable *c=g_hash_table_lookup(p->ios,token);if (c) g_cancellable_cancel(c);}
+static void cancel_io(gpointer key,gpointer value,gpointer data) {g_cancellable_cancel(value);}
 void ct_portal_dispatch(void) {
     for (int i=0;i<64 && g_main_context_pending(NULL);i++) g_main_context_iteration(NULL,FALSE);
 }
@@ -181,6 +324,8 @@ void ct_portal_close(CTPortal *p) {
     g_dbus_connection_signal_unsubscribe(p->bus,p->session_sub);
     g_dbus_connection_signal_unsubscribe(p->bus,p->owner_sub);
     g_dbus_connection_signal_unsubscribe(p->bus,p->shortcut_sub);
+    g_dbus_connection_signal_unsubscribe(p->bus,p->clipboard_sub);
+    g_hash_table_foreach(p->ios,cancel_io,NULL);
     g_signal_handler_disconnect(p->bus,p->closed_handler);
     g_cancellable_cancel(p->cancel);
     // Disconnecting the private peer releases all portal sessions, including ones

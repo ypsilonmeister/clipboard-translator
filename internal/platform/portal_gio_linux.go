@@ -3,7 +3,7 @@
 package platform
 
 /*
-#cgo pkg-config: gio-2.0
+#cgo pkg-config: gio-2.0 gio-unix-2.0
 #include <stdlib.h>
 #include "portal_native_linux.h"
 */
@@ -87,12 +87,24 @@ func (w *gioPortalWire) Poll() (portalEvent, bool) {
 		return portalEvent{}, false
 	}
 	defer C.ct_portal_event_free(&e)
-	kinds := []string{"", "registered", "response", "closed", "failed", "activated", "deactivated", "shortcuts-changed"}
+	kinds := []string{"", "registered", "response", "closed", "failed", "activated", "deactivated", "shortcuts-changed", "method", "selection-owner", "selection-transfer", "read", "written"}
 	kind := "failed"
 	if int(e.kind) > 0 && int(e.kind) < len(kinds) {
 		kind = kinds[int(e.kind)]
 	}
 	event := portalEvent{kind: kind, token: C.GoString(e.token), session: C.GoString(e.session), code: uint32(e.code), id: C.GoString(e.id)}
+	event.devices = uint32(e.devices)
+	event.clipboard = e.clipboard != 0
+	event.owner = e.owner != 0
+	event.restore = C.GoString(e.restore)
+	event.mime = C.GoString(e.mime)
+	event.serial = uint32(e.serial)
+	if e.length < 0 || int(e.length) > portalTextLimit {
+		return portalEvent{kind: "failed"}, true
+	}
+	if e.length > 0 {
+		event.data = C.GoBytes(e.data, C.int(e.length))
+	}
 	count := int(C.ct_portal_binding_count(&e))
 	if count > maxHotkeys {
 		return portalEvent{kind: "failed"}, true
@@ -146,5 +158,80 @@ func (w *gioPortalWire) CloseRequest(token string) {
 		p := C.CString(token)
 		defer C.free(unsafe.Pointer(p))
 		C.ct_portal_close_request(w.native, p)
+	}
+}
+
+func (w *gioPortalWire) SelectDevices(session, token, restore string) {
+	if w.native != nil {
+		a, b, c := C.CString(session), C.CString(token), C.CString(restore)
+		defer C.free(unsafe.Pointer(a))
+		defer C.free(unsafe.Pointer(b))
+		defer C.free(unsafe.Pointer(c))
+		C.ct_portal_select_devices(w.native, a, b, c)
+	}
+}
+func (w *gioPortalWire) RequestClipboard(session, token string) {
+	if w.native != nil {
+		a, b := C.CString(session), C.CString(token)
+		defer C.free(unsafe.Pointer(a))
+		defer C.free(unsafe.Pointer(b))
+		C.ct_portal_request_clipboard(w.native, a, b)
+	}
+}
+func (w *gioPortalWire) StartRemote(session, token string) {
+	if w.native != nil {
+		a, b := C.CString(session), C.CString(token)
+		defer C.free(unsafe.Pointer(a))
+		defer C.free(unsafe.Pointer(b))
+		C.ct_portal_start_remote(w.native, a, b)
+	}
+}
+func (w *gioPortalWire) SetSelection(session, token string) {
+	if w.native != nil {
+		a, b := C.CString(session), C.CString(token)
+		defer C.free(unsafe.Pointer(a))
+		defer C.free(unsafe.Pointer(b))
+		C.ct_portal_set_selection(w.native, a, b)
+	}
+}
+func (w *gioPortalWire) ReadSelection(session, token, mime string) {
+	if w.native != nil {
+		a, b, c := C.CString(session), C.CString(token), C.CString(mime)
+		defer C.free(unsafe.Pointer(a))
+		defer C.free(unsafe.Pointer(b))
+		defer C.free(unsafe.Pointer(c))
+		C.ct_portal_read_selection(w.native, a, b, c)
+	}
+}
+func (w *gioPortalWire) WriteSelection(session, token string, serial uint32, data []byte) {
+	if w.native != nil {
+		a, b := C.CString(session), C.CString(token)
+		p := C.CBytes(data)
+		defer C.free(unsafe.Pointer(a))
+		defer C.free(unsafe.Pointer(b))
+		defer C.free(p)
+		C.ct_portal_write_selection(w.native, a, b, C.uint32_t(serial), p, C.int(len(data)))
+	}
+}
+func (w *gioPortalWire) WriteDone(session string, serial uint32, success bool) {
+	if w.native != nil {
+		a := C.CString(session)
+		defer C.free(unsafe.Pointer(a))
+		C.ct_portal_write_done(w.native, a, C.uint32_t(serial), C.int(boolInt(success)))
+	}
+}
+func (w *gioPortalWire) CancelIO(token string) {
+	if w.native != nil {
+		a := C.CString(token)
+		defer C.free(unsafe.Pointer(a))
+		C.ct_portal_cancel_io(w.native, a)
+	}
+}
+func (w *gioPortalWire) Key(session, token string, sym int, down bool) {
+	if w.native != nil {
+		a, b := C.CString(session), C.CString(token)
+		defer C.free(unsafe.Pointer(a))
+		defer C.free(unsafe.Pointer(b))
+		C.ct_portal_key(w.native, a, b, C.int(sym), C.int(boolInt(down)))
 	}
 }

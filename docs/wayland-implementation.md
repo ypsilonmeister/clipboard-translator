@@ -24,6 +24,7 @@ not a claim that the application already supports Wayland.
 - W2: GlobalShortcuts sessions, profile bindings and actual trigger display.
   Implemented as an opt-in registry; production backend activation remains W4.
 - W3: RemoteDesktop/Clipboard, asynchronous capture and disabled Wayland auto-paste.
+  Implemented as an opt-in controller; application integration remains W4.
 - W4: capability/consent recovery UX and real shortcut descriptions in Settings and the guide.
 - W5: user documentation and a manual Wayland test sheet.
 - W6: measure KDE Plasma and a wlroots compositor before extending support.
@@ -115,3 +116,65 @@ The test does not inject input, translate, or access the clipboard. It closes it
 removes the temporary .W2Test desktop entry and removes only that test id's GNOME shortcut
 settings/permission-store entry, preserving other applications. This optional test requires
 python3, gsettings, dconf and gdbus for scoped cleanup; CI runs the fake-wire tests instead.
+
+## W3 boundaries
+
+`portal_remote_linux.go` requests keyboard-only RemoteDesktop access and Clipboard
+access before Start. Authorization, refusal, timeout, revocation and reconnection
+advance on UI ticks. A remote-session failure preserves the GlobalShortcuts session;
+losing the private D-Bus connection still closes both. A saved restore token is
+consumed before SelectDevices and replaced by the token returned by Start. Normal
+shutdown retains it; explicit session revocation removes it. Tokens and clipboard
+contents are never included in diagnostic messages.
+
+`portal_clipboard_linux.go` implements nonblocking Clipboard operations. Pending
+operations return `ErrClipboardPending`; W4 must retry them from the UI loop, including
+result application and history copy, without sleeping or spinning. Reads use cancellable
+Unix FD transfers, UTF-8/plain-text MIME negotiation, a 32 MiB limit and a five-second
+IO deadline. Owner changes invalidate cached data and cancel obsolete reads. Writes
+wait for both the method acknowledgement and ownership notification; a subsequent
+copy is preserved when completing a compare/write. This remains best effort: the
+portal has no atomic read-and-replace operation. Offered data is served to external
+consumers through bounded asynchronous FD writes and SelectionWriteDone.
+
+`portal_capture_linux.go` waits for shortcut deactivation plus a short release grace,
+requests Ctrl+C asynchronously, then waits for clipboard ownership to settle. Copy
+failure does not fall back to stale text. The controller finishes/releases its virtual
+keys even if the caller drops a capture task, and rejects overlapping key sequences.
+GlobalShortcuts deactivation is not a physical modifier-state query: users must release
+the hotkey modifiers, and physical held-modifier behavior remains a manual-test limit.
+Wayland capture always reports `fromSelection=false`, because the focused application
+cannot be identified reliably. This prevents automatic paste even if configured.
+The paste sequence is available only to the explicit, controlled native test in W3.
+
+The production backend is still disabled. No portal consent prompt or keyboard/clipboard
+operation is initiated by the ordinary application until W4 connects these components.
+Consequently user-facing README support claims remain unchanged.
+
+### Tests
+
+Fake-wire tests exercise authorization ordering, token consumption/rotation, refusal,
+revocation/retry, owner invalidation, cancelled reads, acknowledgement/owner ordering,
+compare/write protection, UTF-8/size validation, transfer completion, timeouts, virtual
+key cleanup, overlapping-key rejection and capture without automatic paste. Existing
+X11 and non-cgo tests continue to run separately.
+
+Opt-in native test, only on an explicitly designated disposable Wayland desktop:
+`CT_TEST_PORTAL_W3=1 go test -tags portaltest -run '^TestPortalNativeRemoteClipboard$' -v -timeout 6m ./internal/platform`.
+It requires python3-gi for scoped permission cleanup. Accept keyboard/clipboard access,
+then click Start in the disposable "Clipboard Translator W3" window and keep it focused.
+The test first installs known clipboard contents before reading, copies a known Japanese
+selection, compares/replaces it, and explicitly pastes into that same fixture. It stops
+before further key requests if the fixture loses focus. It then reconnects using the
+saved token without another consent prompt. Sessions, the .W3Test desktop entry and only
+that test application's permission-store records are removed afterwards. The fixture
+leaves its known test text on the clipboard rather than reading/restoring previous data.
+
+Verified on the maintainer's `yuya-ubuntu-vm` (100.78.89.32), Ubuntu 26.04 / GNOME 50.1:
+UTF-8 selection capture, FD transfer to the GTK paste consumer, explicit fixture paste,
+and permission-token reconnection all passed. This does not validate production app
+integration, translation inference, physical held modifiers, KDE or wlroots.
+
+API references:
+- https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html
+- https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Clipboard.html

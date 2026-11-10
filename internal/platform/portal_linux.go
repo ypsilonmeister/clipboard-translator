@@ -22,12 +22,17 @@ type portalWire interface {
 }
 
 type portalEvent struct {
-	kind     string // registered, response, closed, failed
-	token    string
-	session  string
-	code     uint32
-	id       string
-	bindings []portalBinding
+	kind             string // registered, response, closed, failed
+	token            string
+	session          string
+	code             uint32
+	id               string
+	bindings         []portalBinding
+	devices          uint32
+	clipboard, owner bool
+	restore, mime    string
+	serial           uint32
+	data             []byte
 }
 
 type portalClient struct {
