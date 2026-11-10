@@ -17,6 +17,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
 // app ties the tray, the llama-server supervisor, the clipboard and the hotkey
@@ -69,7 +70,7 @@ type app struct {
 
 	updates  chan updateResult
 	checking bool
-	latest   releaseInfo // newest release seen by "Check for updates"
+	latest   update.ReleaseInfo // newest release seen by "Check for updates"
 
 	cb             platform.Clipboard
 	results        chan result

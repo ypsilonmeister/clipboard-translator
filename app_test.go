@@ -16,6 +16,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
 func freePort(t *testing.T) int {
@@ -224,7 +225,7 @@ func TestBuildMenu(t *testing.T) {
 	old := version
 	defer func() { version = old }()
 	version = "0.5.1" // a development build is never "outdated"
-	a.latest = releaseInfo{Tag: "v99.0.0"}
+	a.latest = update.ReleaseInfo{Tag: "v99.0.0"}
 	if it := find(a.buildMenu(), "Update to v99.0.0"); it == nil || it.ID != cmdDoUpdate {
 		t.Fatalf("an available update must show 'Update to ...'")
 	}
@@ -268,11 +269,11 @@ func TestOnUpdateResult(t *testing.T) {
 	version = "0.5.1"
 
 	a.checking = true
-	a.onUpdateResult(updateResult{info: releaseInfo{Tag: "v0.6.0"}})
+	a.onUpdateResult(updateResult{info: update.ReleaseInfo{Tag: "v0.6.0"}})
 	if a.checking || a.latest.Tag != "v0.6.0" || !strings.Contains(tray.lastNote(), "v0.6.0 is available") {
 		t.Fatalf("newer release: checking=%v latest=%v note=%q", a.checking, a.latest, tray.lastNote())
 	}
-	a.onUpdateResult(updateResult{info: releaseInfo{Tag: "v0.5.1"}})
+	a.onUpdateResult(updateResult{info: update.ReleaseInfo{Tag: "v0.5.1"}})
 	if a.latest.Tag != "" || !strings.Contains(tray.lastNote(), "latest version") {
 		t.Fatalf("same release: latest=%v note=%q", a.latest, tray.lastNote())
 	}
@@ -323,7 +324,7 @@ func TestBuildMenuExactLabels(t *testing.T) {
 					case "checking":
 						a.checking = true
 					case "update":
-						a.latest = releaseInfo{Tag: "v2.0.0"}
+						a.latest = update.ReleaseInfo{Tag: "v2.0.0"}
 					}
 					want := []string{"Settings...", "Quick start"}
 					if a.translating {

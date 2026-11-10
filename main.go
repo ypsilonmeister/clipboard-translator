@@ -19,6 +19,10 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
+// version is the release this binary was built from. release.yml sets it with
+// -ldflags "-X main.version=<tag without v>"; a local build stays "dev".
+var version = "dev"
+
 type result struct {
 	original, translated string
 	generation           uint64

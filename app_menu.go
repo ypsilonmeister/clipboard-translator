@@ -10,6 +10,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
 // Command IDs of the app-specific tray menu items.
@@ -42,7 +43,7 @@ func backendLabel(name string) string {
 }
 
 func versionLabel() string {
-	if versionParts(version) == nil {
+	if update.VersionParts(version) == nil {
 		return "Clipboard Translator (development build)"
 	}
 	return "Clipboard Translator " + version
@@ -87,7 +88,7 @@ func (a *app) buildMenu() []platform.MenuItem {
 	switch {
 	case a.checking:
 		items = append(items, platform.MenuItem{Label: "Checking for updates...", Disabled: true})
-	case a.latest.Tag != "" && isNewerVersion(a.latest.Tag, version):
+	case a.latest.Tag != "" && update.IsNewerVersion(a.latest.Tag, version):
 		items = append(items, platform.MenuItem{ID: cmdDoUpdate, Label: "Update to " + a.latest.Tag + "..."})
 	default:
 		items = append(items, platform.MenuItem{ID: cmdCheckUpdate, Label: "Check for updates"})
@@ -129,9 +130,9 @@ func (a *app) handleCommand(id int) {
 	case id == cmdOpenConfig:
 		a.openConfigFile()
 	case id == cmdPlamoLicense:
-		if err := a.openURL(plamoLicenseURL); err != nil {
+		if err := a.openURL(update.PlamoLicenseURL); err != nil {
 			log.Printf("could not open license URL: %v", err)
-			a.tray.Notify("Clipboard Translator", "Could not open "+plamoLicenseURL+": "+err.Error(), true)
+			a.tray.Notify("Clipboard Translator", "Could not open "+update.PlamoLicenseURL+": "+err.Error(), true)
 		}
 	}
 }
@@ -298,7 +299,7 @@ func (a *app) keepRunningBackend(name string) {
 }
 
 type updateResult struct {
-	info releaseInfo
+	info update.ReleaseInfo
 	err  error
 }
 
@@ -308,7 +309,7 @@ func (a *app) startUpdateCheck() {
 	if a.checking {
 		return
 	}
-	if versionParts(version) == nil {
+	if update.VersionParts(version) == nil {
 		a.tray.Notify("Clipboard Translator", "This is a development build; it has no version to compare.", false)
 		return
 	}
@@ -316,7 +317,7 @@ func (a *app) startUpdateCheck() {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		info, err := fetchLatest(ctx, latestReleaseAPI)
+		info, err := update.FetchLatest(ctx, update.LatestReleaseAPI, version)
 		a.updates <- updateResult{info, err}
 	}()
 }
@@ -327,12 +328,12 @@ func (a *app) onUpdateResult(u updateResult) {
 	case u.err != nil:
 		log.Printf("update check failed: %v", u.err)
 		a.tray.Notify("Clipboard Translator", "Could not check for updates: "+u.err.Error(), true)
-	case isNewerVersion(u.info.Tag, version):
+	case update.IsNewerVersion(u.info.Tag, version):
 		a.latest = u.info
 		log.Printf("update available: %s (running %s)", u.info.Tag, version)
 		a.tray.Notify("Clipboard Translator", u.info.Tag+" is available. Open the tray menu and choose Update.", false)
 	default:
-		a.latest = releaseInfo{}
+		a.latest = update.ReleaseInfo{}
 		a.tray.Notify("Clipboard Translator", "You have the latest version ("+version+").", false)
 	}
 }
@@ -345,27 +346,27 @@ func (a *app) startUpdate() {
 	if ask == nil {
 		ask = platform.AskYesNo
 	}
-	switch detectInstallKind(a.dir, platform.RecordedInstallLocation()) {
-	case kindInstaller:
+	switch update.DetectInstallKind(a.dir, platform.RecordedInstallLocation()) {
+	case update.KindInstaller:
 		if !ask("Update to " + tag + "?\n\nThis downloads the new version, closes Clipboard Translator and starts it again.") {
 			return
 		}
 		// The tag is checked here, where the release rules live; the platform
 		// code only runs the script at the URL it is given.
-		url, err := installScriptURL(tag)
+		url, err := update.InstallScriptURL(tag)
 		if err == nil {
 			err = platform.RunInstaller(a.dir, tag, url)
 		}
 		if err != nil {
 			a.tray.Notify("Clipboard Translator", "Could not start the update: "+err.Error(), true)
 		}
-	case kindScoop:
+	case update.KindScoop:
 		platform.ShowInfo("This copy was installed with Scoop. To update, run this in a terminal:\n\nscoop update clipboard-translator")
 	default:
 		if ask("This copy was not installed with the installer, so it cannot update itself.\n\nOpen the releases page to download " + tag + "?") {
-			if err := a.openURL(releasesPage); err != nil {
+			if err := a.openURL(update.ReleasesPage); err != nil {
 				log.Printf("could not open releases page: %v", err)
-				a.tray.Notify("Clipboard Translator", "Could not open "+releasesPage+": "+err.Error(), true)
+				a.tray.Notify("Clipboard Translator", "Could not open "+update.ReleasesPage+": "+err.Error(), true)
 			}
 		}
 	}
