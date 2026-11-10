@@ -4,13 +4,19 @@
 
 English | [日本語](README.ja.md)
 
-Clipboard translator for Windows, Linux (X11), and macOS. It translates between 53 languages
-(Japanese <-> English by default). Select text, press **Ctrl+Alt+E**, then paste the translation
-with **Ctrl+V**.
+Local clipboard translation for Windows (the macOS and Linux builds are experimental).
+Select text in any app, press **Ctrl+Alt+E**, and the translation lands on your clipboard,
+ready to paste with **Ctrl+V**. It translates between 53 languages
+(Japanese <-> English by default).
 
-Translation runs fully locally with [llama.cpp](https://github.com/ggml-org/llama.cpp)
-and [PLaMo 3 Translate 2B (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF).
-No Ollama is required. Windows needs no Python; Linux/macOS use Python only for setup.
+Everything runs on your own PC, with [llama.cpp](https://github.com/ggml-org/llama.cpp)
+and [PLaMo 3 Translate (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF) by
+Preferred Networks. No text leaves your machine: no cloud, no account, no API key and no
+character limits — so you can use it for the text you would not paste into an online
+translator, like work email, code comments or internal documents.
+
+Choose the model size in Settings (0.8B / 2B / 8B). There is nothing else to set up:
+no Ollama, and on Windows not even Python (Linux/macOS use Python only for setup).
 
 **Built with PLaMo.** The translation model is PLaMo by Preferred Networks and is
 used under the [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-ja);

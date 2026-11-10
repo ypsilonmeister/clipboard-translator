@@ -4,12 +4,18 @@
 
 [English](README.md) | 日本語
 
-Windows、Linux（X11）、macOS 用のクリップボード翻訳ツールです。53 言語に対応し、既定は日本語 <-> 英語です。
-テキストを選択して **Ctrl+Alt+E** を押し、翻訳結果を **Ctrl+V** で貼り付けます。
+Windows 用のローカルクリップボード翻訳ツールです（macOS／Linux 版は実験的対応）。
+どのアプリでも、テキストを選択して **Ctrl+Alt+E** を押すと、翻訳がクリップボードに入り、
+**Ctrl+V** でそのまま貼り付けられます。53 言語に対応し、既定は日本語 <-> 英語です。
 
 翻訳はすべて手元の PC で、[llama.cpp](https://github.com/ggml-org/llama.cpp) と
-[PLaMo 3 Translate 2B (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)
-を使って行います。Ollama は不要です。Windows では Python も不要で、Linux／macOS ではセットアップ時だけ使用します。
+Preferred Networks の [PLaMo 3 Translate (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)
+を使って行います。テキストが外部に出ることはありません。クラウドも、アカウントも、
+API キーも、文字数の制限もありません。オンライン翻訳には貼りたくない文章、
+たとえば仕事のメールやコードのコメント、社内文書にも使えます。
+
+モデルの大きさは設定画面で選べます（0.8B／2B／8B）。ほかに用意するものはありません。
+Ollama は不要で、Windows では Python も不要です（Linux／macOS ではセットアップ時だけ使います）。
 
 **Built with PLaMo.** 翻訳モデルは Preferred Networks 社の PLaMo で、
 [PLaMo コミュニティライセンス](https://plamo.preferredai.jp/info/plamo-community-license-ja)
