@@ -57,7 +57,9 @@ explicitly rejected at runtime. `internal/platform/native_linux.c` owns the back
 `desktop_linux.go` connects them to Go; `backend_linux.go` selects the session backend. `autostart_linux.go`
 manages an XDG autostart Desktop Entry. The opt-in Wayland foundation is in
 `portal_linux.go` (lifecycle), `portal_gio_linux.go` / `portal_native_linux.c` (GDBus),
-`portal_shortcuts_linux.go` (profile binding/activation), and `portal_state_linux.go`
+`portal_shortcuts_linux.go` (profile binding/activation), `portal_remote_linux.go` /
+`portal_clipboard_linux.go` / `portal_capture_linux.go` (asynchronous authorization,
+FD clipboard and selection capture), and `portal_state_linux.go`
 (desktop registration/private tokens); it is not yet
 connected to the application entry point. See `docs/wayland-implementation.md`.
 GTK supplies a control-window fallback

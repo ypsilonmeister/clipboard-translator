@@ -335,3 +335,14 @@ func (r *portalHotkeys) apply(bindings []portalBinding) {
 		}
 	}
 }
+
+// Deactivated describes the shortcut, not physical modifier state. Capture adds
+// a release grace period; users must release the hotkey's modifiers on Wayland.
+func (r *portalHotkeys) AllReleased() bool {
+	for _, h := range r.entries {
+		if !h.closed && h.held {
+			return false
+		}
+	}
+	return true
+}
