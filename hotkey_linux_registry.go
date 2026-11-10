@@ -5,6 +5,8 @@ package main
 import (
 	"errors"
 	"fmt"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/hotkeyspec"
 )
 
 const (
@@ -21,29 +23,29 @@ func normalizeX11Modifiers(mods uint32) uint32 {
 }
 
 func parseX11Hotkey(spec string) (uint32, uint64, error) {
-	parsed, err := parseHotkeyNames(spec, true, false)
+	parsed, err := hotkeyspec.ParseNames(spec, true, false)
 	if err != nil {
 		return 0, 0, err
 	}
 	var mods uint32
-	if parsed.ctrl {
+	if parsed.Ctrl {
 		mods |= x11ControlMask
 	}
-	if parsed.alt {
+	if parsed.Alt {
 		mods |= x11Mod1Mask
 	}
-	if parsed.shift {
+	if parsed.Shift {
 		mods |= x11ShiftMask
 	}
-	if parsed.win {
+	if parsed.Win {
 		mods |= x11Mod4Mask
 	}
 	var key uint64
-	if len(parsed.key) == 1 && parsed.key[0] >= 'A' && parsed.key[0] <= 'Z' {
-		key = uint64(parsed.key[0] + ('a' - 'A'))
-	} else if len(parsed.key) == 1 && parsed.key[0] >= '0' && parsed.key[0] <= '9' {
-		key = uint64(parsed.key[0])
-	} else if fn, ok := parseFunctionKey(parsed.key); ok {
+	if len(parsed.Key) == 1 && parsed.Key[0] >= 'A' && parsed.Key[0] <= 'Z' {
+		key = uint64(parsed.Key[0] + ('a' - 'A'))
+	} else if len(parsed.Key) == 1 && parsed.Key[0] >= '0' && parsed.Key[0] <= '9' {
+		key = uint64(parsed.Key[0])
+	} else if fn, ok := hotkeyspec.ParseFunctionKey(parsed.Key); ok {
 		key = uint64(0xffbe + fn - 1)
 	} else {
 		return 0, 0, fmt.Errorf("unsupported hotkey %q: use Ctrl+Alt+E (letters A-Z, digits 0-9, or F1-F12)", spec)

@@ -89,6 +89,7 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 | `internal/models/` (`models.go`, `modeldl.go`), `app_models.go` | `models.go` is the model catalog (pinned revision and SHA-256, kept equal to `setup.ps1`, `setup.sh` and `setup-macos.sh`; tests compare them); `modeldl.go` is the download manager (resume, SHA-256 check, cancel; owned by `app`, not by the settings server; the only code that contacts the model host); `internal/models/modeltest` is a fake model host for tests and `internal/testsupport` holds the loopback-only transport; `app_models.go` switches model and engine for the page, answers it while the server loads, and deletes unused models or partials |
 | `server.go` | `supervisor` for `llama-server` (start, stop, exit detection), `restartLimiter` (max 3 per 10 min) and backoff |
 | `setup_flow.go` | Resolves config paths, checks the model/runtime exist, offers to run `setup.ps1` (embedded in the exe with `//go:embed`) |
+| `internal/hotkeyspec/` | The hotkey syntax (`Ctrl+Alt+E`): one parser shared by the config check and the per-OS hotkey code; no OS dependency |
 | `config.go` / `settings.go` | `Config` + validation; order-preserving in-place `config.json` edits with a `.bak` |
 | `update.go`, `update_windows.go` | "Check for updates" (GitHub API, only on click), version compare, install-kind detection (installer / Scoop / portable) |
 | `history.go` | Last 10 translations (memory only) and `decidePaste` for auto-paste |

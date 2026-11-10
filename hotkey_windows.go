@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 	"unsafe"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/hotkeyspec"
 )
 
 const (
@@ -88,31 +90,31 @@ func windowsVK(key string) (uintptr, error) {
 			return uintptr(c), nil
 		}
 	}
-	if fn, ok := parseFunctionKey(key); ok {
+	if fn, ok := hotkeyspec.ParseFunctionKey(key); ok {
 		return uintptr(0x70 + fn - 1), nil
 	}
 	return 0, fmt.Errorf("unsupported key %q", key)
 }
 
 func parseHotkey(s string) (uint32, uintptr, error) {
-	h, err := parseHotkeySpec(s, false) // same syntax check as loadConfig
+	h, err := hotkeyspec.Parse(s, false) // same syntax check as loadConfig
 	if err != nil {
 		return 0, 0, err
 	}
 	var mods uint32
-	if h.ctrl {
+	if h.Ctrl {
 		mods |= modControl
 	}
-	if h.alt {
+	if h.Alt {
 		mods |= modAlt
 	}
-	if h.shift {
+	if h.Shift {
 		mods |= modShift
 	}
-	if h.win {
+	if h.Win {
 		mods |= modWin
 	}
-	vk, err := windowsVK(h.key)
+	vk, err := windowsVK(h.Key)
 	if err != nil {
 		return 0, 0, err
 	}
