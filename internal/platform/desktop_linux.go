@@ -24,19 +24,13 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/assets"
 )
 
-func x11EnvironmentError(display, session, wayland string) error {
-	if strings.EqualFold(session, "wayland") || wayland != "" {
-		return errors.New("Wayland is not supported. Log in to an X11/Xorg session to use Clipboard Translator")
-	}
-	if display == "" {
-		return errors.New("an X11 desktop is required (DISPLAY is not set)")
-	}
-	return nil
-}
-
 func PlatformRuntimeError() error {
-	if err := x11EnvironmentError(os.Getenv("DISPLAY"), os.Getenv("XDG_SESSION_TYPE"), os.Getenv("WAYLAND_DISPLAY")); err != nil {
+	backend, err := selectLinuxBackend(os.Getenv("DISPLAY"), os.Getenv("XDG_SESSION_TYPE"), os.Getenv("WAYLAND_DISPLAY"))
+	if err != nil {
 		return err
+	}
+	if backend != linuxBackendX11 {
+		return errors.New("Wayland is not supported. Log in to an X11/Xorg session to use Clipboard Translator")
 	}
 	if C.ct_init() == 0 {
 		return errors.New("could not initialize GTK 3 on the X11 display")
