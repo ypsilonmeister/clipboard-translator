@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/hotkeyspec"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
@@ -539,11 +540,11 @@ func winKeyName(goos string) string {
 
 // formFromProfile splits a profile's hotkey into check boxes and a key name.
 func formFromProfile(p Profile, goos string) (profileForm, error) {
-	spec, err := parseHotkeyNames(p.Hotkey, goos != "windows", goos == "darwin")
+	spec, err := hotkeyspec.ParseNames(p.Hotkey, goos != "windows", goos == "darwin")
 	if err != nil {
 		return profileForm{}, err
 	}
-	return profileForm{Ctrl: spec.ctrl, Alt: spec.alt, Shift: spec.shift, Win: spec.win, Key: spec.key,
+	return profileForm{Ctrl: spec.Ctrl, Alt: spec.Alt, Shift: spec.Shift, Win: spec.Win, Key: spec.Key,
 		Languages: append([]string(nil), p.Languages...), Target: p.Target, Output: p.outputMode(), Input: p.inputMode()}, nil
 }
 

@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 	"unsafe"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/hotkeyspec"
 )
 
 func platformRuntimeError() error {
@@ -81,7 +83,7 @@ func parseMacHotkey(spec string) (uint32, int, byte, error) {
 				charCode = part[0] + ('a' - 'A')
 			} else if len(part) == 1 && part[0] >= '0' && part[0] <= '9' {
 				charCode = part[0]
-			} else if fn, ok := parseFunctionKey(part); ok {
+			} else if fn, ok := hotkeyspec.ParseFunctionKey(part); ok {
 				vk = macFunctionKeyVK[fn]
 			} else {
 				return 0, 0, 0, fmt.Errorf("unsupported hotkey %q: use modifiers and one key (A-Z, 0-9, or F1-F12)", spec)
