@@ -870,7 +870,8 @@ func (a *app) handleResult(res result) {
 		return
 	}
 	if !applied {
-		log.Print("clipboard text changed during translation; result discarded (new clipboard preserved)")
+		a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
+		log.Print("clipboard text changed during translation; result kept in history (new clipboard preserved)")
 		current, readErr := a.cb.Read()
 		if readErr != nil {
 			log.Printf("clipboard change diagnostics: could not read current clipboard: %v", readErr)
@@ -882,7 +883,7 @@ func (a *app) handleResult(res result) {
 			log.Printf("clipboard change diagnostics: %s", platform.ClassifyClipboardDiff(res.original, current, elapsed))
 		}
 		a.tray.SetStatus(a.readyTip)
-		a.tray.Notify("Clipboard Translator", "The clipboard changed while translating, so the result was dropped and the new clipboard text was kept.", false)
+		a.tray.Notify("Clipboard Translator", "The clipboard changed while translating. Your new clipboard text was kept; copy the translation from Recent translations in the tray menu.", false)
 		return
 	}
 	a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
