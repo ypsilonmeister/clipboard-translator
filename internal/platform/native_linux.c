@@ -7,7 +7,7 @@
 static GtkStatusIcon *status_icon;
 static GtkWidget *current_menu, *control_window, *status_label;
 static char *last_status;
-static int menu_requested;
+static int menu_requested, force_control;
 static GQueue commands = G_QUEUE_INIT;
 
 int ct_gtk_init(void) { return gtk_init_check(NULL, NULL); }
@@ -22,7 +22,7 @@ static gboolean close_control(GtkWidget *w, GdkEvent *event, gpointer data) {
 }
 static gboolean check_tray(gpointer data) {
     // Some desktops do not host legacy X11 tray icons. Keep settings and Quit reachable.
-    if (status_icon && !gtk_status_icon_is_embedded(status_icon)) {
+    if (!control_window && status_icon && (force_control || !gtk_status_icon_is_embedded(status_icon))) {
         control_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
         gtk_window_set_title(GTK_WINDOW(control_window), "Clipboard Translator");
         gtk_container_set_border_width(GTK_CONTAINER(control_window), 16);
@@ -55,8 +55,9 @@ void ct_tray_close(void) {
     if (control_window) { gtk_widget_destroy(control_window); control_window = status_label = NULL; }
     if (status_icon) { g_object_unref(status_icon); status_icon = NULL; }
     g_queue_clear(&commands);
-    menu_requested = 0;
+    menu_requested = force_control = 0;
     g_clear_pointer(&last_status,g_free);
+    ct_manual_cancel_read();
 }
 void ct_status(const char *text) {
     g_free(last_status);last_status=g_strdup(text);
@@ -90,4 +91,41 @@ int ct_dialog(const char *text, int question, int error) {
     int result = gtk_dialog_run(GTK_DIALOG(d));
     gtk_widget_destroy(d);
     return result == GTK_RESPONSE_YES;
+}
+
+// GTK clipboard access needs a focused control window on Wayland, but no
+// RemoteDesktop session. Request asynchronously to keep the UI loop running.
+static int manual_read_state;
+static guint manual_read_generation;
+static char *manual_text;
+static void manual_received(GtkClipboard *clipboard, const gchar *text, gpointer data) {
+    if (GPOINTER_TO_UINT(data) != manual_read_generation) return;
+    g_free(manual_text);
+    manual_text = g_strdup(text ? text : "");
+    manual_read_state = 2;
+}
+char *ct_manual_read(void) {
+    if (manual_read_state == 2) {
+        manual_read_state = 0;
+        return g_strdup(manual_text);
+    }
+    if (manual_read_state == 0) {
+        manual_read_state = 1;
+        gtk_clipboard_request_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), manual_received, GUINT_TO_POINTER(manual_read_generation));
+    }
+    return NULL;
+}
+void ct_manual_write(const char *text) {
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), text, -1);
+}
+void ct_show_control(void) {
+    force_control = 1;
+    if (!control_window) check_tray(NULL);
+    if (control_window) gtk_window_present(GTK_WINDOW(control_window));
+}
+
+void ct_manual_cancel_read(void) {
+    manual_read_generation++;
+    manual_read_state = 0;
+    g_clear_pointer(&manual_text, g_free);
 }

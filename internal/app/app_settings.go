@@ -89,13 +89,20 @@ func (a *app) askSettings(req settings.Request) settings.Reply {
 // handleSettingsRequest runs on the UI thread. A request whose deadline passed
 // while the loop was busy is dropped: the page was already told it failed.
 func (a *app) handleSettingsRequest(req settings.Request) {
-	a.settingsServing = true
-	defer func() { a.settingsServing = false }()
 	if time.Now().After(req.Deadline) {
 		req.Reply <- settings.Reply{Err: settings.ErrBusy}
 		return
 	}
+	if req.Action == "translate" {
+		a.handleAPITranslation(req)
+		return
+	}
+	a.settingsServing = true
+	defer func() { a.settingsServing = false }()
 	switch req.Action {
+	case "translate_api":
+		a.configureTranslateAPI(req)
+		return
 	case "use_model":
 		a.startModelSwitch(req)
 		return
@@ -135,6 +142,9 @@ func (a *app) settingsState() settings.State {
 			st.ActualHotkeys[i] = actual
 		}
 	}
+	st.TranslateAPIEnabled = a.conf.TranslateAPIEnabled
+	st.TranslateAPIToken = a.conf.TranslateAPIToken
+	st.TranslateAPIURL = "http://localhost:18121/translate"
 	st.Guide = a.quickstartGuide()
 	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste

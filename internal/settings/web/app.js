@@ -178,7 +178,8 @@
       onclick: () => {
         state = Object.assign({}, newState);
         baseRevision = state.revision || 0;
-        model = toModel(state);
+        renderTranslateAPI(state);
+    model = toModel(state);
         clearDirty();
         renderAll();
         renderHotkeys();
@@ -680,7 +681,14 @@
   }
 
   // Take new data from the app without touching what is being edited.
+  function renderTranslateAPI(st) {
+    $('translate-api-enabled').checked = !!st.translate_api_enabled;
+    $('translate-api-token').value = st.translate_api_token || '';
+    $('translate-api-url').textContent = st.translate_api_url || '';
+  }
+
   function mergeState(st) {
+    renderTranslateAPI(st);
     if (closed) return;
     const wasBusy = appBusy();
     state = Object.assign({}, st);
@@ -887,6 +895,7 @@
     }
     state = Object.assign({}, r.data.state);
     baseRevision = state.revision || 0;
+    renderTranslateAPI(state);
     model = toModel(state);
     renderAll();
     renderHotkeys();
@@ -911,6 +920,24 @@
   }
 
   async function init() {
+    $('translate-api-enabled').addEventListener('change', async (e) => {
+      e.target.disabled = true;
+      try {
+        const r = await api('/api/translate-api', { enabled: String(e.target.checked) });
+        if (r.data.state) renderTranslateAPI(r.data.state);
+        $('translate-api-status').textContent = r.ok ? 'Endpoint setting saved.' : (r.data.error || 'Could not change endpoint.');
+        if (!r.ok && state) renderTranslateAPI(state);
+      } finally { e.target.disabled = false; }
+    });
+    $('translate-api-copy').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText($('translate-api-token').value);
+        $('translate-api-status').textContent = 'Token copied.';
+      } catch (_) {
+        $('translate-api-token').select();
+        $('translate-api-status').textContent = 'Press Ctrl+C to copy the selected token.';
+      }
+    });
     $('guide').addEventListener('toggle', () => { guideTouched = true; });
     $('add').addEventListener('click', () => {
       model.profiles.push({ ctrl: true, alt: true, shift: false, win: false, key: nextFreeKey(), mode: 'target', a: 'ja', b: 'en', target: 'en', output: 'replace', input: 'selection', cleanup_newlines: 'off' });

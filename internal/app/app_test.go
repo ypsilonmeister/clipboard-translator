@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -328,6 +329,9 @@ func TestBuildMenuExactLabels(t *testing.T) {
 						a.latest = update.ReleaseInfo{Tag: "v2.0.0"}
 					}
 					want := []string{"Settings...", "Quick start"}
+					if runtime.GOOS == "linux" {
+						want = append(want, "Translate clipboard")
+					}
 					if a.translating {
 						want = append(want, "Cancel translation", "---")
 					}

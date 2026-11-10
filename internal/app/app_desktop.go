@@ -95,3 +95,16 @@ func (a *app) finishHistoryCopy(text string) {
 	}
 	a.tray.Notify("Clipboard Translator", "Copied. Paste with "+platform.PasteShortcut()+".", false)
 }
+
+func (a *app) startClipboardTranslation() {
+	a.abortTranslation()
+	a.resetIdleTimer()
+	p := a.conf.Profiles[0]
+	p.Input = config.InputClipboard
+	source, err := a.cb.Read()
+	if errors.Is(err, platform.ErrClipboardPending) {
+		a.pendingRead = &pendingClipboardRead{profile: p, deadline: a.timeNow().Add(8 * time.Second)}
+		return
+	}
+	a.translateCaptured(p, 0, source, false, err)
+}

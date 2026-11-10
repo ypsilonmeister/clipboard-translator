@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -56,7 +57,9 @@ type app struct {
 	extras      []extraHotkey
 	hotkeyLimit int // how many hotkeys this OS build can register, hotkeyLimit() in production
 
-	settings       *settings.Server          // the settings page, while it is open
+	settings       *settings.Server // the settings page, while it is open
+	apiReply       chan settings.Reply
+	apiServer      *http.Server
 	settingsReqs   chan settings.Request     // page -> main loop
 	settingsNotice string                    // why the last switch started from the page did not work
 	settingsIdle   time.Duration             // idle timeout for the settings server; 0 uses settingsIdle
@@ -386,6 +389,11 @@ func (a *app) run() {
 	a.cb = cb
 	a.registerStartupHotkey()
 	defer a.closeSettings()
+	if err := a.startTranslateAPI(); err != nil {
+		log.Printf("translation endpoint: %v", err)
+		a.tray.Notify("Clipboard Translator", "Could not start translation endpoint: "+err.Error(), true)
+	}
+	defer a.stopTranslateAPI()
 	defer a.dl.Close() // closes the partial file of a running download before the process ends
 	defer func() {     // a.hotkey changes when the user picks another one
 		_ = a.hotkey.Close()
@@ -711,6 +719,10 @@ func (a *app) shouldNotifySkip(reason config.SkipReason) bool {
 // abortTranslation cancels the request in flight and makes sure its result,
 // should it still arrive, is ignored.
 func (a *app) abortTranslation() {
+	a.finishAPI("", errors.New("translation canceled"))
+	if c, ok := a.cb.(interface{ CancelPendingRead() }); ok {
+		c.CancelPendingRead()
+	}
 	a.cancelTranslation()
 	a.generation++
 	a.pendingRead = nil
@@ -855,6 +867,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 			if !errors.Is(err, llamaserver.ErrQuit) {
 				a.failed(err)
 			}
+			a.finishAPI("", err)
 			return
 		}
 		for {
@@ -920,6 +933,15 @@ func (a *app) handleResult(res result) {
 	a.chunkIndex = 0
 	a.chunkTotal = 0
 	a.resetIdleTimer()
+	if a.apiReply != nil {
+		text := res.translated
+		if res.output == config.OutputBilingual && res.err == nil {
+			text = formatBilingual(res.original, text)
+		}
+		a.finishAPI(text, res.err)
+		a.refreshStatus()
+		return
+	}
 	if res.err != nil {
 		if !errors.Is(res.err, context.Canceled) {
 			log.Printf("translation failed: %v", res.err)

@@ -2,6 +2,10 @@
 #define CLIPBOARD_TRANSLATOR_LINUX_H
 #include <stdint.h>
 int ct_gtk_init(void);
+char *ct_manual_read(void);
+void ct_manual_cancel_read(void);
+void ct_manual_write(const char *text);
+void ct_show_control(void);
 // X11 initialization; never call from a Wayland backend.
 int ct_init(void);
 void ct_pump(void);

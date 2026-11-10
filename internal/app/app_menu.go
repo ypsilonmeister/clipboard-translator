@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
@@ -25,6 +26,7 @@ const (
 	cmdSettings             = platform.FirstAppCommand + 8
 	cmdUnloadModel          = platform.FirstAppCommand + 10
 	cmdQuickstart           = platform.FirstAppCommand + 11
+	cmdTranslateClipboard   = platform.FirstAppCommand + 13
 	cmdRetryDesktop         = platform.FirstAppCommand + 12
 	cmdModelBase            = platform.FirstAppCommand + 100 // + index into models.Catalog
 	cmdHistoryBase          = platform.FirstAppCommand + 300 // translation; + index into history (newest first)
@@ -57,12 +59,18 @@ func versionLabel() string {
 // menu opens, so availability and the update entry reflect the current state.
 func (a *app) buildMenu() []platform.MenuItem {
 	items := []platform.MenuItem{{ID: cmdSettings, Label: "Settings..."}, {ID: cmdQuickstart, Label: "Quick start"}}
+	if runtime.GOOS == "linux" {
+		items = append(items, platform.MenuItem{ID: cmdTranslateClipboard, Label: "Translate clipboard"})
+	}
 	if s := a.desktopStatus(); s.Wayland {
 		label := "Wayland: waiting for desktop permissions"
 		if s.Ready {
 			label = "Wayland connected (manual paste)"
 		} else if s.Retry {
 			label = "Wayland permissions need attention"
+		}
+		if s.Manual {
+			label = "Manual mode (hotkey unavailable)"
 		}
 		items = append(items, platform.MenuItem{Label: label, Disabled: true})
 		items = append(items, platform.MenuItem{ID: cmdRetryDesktop, Label: "Retry Wayland permissions", Disabled: !s.Retry})
@@ -123,6 +131,8 @@ func (a *app) buildMenu() []platform.MenuItem {
 // handleCommand runs one app-specific menu command. It runs on the UI thread.
 func (a *app) handleCommand(id int) {
 	switch {
+	case id == cmdTranslateClipboard:
+		a.startClipboardTranslation()
 	case id == cmdRetryDesktop:
 		a.retryDesktop()
 	case id >= cmdHistoryBilingualBase && id < cmdHistoryBilingualBase+historySize:
