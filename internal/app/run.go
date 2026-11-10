@@ -7,12 +7,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/textstruct"
 )
 
 // version is the release this binary was built from, set by Run from
@@ -152,8 +152,9 @@ func applyTranslation(cb platform.Clipboard, original, replacement string) (bool
 	return cb.ReplaceIfUnchanged(original, replacement)
 }
 
-// formatBilingual joins the source and translation with a newline, trimming any
-// trailing CR and LF characters from the source.
+// formatBilingual joins the source and translation. If both texts contain
+// multiple matching paragraphs, they are interleaved paragraph-by-paragraph.
+// Otherwise it joins source and translation with a newline, trimming trailing CR/LF.
 func formatBilingual(source, translated string) string {
-	return strings.TrimRight(source, "\r\n") + "\n" + translated
+	return textstruct.FormatBilingual(source, translated)
 }

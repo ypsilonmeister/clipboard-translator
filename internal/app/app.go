@@ -77,6 +77,9 @@ type app struct {
 
 	cb                     platform.Clipboard
 	results                chan result
+	progress               chan translationProgress
+	chunkIndex             int
+	chunkTotal             int
 	generation             uint64 // bumped by every new request; older results are ignored
 	cancelCurrent          context.CancelFunc
 	translating            bool
@@ -147,6 +150,7 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 		showErr:      platform.ShowError,
 		updates:      make(chan updateResult, 1),
 		results:      make(chan result, 16),
+		progress:     make(chan translationProgress, 16),
 		foreground:   platform.ForegroundWindow,
 		paste:        pasteIntoForeground,
 		capture:      platform.CaptureSelectedText,
@@ -625,6 +629,8 @@ func (a *app) serve(cb platform.Clipboard) {
 			a.onDownloadFinished(st)
 		case u := <-a.updates:
 			a.onUpdateResult(u)
+		case p := <-a.progress:
+			a.onProgress(p)
 		case res := <-a.results:
 			a.handleResult(res)
 		}
@@ -712,6 +718,8 @@ func (a *app) abortTranslation() {
 	a.pendingResultDeadline = time.Time{}
 	a.pendingHistory = nil
 	a.translating = false
+	a.chunkIndex = 0
+	a.chunkTotal = 0
 	if a.pendingDuringLoad != nil {
 		*a.pendingDuringLoad = -1
 	}
@@ -723,6 +731,26 @@ func (a *app) abortTranslation() {
 	}
 }
 
+func (a *app) onProgress(p translationProgress) {
+	if p.generation != a.generation || !a.translating {
+		return
+	}
+	a.chunkIndex = p.chunkIndex
+	a.chunkTotal = p.totalChunks
+	a.updateTranslationStatus()
+}
+
+func (a *app) updateTranslationStatus() {
+	if !a.translating {
+		return
+	}
+	if a.chunkTotal > 1 {
+		a.tray.SetStatus(fmt.Sprintf("Clipboard Translator - translating chunk %d of %d... (%ds)", a.chunkIndex, a.chunkTotal, a.lastTranslSec))
+	} else {
+		a.tray.SetStatus(fmt.Sprintf("Clipboard Translator - translating... (%ds)", a.lastTranslSec))
+	}
+}
+
 // tickTranslationStatus keeps the tooltip's elapsed seconds current.
 func (a *app) tickTranslationStatus() {
 	if !a.translating {
@@ -730,7 +758,7 @@ func (a *app) tickTranslationStatus() {
 	}
 	if sec := int(a.timeNow().Sub(a.translateStart) / time.Second); sec != a.lastTranslSec {
 		a.lastTranslSec = sec
-		a.tray.SetStatus(fmt.Sprintf("Clipboard Translator - translating... (%ds)", sec))
+		a.updateTranslationStatus()
 	}
 }
 
@@ -855,6 +883,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 	a.cancelCurrent = cancel
 	a.cancelTransientStatus()
 	a.translating, a.translateStart, a.lastTranslSec = true, a.timeNow(), 0
+	a.chunkIndex, a.chunkTotal = 1, 0
 	g := a.generation
 	key := a.sup.APIKey() // read here: the supervisor belongs to this thread
 	from := direction.Source
@@ -862,15 +891,16 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		from = "auto"
 	}
 	log.Printf("translating %s -> %s", from, direction.Target)
-	a.tray.SetStatus("Clipboard Translator - translating... (0s)")
+	a.updateTranslationStatus()
 	outputMode := profile.OutputMode()
 	maxTokens := a.conf.MaxTokens
+	budget := chunkBudget(a.conf.MaxChars) // configuration belongs to the UI thread
 	promptText := source
 	if profile.CleanupNewlinesMode() == config.CleanupNewlinesAuto {
 		promptText = textstruct.CleanSpuriousNewlines(source, direction.Source)
 	}
 	go func() {
-		translated, err := llamaserver.Translate(ctx, a.endpoint, key, promptText, direction, maxTokens)
+		translated, err := a.translatePrompt(ctx, g, key, promptText, direction, maxTokens, budget)
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
 			direction: direction, window: win, fromSelection: fromSelection, output: outputMode,
@@ -887,12 +917,21 @@ func (a *app) handleResult(res result) {
 		return
 	}
 	a.translating = false
+	a.chunkIndex = 0
+	a.chunkTotal = 0
 	a.resetIdleTimer()
 	if res.err != nil {
 		if !errors.Is(res.err, context.Canceled) {
 			log.Printf("translation failed: %v", res.err)
 			msg := "See translator.log for details."
-			if errors.Is(res.err, llamaserver.ErrTruncated) {
+			var ce *chunkError
+			if errors.As(res.err, &ce) {
+				if errors.Is(ce.err, llamaserver.ErrTruncated) {
+					msg = fmt.Sprintf("Translation failed at chunk %d of %d: the translation was cut off at the token limit. Select less text, or raise max_tokens / context_tokens in config.json.", ce.chunkIndex, ce.totalChunks)
+				} else {
+					msg = fmt.Sprintf("Translation failed at chunk %d of %d. See translator.log for details.", ce.chunkIndex, ce.totalChunks)
+				}
+			} else if errors.Is(res.err, llamaserver.ErrTruncated) {
 				msg = "The translation was cut off at the token limit, so no translation was put on the clipboard. Select less text, or raise max_tokens / context_tokens in config.json."
 			}
 			a.tray.Notify("Translation failed", msg, true)

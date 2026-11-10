@@ -20,6 +20,93 @@ var (
 	}
 )
 
+// SplitParagraphs splits text at blank line boundaries (\r?\n\s*\r?\n) and trims
+// empty outer whitespace.
+func SplitParagraphs(text string) []string {
+	if text == "" {
+		return nil
+	}
+	rawParas := reParaSplit.Split(text, -1)
+	var paras []string
+	for _, p := range rawParas {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			paras = append(paras, trimmed)
+		}
+	}
+	if len(paras) == 0 && strings.TrimSpace(text) != "" {
+		return []string{strings.TrimSpace(text)}
+	}
+	return paras
+}
+
+// JoinSentences joins sentence fragments into a paragraph, inserting a space
+// between non-CJK adjacent characters and joining CJK characters directly.
+func JoinSentences(sentences []string) string {
+	var b strings.Builder
+	for _, s := range sentences {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			prevRunes := []rune(b.String())
+			nextRunes := []rune(s)
+			if len(prevRunes) > 0 && len(nextRunes) > 0 {
+				last := prevRunes[len(prevRunes)-1]
+				first := nextRunes[0]
+				if !isCJK(last) && !isCJK(first) && !unicode.IsSpace(last) {
+					b.WriteByte(' ')
+				}
+			}
+		}
+		b.WriteString(s)
+	}
+	return b.String()
+}
+
+// FormatBilingual formats source and translated text. If both texts contain
+// multiple matching paragraphs, they are interleaved paragraph-by-paragraph.
+// Otherwise, it falls back to joining source and translated with a newline.
+func FormatBilingual(source, translated string) string {
+	// Retain byte ranges, including indentation, trailing spaces and original
+	// separators. Only the model-facing paragraph splitter should trim text.
+	var sourceParas [][2]int
+	start := 0
+	for _, boundary := range reParaSplit.FindAllStringIndex(source, -1) {
+		if strings.TrimSpace(source[start:boundary[0]]) != "" {
+			sourceParas = append(sourceParas, [2]int{start, boundary[0]})
+		}
+		start = boundary[1]
+	}
+	if strings.TrimSpace(source[start:]) != "" {
+		sourceParas = append(sourceParas, [2]int{start, len(source)})
+	}
+	transParas := SplitParagraphs(translated)
+	if len(sourceParas) > 1 && len(sourceParas) == len(transParas) {
+		var out strings.Builder
+		cursor := 0
+		for i, span := range sourceParas {
+			out.WriteString(source[cursor:span[1]])
+			out.WriteByte('\n')
+			out.WriteString(transParas[i])
+			cursor = span[1]
+		}
+		out.WriteString(source[cursor:])
+		return out.String()
+	}
+	return strings.TrimRight(source, "\r\n") + "\n" + translated
+}
+
+// ChunkLines keeps meaningful newlines when a paragraph spans multiple lines.
+// Sentence/rune fallback is still used for prose without line boundaries.
+func ChunkLines(text string, budget int) []string {
+	if budget <= 0 || len([]rune(text)) <= budget {
+		return []string{text}
+	}
+	return chunkCodeBlock(text, budget)
+}
+
 // ChunkText splits long text exceeding maxChunkChars into coherent semantic segments
 // (paragraphs first, sentences second, runes fallback), respecting model context limits.
 func ChunkText(text string, maxChunkChars int) []string {
@@ -31,14 +118,7 @@ func ChunkText(text string, maxChunkChars int) []string {
 	}
 
 	// Step 1: Split at paragraph boundaries (blank lines)
-	rawParas := reParaSplit.Split(text, -1)
-	var paras []string
-	for _, p := range rawParas {
-		trimmed := strings.TrimSpace(p)
-		if trimmed != "" {
-			paras = append(paras, trimmed)
-		}
-	}
+	paras := SplitParagraphs(text)
 	if len(paras) == 0 {
 		return []string{text}
 	}

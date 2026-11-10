@@ -339,3 +339,97 @@ func TestChunkText_GiantSentenceRuneBudget(t *testing.T) {
 		t.Errorf("chunks mismatch:\nGOT:  %v\nWANT: %v", chunks, expected)
 	}
 }
+
+func TestSplitParagraphs(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"empty", "", nil},
+		{"whitespace", "   \r\n\t  ", nil},
+		{"single paragraph", "Hello world", []string{"Hello world"}},
+		{"two paragraphs LF", "Para 1\n\nPara 2", []string{"Para 1", "Para 2"}},
+		{"two paragraphs CRLF", "Para 1\r\n\r\nPara 2", []string{"Para 1", "Para 2"}},
+		{"three paragraphs with extra spaces", "P1\n  \n\nP2\n\n\n  P3  ", []string{"P1", "P2", "P3"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SplitParagraphs(tc.input)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("SplitParagraphs(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestJoinSentences(t *testing.T) {
+	cases := []struct {
+		name      string
+		sentences []string
+		want      string
+	}{
+		{"empty", nil, ""},
+		{"single", []string{"Hello world."}, "Hello world."},
+		{"english sentences", []string{"Sentence one.", "Sentence two."}, "Sentence one. Sentence two."},
+		{"japanese sentences", []string{"文1です。", "文2です。"}, "文1です。文2です。"},
+		{"mixed sentences", []string{"Sentence one.", "文2です。"}, "Sentence one.文2です。"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := JoinSentences(tc.sentences)
+			if got != tc.want {
+				t.Errorf("JoinSentences(%v) = %q, want %q", tc.sentences, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFormatBilingual(t *testing.T) {
+	cases := []struct {
+		name               string
+		source, translated string
+		want               string
+	}{
+		{
+			name:       "single paragraph plain",
+			source:     "Hello world",
+			translated: "こんにちは世界",
+			want:       "Hello world\nこんにちは世界",
+		},
+		{
+			name:       "multiple matching paragraphs interleaved",
+			source:     "First paragraph.\n\nSecond paragraph.",
+			translated: "最初の段落。\n\n2番目の段落。",
+			want:       "First paragraph.\n最初の段落。\n\nSecond paragraph.\n2番目の段落。",
+		},
+		{
+			name:       "three matching paragraphs with CRLF",
+			source:     "P1\r\n\r\nP2\r\n\r\nP3",
+			translated: "T1\n\nT2\n\nT3",
+			want:       "P1\nT1\r\n\r\nP2\nT2\r\n\r\nP3\nT3",
+		},
+		{
+			name:       "mismatched paragraph count falls back to plain join",
+			source:     "P1\n\nP2\n\nP3",
+			translated: "T1\n\nT2",
+			want:       "P1\n\nP2\n\nP3\nT1\n\nT2",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := FormatBilingual(tc.source, tc.translated)
+			if got != tc.want {
+				t.Errorf("FormatBilingual(%q, %q) = %q, want %q", tc.source, tc.translated, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFormatBilingualPreservesOriginalWhitespace(t *testing.T) {
+	source := "\r\n\r\n  First paragraph.  \r\n \r\n    Second paragraph.\t"
+	want := "\r\n\r\n  First paragraph.  \n訳一\r\n \r\n    Second paragraph.\t\n訳二"
+	if got := FormatBilingual(source, "訳一\n\n訳二"); got != want {
+		t.Fatalf("raw source whitespace changed: got %q want %q", got, want)
+	}
+}
