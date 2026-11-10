@@ -19,6 +19,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
+	"github.com/ypsilonmeister/clipboard-translator/internal/textstruct"
 	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
@@ -818,8 +819,12 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 	a.tray.SetStatus("Clipboard Translator - translating... (0s)")
 	outputMode := profile.OutputMode()
 	maxTokens := a.conf.MaxTokens
+	promptText := source
+	if profile.CleanupNewlinesMode() == config.CleanupNewlinesAuto {
+		promptText = textstruct.CleanSpuriousNewlines(source, direction.Source)
+	}
 	go func() {
-		translated, err := llamaserver.Translate(ctx, a.endpoint, key, source, direction, maxTokens)
+		translated, err := llamaserver.Translate(ctx, a.endpoint, key, promptText, direction, maxTokens)
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
 			direction: direction, window: win, fromSelection: fromSelection, output: outputMode,

@@ -292,6 +292,81 @@ func TestEachProfileTranslatesWithItsOwnOutputMode(t *testing.T) {
 	}
 }
 
+func TestEachProfileTranslatesWithItsOwnCleanupNewlinesMode(t *testing.T) {
+	var prompts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		if msgs, ok := m["messages"].([]any); ok && len(msgs) > 0 {
+			if msgMap, ok := msgs[0].(map[string]any); ok {
+				if c, ok := msgMap["content"].(string); ok {
+					prompts = append(prompts, c)
+				}
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": "翻訳結果"}}}})
+	}))
+	defer srv.Close()
+
+	a := profilesApp(t,
+		config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, CleanupNewlines: config.CleanupNewlinesOff},
+		config.Profile{Hotkey: "Ctrl+Alt+C", Languages: []string{"ja", "en"}, CleanupNewlines: config.CleanupNewlinesAuto, Output: config.OutputBilingual})
+	a.endpoint = srv.URL
+	a.foreground = func() uintptr { return 1 }
+	a.paste = func(uintptr) error { return nil }
+
+	input := "The proposed architecture introduces a novel transformer-\nbased attention mechanism that significantly improves trans-\nlation quality on resource-constrained edge devices.\nFurthermore, the computational latency is reduced by 40%\nwithout observable loss in accuracy."
+
+	// Profile 0: cleanup_newlines: "off"
+	a.cb = &testClipboard{text: input}
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return input, true, nil }
+	a.startTranslation(0)
+	select {
+	case res := <-a.results:
+		a.handleResult(res)
+	case <-time.After(5 * time.Second):
+		t.Fatal("profile 0: no result")
+	}
+
+	// Profile 1: cleanup_newlines: "auto" + OutputBilingual
+	a.cb = &testClipboard{text: input}
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return input, true, nil }
+	a.startTranslation(1)
+	select {
+	case res := <-a.results:
+		a.handleResult(res)
+	case <-time.After(5 * time.Second):
+		t.Fatal("profile 1: no result")
+	}
+
+	if len(prompts) != 2 {
+		t.Fatalf("expected 2 prompts, got %d: %v", len(prompts), prompts)
+	}
+
+	// Profile 0 must receive the raw input with newlines intact
+	if prompts[0] != input {
+		t.Errorf("profile 0 prompt mismatch:\nGOT: %q\nWANT raw: %q", prompts[0], input)
+	}
+
+	// Profile 1 must receive the cleaned prompt
+	wantCleaned := "The proposed architecture introduces a novel transformer-based attention mechanism that significantly improves trans-lation quality on resource-constrained edge devices. Furthermore, the computational latency is reduced by 40% without observable loss in accuracy."
+	if prompts[1] != wantCleaned {
+		t.Errorf("profile 1 prompt mismatch:\nGOT: %q\nWANT cleaned: %q", prompts[1], wantCleaned)
+	}
+
+	// Profile 1 in bilingual mode must have the ORIGINAL raw input preserved, not the cleaned text
+	wantBilingual := input + "\n翻訳結果"
+	if a.cb.(*testClipboard).text != wantBilingual {
+		t.Errorf("profile 1 bilingual clipboard mismatch:\nGOT:  %q\nWANT: %q", a.cb.(*testClipboard).text, wantBilingual)
+	}
+
+	// Verify in-memory history preserved the original raw text
+	items := a.hist.Items()
+	if len(items) == 0 || items[0].Source != input {
+		t.Errorf("history source corrupted: got %q, want %q", items[0].Source, input)
+	}
+}
+
 // A clipboard profile uses the clipboard text as it is: no Ctrl+C is sent (the
 // capture seam is never called) and the result is never auto-pasted. A
 // selection profile keeps capturing.

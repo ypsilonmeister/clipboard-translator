@@ -61,15 +61,23 @@ const (
 	InputClipboard = "clipboard"
 )
 
+// Whether spurious line breaks (e.g. from PDFs or terminals) should be cleaned up
+// before translation. Off by default.
+const (
+	CleanupNewlinesOff  = "off"
+	CleanupNewlinesAuto = "auto"
+)
+
 // Profile is one hotkey and what it translates: either a Languages pair (both
 // directions) or a Target (always into that language, the model detects the source),
 // an Output mode ("replace" or "bilingual") and an Input ("selection" or "clipboard").
 type Profile struct {
-	Hotkey    string   `json:"hotkey"`
-	Languages []string `json:"languages,omitempty"`
-	Target    string   `json:"target,omitempty"`
-	Output    string   `json:"output,omitempty"`
-	Input     string   `json:"input,omitempty"`
+	Hotkey          string   `json:"hotkey"`
+	Languages       []string `json:"languages,omitempty"`
+	Target          string   `json:"target,omitempty"`
+	Output          string   `json:"output,omitempty"`
+	Input           string   `json:"input,omitempty"`
+	CleanupNewlines string   `json:"cleanup_newlines,omitempty"`
 }
 
 func (p Profile) InputMode() string {
@@ -86,11 +94,18 @@ func (p Profile) OutputMode() string {
 	return OutputReplace
 }
 
+func (p Profile) CleanupNewlinesMode() string {
+	if p.CleanupNewlines == CleanupNewlinesAuto {
+		return CleanupNewlinesAuto
+	}
+	return CleanupNewlinesOff
+}
+
 // normalizeProfiles makes Profiles non-empty and mirrors profile 0 into
 // Hotkey/Languages. It does not validate.
 func (c *Config) NormalizeProfiles() {
 	if len(c.Profiles) == 0 {
-		c.Profiles = []Profile{{Hotkey: c.Hotkey, Languages: append([]string(nil), c.Languages...), Output: OutputReplace, Input: InputSelection}}
+		c.Profiles = []Profile{{Hotkey: c.Hotkey, Languages: append([]string(nil), c.Languages...), Output: OutputReplace, Input: InputSelection, CleanupNewlines: CleanupNewlinesOff}}
 		return
 	}
 	for i := range c.Profiles {
@@ -99,6 +114,9 @@ func (c *Config) NormalizeProfiles() {
 		}
 		if c.Profiles[i].Input == "" {
 			c.Profiles[i].Input = InputSelection
+		}
+		if c.Profiles[i].CleanupNewlines == "" {
+			c.Profiles[i].CleanupNewlines = CleanupNewlinesOff
 		}
 	}
 	c.Hotkey = c.Profiles[0].Hotkey
@@ -176,6 +194,14 @@ func (c *Config) ResolveProfiles(explicit bool) error {
 			p.Input = InputClipboard
 		default:
 			return fmt.Errorf("%s: input %q is not supported; valid values: %q, %q", where, p.Input, InputSelection, InputClipboard)
+		}
+		switch strings.ToLower(strings.TrimSpace(p.CleanupNewlines)) {
+		case "", CleanupNewlinesOff:
+			p.CleanupNewlines = CleanupNewlinesOff
+		case CleanupNewlinesAuto:
+			p.CleanupNewlines = CleanupNewlinesAuto
+		default:
+			return fmt.Errorf("%s: cleanup_newlines %q is not supported; valid values: %q, %q", where, p.CleanupNewlines, CleanupNewlinesOff, CleanupNewlinesAuto)
 		}
 	}
 	c.ExplicitProfiles = true

@@ -47,3 +47,32 @@ func TestSettingsRejectsDuplicateHotkeys(t *testing.T) {
 		}
 	}
 }
+
+func TestSettingsProfileCleanupNewlinesRoundTrip(t *testing.T) {
+	cases := []struct {
+		mode string
+		want string
+	}{
+		{"", config.CleanupNewlinesOff},
+		{config.CleanupNewlinesOff, config.CleanupNewlinesOff},
+		{config.CleanupNewlinesAuto, config.CleanupNewlinesAuto},
+	}
+	for _, tc := range cases {
+		p := config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, CleanupNewlines: tc.mode}
+		f, err := settings.FormFromProfile(p, "windows")
+		if err != nil {
+			t.Fatalf("FormFromProfile(%q): %v", tc.mode, err)
+		}
+		if f.CleanupNewlines != tc.want {
+			t.Errorf("FormFromProfile(%q) = %q, want %q", tc.mode, f.CleanupNewlines, tc.want)
+		}
+		sf := settings.Form{MaxChars: 4000, Profiles: []settings.ProfileForm{f}}
+		cfg, err := sf.ToConfig(config.Default())
+		if err != nil {
+			t.Fatalf("ToConfig(%q): %v", tc.mode, err)
+		}
+		if cfg.Profiles[0].CleanupNewlines != tc.want || cfg.Profiles[0].CleanupNewlinesMode() != tc.want {
+			t.Errorf("ToConfig(%q) = %q, want %q", tc.mode, cfg.Profiles[0].CleanupNewlines, tc.want)
+		}
+	}
+}
