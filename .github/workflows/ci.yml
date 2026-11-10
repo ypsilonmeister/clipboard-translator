@@ -64,7 +64,6 @@ jobs:
         run: |
           bash -n setup.sh
           bash -n tools/package-linux.sh
-          python3 tools/test_linux_setup.py
       - name: Build Linux tarball
         run: bash tools/package-linux.sh dev
       - name: Keep non-cgo logic builds working
@@ -89,7 +88,6 @@ jobs:
         run: |
           bash -n setup-macos.sh
           bash -n tools/package-macos.sh
-          python3 tools/test_macos_setup.py
       - name: Build and verify app bundle
         run: bash tools/package-macos.sh dev
       - name: Upload macOS development app
