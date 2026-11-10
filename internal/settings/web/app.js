@@ -765,6 +765,8 @@
     setStatus('Saving...');
     showFieldError('');
     showBanner([]);
+    const submittedDirty = Object.assign({}, dirtyFields);
+    const submittedModel = JSON.parse(JSON.stringify(model));
     const r = await api('/api/save', toPayload(model));
     saving = false;
     renderBusy();
@@ -783,18 +785,45 @@
       return;
     }
     state = Object.assign({}, r.data.state);
-    baseRevision = state.revision || 0;
-    model = toModel(state);
-    clearDirty();
+    const freshModel = toModel(state);
+    const hasNewEdits = (key) => {
+      if (!submittedDirty[key]) return dirtyFields[key];
+      return JSON.stringify(model[key]) !== JSON.stringify(submittedModel[key]);
+    };
+    const keepProfiles = hasNewEdits('profiles');
+    if (!keepProfiles) {
+      model.profiles = freshModel.profiles;
+      dirtyFields.profiles = false;
+      renderHotkeys();
+    }
+    if (!hasNewEdits('auto_paste')) {
+      model.auto_paste = freshModel.auto_paste;
+      dirtyFields.auto_paste = false;
+      $('auto-paste').checked = model.auto_paste;
+    }
+    if (!hasNewEdits('notify_on_complete')) {
+      model.notify_on_complete = freshModel.notify_on_complete;
+      dirtyFields.notify_on_complete = false;
+      $('notify-on-complete').checked = model.notify_on_complete;
+    }
+    if (!hasNewEdits('max_chars')) {
+      model.max_chars = freshModel.max_chars;
+      dirtyFields.max_chars = false;
+      $('max-chars').value = String(model.max_chars);
+    }
+    if (!hasNewEdits('idle_unload_minutes')) {
+      model.idle_unload_minutes = freshModel.idle_unload_minutes;
+      dirtyFields.idle_unload_minutes = false;
+      $('idle-unload-minutes').value = String(model.idle_unload_minutes);
+    }
+    if (!isDirty()) {
+      baseRevision = state.revision || 0;
+    }
+    dirty = isDirty();
     renderAll();
-    renderHotkeys();
-    $('auto-paste').checked = model.auto_paste;
-    $('notify-on-complete').checked = model.notify_on_complete;
-    $('max-chars').value = String(model.max_chars);
-    $('idle-unload-minutes').value = String(model.idle_unload_minutes);
     const warnings = r.data.warnings || [];
     showBanner(warnings.length ? ['Saved, but note:'].concat(warnings) : []);
-    setStatus('Saved', 'ok');
+    setStatus(dirty ? 'Unsaved changes' : 'Saved', dirty ? '' : 'ok');
   }
 
   function nextFreeKey() {

@@ -253,6 +253,10 @@ func TestSettingsPageKeepsStaleSaveGuards(t *testing.T) {
 	if !strings.Contains(js, "dirtyFields.profiles || (state && state.no_active_hotkey)") {
 		t.Error("toPayload must send profiles when state.no_active_hotkey is set")
 	}
+	// Save response must preserve edits made while the save was in flight (Issue #136).
+	if !strings.Contains(js, "hasNewEdits") {
+		t.Error("save must check for new edits made while save was in flight")
+	}
 	if nodePath, err := exec.LookPath("node"); err == nil {
 		cmd := exec.Command(nodePath, "-e", `
 const fs = require('fs');
@@ -264,6 +268,83 @@ if (fn(false, false) !== false) throw new Error('isSaveNeeded(false, false) must
 if (fn(true, false) !== true) throw new Error('isSaveNeeded(true, false) must be true');
 if (fn(false, true) !== true) throw new Error('isSaveNeeded(false, true) must be true');
 if (fn(true, true) !== true) throw new Error('isSaveNeeded(true, true) must be true');
+
+// Verify that edits made during save are preserved (Issue #136).
+const vm = require('vm');
+const elements = {};
+function getEl(id) {
+  if (!elements[id]) {
+    elements[id] = { id, disabled: false, checked: false, value: '4000', addEventListener: (event, fn) => { elements[id]['on' + event] = fn; }, append: () => {}, setAttribute: () => {}, classList: { add: () => {}, remove: () => {} }, querySelector: () => null, replaceChildren: () => {} };
+  }
+  return elements[id];
+}
+let fetchResolver;
+const sandbox = {
+  window: { addEventListener: () => {} },
+  document: {
+    addEventListener: () => {},
+    getElementById: getEl,
+    querySelectorAll: () => [],
+    createElement: (tag) => ({ tag, append: () => {}, setAttribute: () => {}, addEventListener: () => {}, classList: { add: () => {}, remove: () => {} } }),
+    createTextNode: (t) => ({ text: t }),
+    body: { replaceChildren: () => {} },
+  },
+  location: { search: '' },
+  URLSearchParams: URLSearchParams,
+  fetch: (path) => {
+    if (path === '/api/state') {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ state: { profiles: [{ ctrl: true, alt: true, key: 'E', output: 'replace', input: 'selection', languages: ['ja', 'en'] }], models: [], engines: [], language_options: [{ code: 'ja', name: 'Japanese' }, { code: 'en', name: 'English' }], revision: 1, auto_paste: false } }) });
+    }
+    if (path === '/api/save') {
+      return new Promise((resolve) => { fetchResolver = resolve; });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+  },
+  setTimeout: () => 1,
+  clearTimeout: () => {},
+  setInterval: () => 1,
+  clearInterval: () => {},
+  Date: Date,
+  console: console,
+};
+vm.createContext(sandbox);
+vm.runInContext(js, sandbox);
+
+setTimeout(async () => {
+  const maxCharsEl = getEl('max-chars');
+  maxCharsEl.value = '5000';
+  maxCharsEl.oninput();
+
+  const saveBtn = getEl('save');
+  saveBtn.onclick();
+
+  const autoPasteEl = getEl('auto-paste');
+  autoPasteEl.checked = true;
+  autoPasteEl.onchange({ target: { checked: true } });
+
+  fetchResolver({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({
+      state: {
+        profiles: [{ ctrl: true, alt: true, key: 'E', output: 'replace', input: 'selection', languages: ['ja', 'en'] }],
+        models: [],
+        engines: [],
+        language_options: [{ code: 'ja', name: 'Japanese' }, { code: 'en', name: 'English' }],
+        revision: 2,
+        auto_paste: false,
+        max_chars: 5000,
+      }
+    })
+  });
+
+  await new Promise(r => setTimeout(r, 50));
+
+  const statusEl = getEl('status');
+  if (statusEl.textContent !== 'Unsaved changes' || autoPasteEl.checked !== true) {
+    throw new Error('Mid-save edit was discarded or status was not Unsaved changes: ' + statusEl.textContent);
+  }
+}, 50);
 `)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Errorf("node test of isSaveNeeded failed: %v: %s", err, string(out))
@@ -1245,5 +1326,31 @@ func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 	}
 	if !strings.Contains(r.Error, "settings were changed") {
 		t.Fatalf("unexpected error message: %q", r.Error)
+	}
+}
+
+// TestTranslationMaxTokensConfigRace tests that starting a translation concurrently
+// with saving changed hotkey profiles does not race on a.conf.MaxTokens (Issue #135).
+func TestTranslationMaxTokensConfigRace(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+	defer a.sup.Stop()
+
+	keys := []string{"E", "K"}
+	for i := 0; i < 20; i++ {
+		a.translateCaptured(a.conf.Profiles[0], 0, "hello", false, nil)
+		p, err := settings.FormFromProfile(a.conf.Profiles[0], "windows")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Key = keys[i%len(keys)]
+		a.applySettings(settings.Form{Changed: []string{"profiles"}, Profiles: []settings.ProfileForm{p}})
+		a.abortTranslation()
+		select {
+		case <-a.results:
+		default:
+		}
 	}
 }

@@ -820,8 +820,9 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 	log.Printf("translating %s -> %s", from, direction.Target)
 	a.tray.SetStatus("Clipboard Translator - translating... (0s)")
 	outputMode := profile.OutputMode()
+	maxTokens := a.conf.MaxTokens
 	go func() {
-		translated, err := llamaserver.Translate(ctx, a.endpoint, key, source, direction, a.conf.MaxTokens)
+		translated, err := llamaserver.Translate(ctx, a.endpoint, key, source, direction, maxTokens)
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
 			direction: direction, window: win, fromSelection: fromSelection, output: outputMode,
