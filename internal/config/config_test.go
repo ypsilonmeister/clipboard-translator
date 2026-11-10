@@ -369,3 +369,43 @@ func TestUpdateConfigFilePreservesUnknownKeysWithProfileOutput(t *testing.T) {
 		t.Fatalf("loaded config: %+v, %v", loaded, err)
 	}
 }
+
+func TestProfileCleanupNewlinesConfig(t *testing.T) {
+	// Legacy config without profiles defaults to off.
+	c, err := Load(writeConfig(t, `{"hotkey": "Ctrl+Alt+E"}`))
+	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].CleanupNewlines != CleanupNewlinesOff {
+		t.Fatalf("legacy config cleanup_newlines: %+v, %v", c.Profiles, err)
+	}
+
+	// Profile with omitted cleanup_newlines defaults to off.
+	c, err = Load(writeConfig(t, `{"profiles": [{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}]}`))
+	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].CleanupNewlines != CleanupNewlinesOff {
+		t.Fatalf("omitted cleanup_newlines: %+v, %v", c.Profiles, err)
+	}
+
+	// Explicit off and auto modes with case and whitespace trimming.
+	c, err = Load(writeConfig(t, `{"profiles": [
+		{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"], "cleanup_newlines": " Off "},
+		{"hotkey": "Ctrl+Alt+K", "target": "ko", "cleanup_newlines": "AUTO"}
+	]}`))
+	if err != nil || len(c.Profiles) != 2 {
+		t.Fatalf("explicit cleanup_newlines modes: %+v, %v", c.Profiles, err)
+	}
+	if c.Profiles[0].CleanupNewlines != CleanupNewlinesOff || c.Profiles[0].CleanupNewlinesMode() != CleanupNewlinesOff {
+		t.Errorf("profile 0 cleanup_newlines = %q, want %q", c.Profiles[0].CleanupNewlines, CleanupNewlinesOff)
+	}
+	if c.Profiles[1].CleanupNewlines != CleanupNewlinesAuto || c.Profiles[1].CleanupNewlinesMode() != CleanupNewlinesAuto {
+		t.Errorf("profile 1 cleanup_newlines = %q, want %q", c.Profiles[1].CleanupNewlines, CleanupNewlinesAuto)
+	}
+
+	// Unknown cleanup_newlines value rejected with helpful error listing valid values.
+	err = loadConfig2(t, `{"profiles": [{"hotkey": "Ctrl+Alt+E", "target": "ko", "cleanup_newlines": "sometimes"}]}`)
+	if err == nil {
+		t.Fatal("unknown cleanup_newlines mode must be rejected")
+	}
+	for _, want := range []string{"profiles[0]", "sometimes", "off", "auto"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should contain %q", err.Error(), want)
+		}
+	}
+}

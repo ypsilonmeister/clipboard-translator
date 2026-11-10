@@ -192,7 +192,7 @@ func sameProfiles(a, b []config.Profile) bool {
 		return false
 	}
 	for i := range a {
-		if a[i].Hotkey != b[i].Hotkey || a[i].Target != b[i].Target || a[i].OutputMode() != b[i].OutputMode() || a[i].InputMode() != b[i].InputMode() || len(a[i].Languages) != len(b[i].Languages) {
+		if a[i].Hotkey != b[i].Hotkey || a[i].Target != b[i].Target || a[i].OutputMode() != b[i].OutputMode() || a[i].InputMode() != b[i].InputMode() || a[i].CleanupNewlinesMode() != b[i].CleanupNewlinesMode() || len(a[i].Languages) != len(b[i].Languages) {
 			return false
 		}
 		for j := range a[i].Languages {
