@@ -25,7 +25,19 @@ The core design principle governing all structural judgments is **extreme conser
 
 ## 2. Structural Signals & Detection Rules
 
-The detector is a pure, deterministic function over UTF-8 text: `AnalyzeText(raw string) AnalyzedDocument`. It operates without external dependencies or ML models.
+The package `internal/textstruct` exposes two deterministic, pure functions operating over UTF-8 text without external dependencies or ML models:
+
+```go
+// CleanSpuriousNewlines reflows soft line breaks caused by fixed-width column wraps (e.g. PDFs, terminal output)
+// while strictly preserving all structural boundaries (blank lines, lists, code, quotes, signatures).
+func CleanSpuriousNewlines(text string, lang string) string
+
+// ChunkText splits long text exceeding maxChunkChars into coherent semantic segments
+// (paragraphs first, sentences second), respecting model context limits.
+func ChunkText(text string, maxChunkChars int) []string
+```
+
+Both functions are built upon a shared internal line analysis pipeline (`analyzeLines`), which extracts per-line visual display width, indentation, boundary tokens, and structural guards.
 
 ### 2.1 Preserved Structures (Hard Guards — Never Flatten)
 If a line matches any of the following patterns, its bounding breaks are **always preserved**:
@@ -43,23 +55,33 @@ If a line matches any of the following patterns, its bounding breaks are **alway
    - Trailing short lines (< 20 runes) preceding blank lines or EOF, which commonly indicate signatures, titles, or sign-offs (e.g. "Best regards,\nAlice").
 
 ### 2.2 Signals for Spurious Wrap Detection (PDF Hard-Breaks)
-A soft line break between line $L_i$ and line $L_{i+1}$ is considered *spurious* only when multiple corroborating signals agree and neither line is a preserved structure.
+In multi-line column text (such as two-column academic papers or reports), soft line breaks occur purely because a line reached the visual margin. Crucially, **sentences frequently end mid-paragraph within a column wrap without any blank line**. Therefore, sentence-ending punctuation alone cannot serve as a boundary veto.
 
-#### A. Geometric Signal (Column Uniformity)
-- In fixed-width wraps (PDFs, terminal output), successive lines share a nearly identical visual width.
-- Let $W(L)$ be the display width (East Asian Width aware, e.g. full-width = 2, half-width = 1).
-- If lines $L_i, L_{i-1}, L_{i-2}$ cluster around a consistent column margin (e.g. standard deviation of width < 5 runes, or $|W(L_i) - \text{median}| \le 3$), line $L_i$ was wrapped by page geometry rather than semantic intent.
-- Exception: The terminal line of a wrapped paragraph is typically significantly shorter than the column margin, which serves as a natural paragraph end signal.
+Detection applies the following explicit hierarchy:
 
-#### B. Punctuation & Boundary Signals
-- **Latin / Western Scripts:**
-  - $L_i$ does **not** end in sentence-ending punctuation (`.`, `!`, `?`, `:`, `;`).
-  - $L_{i+1}$ begins with a lowercase letter (`[a-z]`), continuation punctuation, or lowercase accent.
-  - Hyphenated wrap: $L_i$ ends with an alphanumeric followed by `-` (ASCII hyphen) and $L_{i+1}$ begins with `[a-z]`. The break and the hyphen should be joined as a single word (e.g., `trans-` + `lation` $\to$ `translation`), while preserving true compound words where dictionary or casing dictates.
-- **Japanese / CJK Scripts:**
-  - $L_i$ does **not** end in Japanese sentence-ending punctuation (`。`, `！`, `？`, `…`, `―`) or closing brackets (`」`, `』`, `）`, `】`, `”`).
-  - $L_i$ ends with, or $L_{i+1}$ begins with, a particle, connector, or mid-sentence token (hiragana particle like は, が, を, に, で, と, も; kanji character; opening bracket).
-  - Joining does **not** insert an ASCII space (unlike Western scripts where `\n` is replaced by a single space ` `).
+#### A. Primary Paragraph Boundary Signals (Hard Separators — Never Join)
+1. **Blank lines:** Explicit blank lines `\n\s*\n`.
+2. **Short terminal line with sentence-ending punctuation:**
+   - If line $L_i$ ends in sentence-ending punctuation (`.`, `!`, `?`, `。`, `！`, `？`, `…`) AND its visual width $W(L_i)$ is distinctly shorter than the column margin (e.g. $W(L_i) < 0.75 \times \text{median}(W)$ or $> 15$ runes shorter than the established column width), $L_i$ is the final line of a paragraph. The line break $L_i \to L_{i+1}$ is preserved.
+3. **Indentation change or structural guard on $L_{i+1}$:**
+   - Line $L_{i+1}$ is indented by 2+ spaces (paragraph indent), or begins with a list marker, quote, code block, or signature delimiter.
+4. **Script transition boundary:**
+   - A line in one script ending in sentence-ending punctuation (e.g. Latin `.`) followed by a line in a different script family (e.g. Japanese Kanji/Kana) represents a structural section change and is preserved.
+
+#### B. Geometric Signal (Uniform Column Wrapping — Primary Join Driver)
+- Let $W(L)$ be the visual display width (East Asian Width aware: full-width = 2, half-width = 1).
+- If lines in the block cluster around a consistent column margin (e.g. standard deviation of width < 5 runes, or $|W(L_i) - \text{median}| \le 3$), line $L_i$ was wrapped by physical column geometry rather than semantic intent.
+- **Sentence-crossing continuation:** Even if $L_i$ ends in sentence-ending punctuation (`.` or `。`), if $L_i$ is a full-width line (not a short terminal line) and $L_{i+1}$ continues in the same column block without blank line or indentation, it is treated as a geometric wrap across sentences within the paragraph and is **joined** (with a space for Latin scripts, without space for CJK scripts).
+
+#### C. Punctuation as Auxiliary / Directional Signals (補助シグナル)
+- When line width is indeterminate (e.g. short 2-line snippets where median column width has no statistical significance):
+  - **Mid-sentence continuation:** If $L_i$ does *not* end in sentence-ending punctuation, and $L_{i+1}$ begins with a lowercase letter (`[a-z]`) or Japanese particle/connector (は, が, を, に, で, と, も), the lines are joined.
+  - **Ambiguity resolution:** If $L_i$ ends in sentence-ending punctuation and column width cannot confirm uniform wrapping, the Asymmetry of Failure (*迷ったら残す / When in doubt, preserve*) takes precedence: keep the line break.
+
+#### D. Hyphenated Line Breaks (ASCII Hyphen Handling)
+- When line $L_i$ ends in an alphanumeric followed by an ASCII hyphen (`[a-zA-Z]-`) and line $L_{i+1}$ begins with `[a-zA-Z]`:
+  - The line break is removed and **the hyphen is always preserved** (`[a-zA-Z]-[a-zA-Z]`).
+  - *Why always preserve?* Without a full dictionary, an algorithm cannot distinguish split words (`trans-\nlation`) from legitimate compound words (`transformer-\nbased`, `resource-\nconstrained`, `multi-\nlevel`). Preserving the hyphen is safe and non-destructive: `transformer-based` remains intact, and `trans-lation` is effortlessly and accurately understood by modern translation LLMs. Conversely, stripping hyphens would catastrophically corrupt compound words into invalid tokens (`transformerbased`). (If an explicit Unicode soft hyphen `\u00ad` is present, it is an unambiguous syllable break and may be cleanly stripped).
 
 ---
 
@@ -97,9 +119,31 @@ When text length exceeds the safety budget (determined by profile `max_chars` or
    - Latin: `[.!?]\s+` followed by an uppercase letter.
    - Japanese: `[。！？]` followed by non-quote character.
 3. **Hard-limit split (Tertiary fallback):** If a single sentence exceeds the token budget (e.g. minified text or massive comma-separated listings), split at major clause delimiters (`;`, `,`, `、`), or cleanly at rune boundaries.
-4. **Context & Boundary Awareness:**
-   - Bounded concurrency: Chunks are translated sequentially (or with a concurrency of 1) to respect the single local `llama-server` process without overloading VRAM/RAM.
-   - Output reconstitution: Chunks are reassembled using their original delimiter tokens (`\n\n` for paragraphs, ` ` or empty string for intra-paragraph sentence splits).
+4. **Bounded Concurrency & Single-Process Lifetime:**
+   - Chunks are translated sequentially (concurrency of 1) over loopback HTTP to `llama-server`. This guarantees zero VRAM/RAM spike and respects the single-process supervisor model.
+
+### 3.1 Failure & Cancellation Semantics (失敗・キャンセル時の振る舞い)
+Multi-chunk translation must strictly uphold the app's fundamental contract of **Clipboard Safety** (never corrupt or overwrite clipboard contents unexpectedly):
+
+- **All-or-Nothing Guarantee:** If translation of any chunk encounters an error (network error, model crash, timeout) or is superseded/cancelled by the user (pressing the hotkey again or triggering abort):
+  1. Terminate all remaining pending chunk requests immediately.
+  2. Discard all partially accumulated chunk translations.
+  3. **Leave the system clipboard untouched:** The user's clipboard remains exactly as it was before the hotkey was pressed.
+  4. **In-Memory History:** Do not record incomplete or fragmented translations in the history tray menu. The failed request is discarded (or recorded with its original text and an error indicator).
+  5. **User Feedback:** The tray icon tooltip or balloon notification clearly indicates the failure (e.g. `Translation failed at chunk 2 of 4`).
+
+### 3.2 Bilingual Output Recombination (バイリンガル出力の結合形式)
+When `output: "bilingual"` is configured in the profile:
+- Multi-chunk texts split at paragraph boundaries are recombined **paragraph-by-paragraph** (interleaved structure):
+  ```text
+  [Original Paragraph 1]
+  [Translated Paragraph 1]
+
+  [Original Paragraph 2]
+  [Translated Paragraph 2]
+  ```
+- *Rationale:* Interleaved per-paragraph format preserves the natural 1-to-1 reading alignment across long texts. Grouping all source paragraphs followed by all translated paragraphs is rejected because it forces the user to constantly scroll back and forth to compare text.
+- If an oversized paragraph was split into sentences (Step 2), the translated sentences are reassembled back into the translated paragraph before being paired with the original source paragraph.
 
 ---
 
@@ -117,9 +161,16 @@ Following the pattern in [`docs/package-split-design.md`](package-split-design.m
 ### Q2: How should the chunk budget be determined?
 - **Options considered:**
   - *Option A:* Dynamically queried from `llama-server` context tokens via API.
-  - *Option B (Recommended):* **Derived as $\min(\text{model\_context\_tokens} / 4, \text{max\_chars})$ with a conservative safety cap of 1,200 characters (~300–400 tokens) per chunk.**
+  - *Option B (Recommended):* **Fixed default chunk target of 1,200 source characters (~300–600 tokens), clamped to `profile.max_chars` if configured lower.**
 - **Rationale:**
-  PLaMo 3 Translate handles 53 languages. Token expansion ratios vary drastically between scripts (e.g. English text to Japanese or Thai). A 1,200-character budget guarantees that prompt overhead, source tokens, and generated target tokens fit comfortably inside the default `2048` context window with zero risk of truncation (`ErrTruncated`), while keeping paragraph context coherent.
+  The relevant existing configuration knobs are:
+  - Model context size: `context_tokens` (default `4096` in `config.json`).
+  - Output generation limit: `max_tokens` (default `2048` in `config.json`).
+  - Profile character limit: `max_chars` (default `4000` in `config.json`).
+
+  Context budget constraint: $\text{prompt\_template} + \text{source\_tokens} + \text{target\_tokens} \le \text{context\_tokens} (4096)$.  
+  With `max_tokens` capped at 2048, generated target tokens can consume up to 2048 tokens. This leaves $\sim 2000$ tokens for source text and prompt overhead.  
+  Because PLaMo 3 Translate handles 53 languages, token expansion ratios vary (English $\to$ Japanese or Thai can require 1.5–2.0x tokens per character). A 1,200-character source chunk corresponds to $\sim 300\text{--}600$ input tokens. Even with a 2x expansion ($\sim 600\text{--}1200$ target tokens), total context stays comfortably below 1,900 tokens. This leaves an enormous safety margin of $> 2000$ tokens below the 4096 context ceiling, eliminating any possibility of `ErrTruncated` while preserving complete paragraphs.
 
 ### Q3: Does cleanup apply to the stored history and bilingual output, or only to the prompt sent to the model?
 - **Options considered:**
@@ -130,10 +181,24 @@ Following the pattern in [`docs/package-split-design.md`](package-split-design.m
 
 ### Q4: Should hyphenated words across wrapped lines be un-hyphenated?
 - **Options considered:**
-  - *Option A:* Strip all trailing hyphens when joining wrapped lines (`con-` + `nect` $\to$ `connect`).
-  - *Option B (Recommended):* **Un-hyphenate only when both halves match standard word-break patterns (`[a-zA-Z]-` followed by `\n[a-z]`), but leave punctuation hyphens, em-dashes, and markdown list hyphens intact.**
+  - *Option A:* Strip trailing hyphens when followed by lowercase (`transformer-\nbased` $\to$ `transformerbased`).
+  - *Option B (Recommended):* **Always preserve the ASCII hyphen when joining wrapped lines (`[a-zA-Z]-\n[a-zA-Z]` $\to$ `[a-zA-Z]-[a-zA-Z]`). (If Unicode soft hyphen `\u00ad` is present, it is stripped).**
 - **Rationale:**
-  Hyphenated line breaks are the single biggest source of degraded translations in English PDFs (e.g., `infor-` + `mation` is translated as two garbage tokens instead of "information"). Stripping `-\n` when followed by a lowercase letter is unambiguous and safe.
+  Directly governed by the Asymmetry of Failure (失敗の非対称性) principle. Without a dictionary, an algorithm cannot distinguish legitimate compound words (`transformer-based`, `resource-constrained`, `multi-level`) from wrapped single words (`trans-lation`). Stripping hyphens corrupts compound words into invalid nonsense (`transformerbased`). By contrast, preserving the hyphen is completely benign: `transformer-based` remains pristine, and `trans-lation` is effortlessly understood and translated accurately by modern LLMs.
+
+### Q5: How should mid-translation failure or user cancellation be handled during multi-chunk translation?
+- **Options considered:**
+  - *Option A:* Write partial translations translated so far to the clipboard.
+  - *Option B (Recommended):* **All-or-nothing: Discard partial translations, leave the user's clipboard completely untouched, and notify the failure via tray status/logs.**
+  - **Rationale:**
+    Writing partial results to the clipboard violates Clipboard Safety (Principle 5) and interrupts the user with broken half-translations. An all-or-nothing approach guarantees predictable, clean operation.
+
+### Q6: How should chunked translations be recombined in bilingual mode?
+- **Options considered:**
+  - *Option A:* Concatenate all source paragraphs followed by all translated paragraphs.
+  - *Option B (Recommended):* **Interleaved paragraph-by-paragraph structure (`Original P1\nTrans P1\n\nOriginal P2\nTrans P2`).**
+  - **Rationale:**
+    Interleaving maintains 1-to-1 reading correspondence for long documents, preventing the user from needing to scroll back and forth to match sentences.
 
 ---
 
@@ -163,12 +228,12 @@ without observable loss in accuracy.
 ```
 
 #### Expected Judgment
-- Line 1 $\to$ 2: `transformer-\nbased` $\implies$ **[JOIN: DE-HYPHENATE]** $\to$ `transformer-based` (or `transformerbased` if soft hyphen)
-- Line 2 $\to$ 3: `trans-\nlation` $\implies$ **[JOIN: DE-HYPHENATE]** $\to$ `translation`
-- Line 3 $\to$ 4: `devices.\nFurthermore,` $\implies$ **[JOIN]** with space (uniform line length, continuation of sentence)
+- Line 1 $\to$ 2: `transformer-\nbased` $\implies$ **[JOIN: PRESERVE HYPHEN]** $\to$ `transformer-based`
+- Line 2 $\to$ 3: `trans-\nlation` $\implies$ **[JOIN: PRESERVE HYPHEN]** $\to$ `trans-lation`
+- Line 3 $\to$ 4: `devices.\nFurthermore,` $\implies$ **[JOIN]** with space (uniform column wrap, non-terminal full-width line ending in sentence-ending punctuation continues into next line in same column block)
 - Line 4 $\to$ 5: `40%\nwithout` $\implies$ **[JOIN]** with space (mid-sentence continuation, lowercase next)
 - **Resulting Text for Model:**
-  `The proposed architecture introduces a novel transformer-based attention mechanism that significantly improves translation quality on resource-constrained edge devices. Furthermore, the computational latency is reduced by 40% without observable loss in accuracy.`
+  `The proposed architecture introduces a novel transformer-based attention mechanism that significantly improves trans-lation quality on resource-constrained edge devices. Furthermore, the computational latency is reduced by 40% without observable loss in accuracy.`
 
 ---
 
@@ -187,7 +252,7 @@ without observable loss in accuracy.
 #### Expected Judgment
 - Line 1 $\to$ 2: `高精度に\n動作する` $\implies$ **[JOIN: NO SPACE]** (no ending punctuation, hiragana continuation)
 - Line 2 $\to$ 3: `削減と\n量子化手法` $\implies$ **[JOIN: NO SPACE]**
-- Line 3 $\to$ 4: `行った。\nその結果、` $\implies$ **[JOIN: NO SPACE]** (uniform column wrap without blank line)
+- Line 3 $\to$ 4: `行った。\nその結果、` $\implies$ **[JOIN: NO SPACE]** (uniform column wrap without short terminal line or blank line)
 - Line 4 $\to$ 5: `実用的な\n応答性を` $\implies$ **[JOIN: NO SPACE]**
 - **Resulting Text for Model:**
   `本研究では、小型エッジデバイス上で高速かつ高精度に動作する翻訳モデルの実現を目的とし、パラメータ削減と量子化手法の適用を行った。その結果、推論速度の大幅な向上が確認され、実用的な応答性を達成することができた。`
@@ -306,7 +371,7 @@ important bug fixes and performance improvements.
 - Line 1 $\to$ 2: `several\nimportant` $\implies$ **[JOIN]** with space (English wrap, mid-sentence continuation)
 - Line 2 $\to$ 3: `improvements.\n本バージョンでは` $\implies$ **[KEEP]** (Full stop `.` followed by script transition from Latin to Japanese)
 - Line 3 $\to$ 4: `高速化を\n行いました。` $\implies$ **[JOIN: NO SPACE]** (Japanese mid-sentence wrap across particle を)
-- Line 4 $\to$ 5: `行いました。\n詳細は` $\implies$ **[JOIN: NO SPACE]** (Japanese continuation wrap without blank line)
+- Line 4 $\to$ 5: `行いました。\n詳細は` $\implies$ **[JOIN: NO SPACE]** (Japanese continuation wrap without short terminal line or blank line)
 
 ---
 
@@ -315,11 +380,15 @@ important bug fixes and performance improvements.
 Following agreement on this design document, implementation will be partitioned into three independent PRs:
 
 1. **Step 1 (Core Structure Package):**
-   - Package `internal/textstruct` with pure functions `CleanSpuriousNewlines(text, lang)` and `ChunkText(text, maxChars)`.
+   - Package `internal/textstruct` with pure functions:
+     - `CleanSpuriousNewlines(text string, lang string) string`
+     - `ChunkText(text string, maxChunkChars int) []string`
+   - Shared internal line analysis pipeline (`analyzeLines`).
    - Unit tests running directly against the pinned fixtures in Section 5. Zero app or UI dependencies.
 2. **Step 2 (Newline Cleanup Integration):**
-   - Add `cleanup_newlines` setting to `config.Profile` and Settings UI.
+   - Add `cleanup_newlines` setting to `config.Profile` and Settings UI (`auto` | `off`, default `off`).
    - Wire `textstruct.CleanSpuriousNewlines` into `app.startTranslation` exclusively for the model prompt payload. Verify history and bilingual output retain untouched text.
 3. **Step 3 (Chunked Long-Text Translation):**
-   - Add chunking coordinator in `internal/app` or `internal/llamaserver` to sequence requests through `llama-server`.
+   - Add chunking coordinator in `internal/app` or `internal/llamaserver` sequencing requests through `llama-server`.
+   - Implement all-or-nothing failure/cancellation semantics (Section 3.1) and paragraph-interleaved bilingual recombination (Section 3.2).
    - Progress reporting in tray status during multi-chunk translation (e.g. `translating chunk 2 of 4...`).
