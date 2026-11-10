@@ -1,8 +1,9 @@
-package main
+package models
 
 import (
 	"errors"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -22,8 +23,8 @@ func TestModelPinPrinterMatchesCatalog(t *testing.T) {
 		t.Skip("skipping python printer check: python not in PATH")
 	}
 
-	for _, m := range modelCatalog {
-		cmd := exec.Command(py, "tools/print_model_pin.py", m.Key)
+	for _, m := range Catalog {
+		cmd := exec.Command(py, filepath.Join("..", "..", "tools", "print_model_pin.py"), m.Key)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("tools/print_model_pin.py %s failed: %v, out: %s", m.Key, err, string(out))

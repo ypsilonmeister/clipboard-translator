@@ -7,15 +7,18 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/models/modeltest"
 )
 
 // putModel creates a (sparse) file big enough to count as the model's installed file.
-func putModel(t *testing.T, dir string, e modelEntry) {
+func putModel(t *testing.T, dir string, e models.Entry) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(dir, "models"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.Create(e.path(dir))
+	f, err := os.Create(e.Path(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,15 +30,15 @@ func putModel(t *testing.T, dir string, e modelEntry) {
 }
 
 // withModels replaces the catalog for one test.
-func withModels(t *testing.T, entries ...modelEntry) {
+func withModels(t *testing.T, entries ...models.Entry) {
 	t.Helper()
-	saved := modelCatalog
-	modelCatalog = entries
-	t.Cleanup(func() { modelCatalog = saved })
+	saved := models.Catalog
+	models.Catalog = entries
+	t.Cleanup(func() { models.Catalog = saved })
 }
 
-func testEntry(key, file string) modelEntry {
-	return modelEntry{Key: key, Name: "Model " + key, File: file, Repo: "r", Revision: "v", SizeLabel: "1 MB", MinBytes: 1 << 20}
+func testEntry(key, file string) models.Entry {
+	return models.Entry{Key: key, Name: "Model " + key, File: file, Repo: "r", Revision: "v", SizeLabel: "1 MB", MinBytes: 1 << 20}
 }
 
 func findModel(st settingsState, key string) modelState {
@@ -47,22 +50,20 @@ func findModel(st settingsState, key string) modelState {
 	return modelState{}
 }
 
-func waitFor(t *testing.T, what string, cond func() bool) {
+// newDLFixture starts a fake model host and puts its small model "t1" in the catalog.
+func newDLFixture(t *testing.T) *modeltest.Host {
 	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
+	d := modeltest.NewHost(t)
+	saved := models.Catalog
+	models.Catalog = []models.Entry{{Key: "t1", Name: "Test model", File: "test-model.gguf", Repo: "test-repo", Revision: "rev1",
+		Sha256: modeltest.Sum(d.Model), TemplateSha256: modeltest.Sum(d.Tpl), SizeLabel: "1 MB", MinBytes: 1 << 20, Bytes: int64(len(d.Model))}}
+	t.Cleanup(func() { models.Catalog = saved })
+	return d
 }
-
 func TestSettingsStateListsModelsAndEngines(t *testing.T) {
 	a, _, _ := newTestApp(t)
 	st := a.settingsState()
-	if len(st.Models) != len(modelCatalog) || st.LicenseURL != plamoLicenseURL {
+	if len(st.Models) != len(models.Catalog) || st.LicenseURL != plamoLicenseURL {
 		t.Fatalf("models: %+v license %q", st.Models, st.LicenseURL)
 	}
 	for _, m := range st.Models {
@@ -81,7 +82,7 @@ func TestSettingsStateListsModelsAndEngines(t *testing.T) {
 		t.Errorf("max chars: %d", st.MaxChars)
 	}
 
-	e, _ := modelByKey("0.8b")
+	e, _ := models.ByKey("0.8b")
 	putModel(t, a.dir, e)
 	a.conf.ModelFile = "models\\" + e.File // a Windows-style path still names the catalog entry
 	st = a.settingsState()
@@ -89,8 +90,8 @@ func TestSettingsStateListsModelsAndEngines(t *testing.T) {
 		t.Errorf("0.8b: %+v custom %q", m, st.CustomModel)
 	}
 	// A file that is too small is not an installed model.
-	big, _ := modelByKey("8b")
-	os.WriteFile(big.path(a.dir), []byte("partial"), 0o644)
+	big, _ := models.ByKey("8b")
+	os.WriteFile(big.Path(a.dir), []byte("partial"), 0o644)
 	if findModel(a.settingsState(), "8b").Installed {
 		t.Error("a truncated file counts as installed")
 	}
@@ -99,7 +100,7 @@ func TestSettingsStateListsModelsAndEngines(t *testing.T) {
 func TestCheckModelSwitch(t *testing.T) {
 	withModels(t, testEntry("a", "a.gguf"), testEntry("b", "b.gguf"))
 	a, _, _ := newTestApp(t)
-	putModel(t, a.dir, modelCatalog[0])
+	putModel(t, a.dir, models.Catalog[0])
 	cases := []struct{ key, want string }{
 		{"zzz", "unknown model"},
 		{"b", "not installed"},
@@ -113,11 +114,11 @@ func TestCheckModelSwitch(t *testing.T) {
 		t.Errorf("an installed model must be allowed: %v", err)
 	}
 	// Still downloading: refused.
-	a.dl.set(func(s *downloadState) { *s = downloadState{Key: "a", Phase: "downloading"} })
+	a.dl.SetState(models.DownloadState{Key: "a", Phase: "downloading"})
 	if _, err := a.checkModelSwitch("a"); err == nil || !strings.Contains(err.Error(), "still being downloaded") {
 		t.Errorf("downloading: %v", err)
 	}
-	a.dl.set(func(s *downloadState) { *s = downloadState{} })
+	a.dl.SetState(models.DownloadState{})
 	// No custom template: refused with a pointer to its configuration.
 	os.Remove(a.paths.template)
 	if _, err := a.checkModelSwitch("a"); err == nil || !strings.Contains(err.Error(), "template") {
@@ -128,11 +129,11 @@ func TestCheckModelSwitch(t *testing.T) {
 func TestSwitchModelWorksAndIsSaved(t *testing.T) {
 	withModels(t, testEntry("a", "a.gguf"), testEntry("b", "b.gguf"))
 	a, tray, _ := newTestApp(t)
-	putModel(t, a.dir, modelCatalog[1])
+	putModel(t, a.dir, models.Catalog[1])
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.switchModel(modelCatalog[1]); err != nil {
+	if err := a.switchModel(models.Catalog[1]); err != nil {
 		t.Fatal(err)
 	}
 	if a.conf.ModelFile != "models/b.gguf" || !strings.HasSuffix(filepath.ToSlash(a.sup.model), "models/b.gguf") || !strings.HasSuffix(filepath.ToSlash(a.paths.model), "models/b.gguf") {
@@ -153,7 +154,7 @@ func TestSwitchModelWorksAndIsSaved(t *testing.T) {
 func TestSwitchModelFailureRestoresTheOldOneBeforeRestarting(t *testing.T) {
 	withModels(t, testEntry("a", "a.gguf"), testEntry("bad", "bad-FAIL.gguf"))
 	a, tray, _ := newTestApp(t)
-	putModel(t, a.dir, modelCatalog[1])
+	putModel(t, a.dir, models.Catalog[1])
 	a.conf.ModelFile = "models/m.gguf"
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
@@ -161,7 +162,7 @@ func TestSwitchModelFailureRestoresTheOldOneBeforeRestarting(t *testing.T) {
 	oldPaths, oldModel := a.paths, a.sup.model
 	before, _ := os.ReadFile(filepath.Join(a.dir, "config.json"))
 
-	err := a.switchModel(modelCatalog[1]) // the fake server exits at once for a path with FAIL in it
+	err := a.switchModel(models.Catalog[1]) // the fake server exits at once for a path with FAIL in it
 	if err == nil || !strings.Contains(err.Error(), "previous model is back") || !strings.Contains(err.Error(), "smaller") {
 		t.Fatalf("error should say the old model is back and suggest a smaller one: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestSwitchModelFailureWhenRestoreAlsoFails(t *testing.T) {
 		t.Run(source, func(t *testing.T) {
 			withModels(t, testEntry("bad", "bad-FAIL.gguf"))
 			a, tray, _ := newTestApp(t)
-			putModel(t, a.dir, modelCatalog[0])
+			putModel(t, a.dir, models.Catalog[0])
 			if err := a.startServer(); err != nil {
 				t.Fatal(err)
 			}
@@ -263,8 +264,8 @@ func TestPageSwitchesModelThroughTheMainLoop(t *testing.T) {
 	withModels(t, testEntry("a", "a.gguf"), testEntry("b", "b.gguf"), testEntry("bad", "bad-FAIL.gguf"))
 	f := newSettingsFixture(t)
 	a := f.a
-	putModel(t, a.dir, modelCatalog[1])
-	putModel(t, a.dir, modelCatalog[2])
+	putModel(t, a.dir, models.Catalog[1])
+	putModel(t, a.dir, models.Catalog[2])
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +285,7 @@ func TestPageSwitchesModelThroughTheMainLoop(t *testing.T) {
 		t.Fatalf("the answer must come first and say the app is busy: %d %s", resp.StatusCode, body)
 	}
 	// While the server loads, the page's state requests are still answered.
-	waitFor(t, "the switch to finish", func() bool {
+	modeltest.WaitFor(t, "the switch to finish", func() bool {
 		_, b := s.do(t, "GET", "/api/state", nil, nil)
 		st := decodeAPI(t, b).State
 		return st != nil && st.Busy == "" && findModel(*st, "b").Active
@@ -299,7 +300,7 @@ func TestPageSwitchesModelThroughTheMainLoop(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("bad model request: %d", resp.StatusCode)
 	}
-	waitFor(t, "the failed switch to be reported", func() bool {
+	modeltest.WaitFor(t, "the failed switch to be reported", func() bool {
 		_, b := s.do(t, "GET", "/api/state", nil, nil)
 		st := decodeAPI(t, b).State
 		return st != nil && st.Busy == "" && st.Notice != ""
@@ -327,7 +328,7 @@ func TestPageSwitchesEngine(t *testing.T) {
 	if resp, _ := s.do(t, "POST", "/api/engine", map[string]string{"name": "cuda"}, nil); resp.StatusCode != 200 {
 		t.Fatalf("cuda: %d", resp.StatusCode)
 	}
-	waitFor(t, "the engine switch", func() bool {
+	modeltest.WaitFor(t, "the engine switch", func() bool {
 		_, b := s.do(t, "GET", "/api/state", nil, nil)
 		st := decodeAPI(t, b).State
 		if st == nil || st.Busy != "" {
@@ -342,7 +343,7 @@ func TestPageSwitchesEngine(t *testing.T) {
 	})
 	// vulkan is a file that cannot be started: the engine stays and the page is told.
 	s.do(t, "POST", "/api/engine", map[string]string{"name": "vulkan"}, nil)
-	waitFor(t, "the failed engine switch", func() bool {
+	modeltest.WaitFor(t, "the failed engine switch", func() bool {
 		_, b := s.do(t, "GET", "/api/state", nil, nil)
 		st := decodeAPI(t, b).State
 		return st != nil && st.Busy == "" && st.Notice != ""
@@ -355,8 +356,8 @@ func TestPageSwitchesEngine(t *testing.T) {
 func TestPageDownloadsAModelAndTheTrayIsTold(t *testing.T) {
 	d := newDLFixture(t) // a fake model host; the catalog now has the small model "t1"
 	f := newSettingsFixture(t)
-	f.a.dl = newDownloadManager(f.a.dir)
-	f.a.dl.baseURL = d.srv.URL
+	f.a.dl = models.NewManager(f.a.dir, version)
+	f.a.dl.SetBaseURL(d.Srv.URL)
 	t.Cleanup(f.a.dl.Close)
 	s := f.server(t)
 
@@ -368,7 +369,7 @@ func TestPageDownloadsAModelAndTheTrayIsTold(t *testing.T) {
 		t.Fatalf("download: %d %s", resp.StatusCode, body)
 	}
 	// The model file appears before the template is fetched, so wait for the end.
-	waitFor(t, "the download to finish", func() bool {
+	modeltest.WaitFor(t, "the download to finish", func() bool {
 		_, b := s.do(t, "GET", "/api/state", nil, nil)
 		st := decodeAPI(t, b).State
 		return st != nil && st.Download != nil && st.Download.Phase == "done" && findModel(*st, "t1").Installed
@@ -379,7 +380,7 @@ func TestPageDownloadsAModelAndTheTrayIsTold(t *testing.T) {
 		t.Errorf("download state: %+v", st.Download)
 	}
 	// The main loop is told on the tray, not the page's goroutine.
-	f.a.onDownloadFinished(<-f.a.dl.events)
+	f.a.onDownloadFinished(<-f.a.dl.Events())
 	if note := f.a.tray.(*fakeTray).lastNote(); !strings.Contains(note, "downloaded") {
 		t.Errorf("tray note: %q", note)
 	}
@@ -392,7 +393,7 @@ func TestPageRetriesMissingTemplate(t *testing.T) {
 	for _, kind := range []string{"http", "hash", "cancel"} {
 		t.Run(kind, func(t *testing.T) {
 			d := newDLFixture(t)
-			d.failTemplate(kind)
+			d.FailTemplate(kind)
 			f := newSettingsFixture(t)
 			a := f.a
 			a.conf.TemplateFile = "models/chat_template.jinja"
@@ -401,8 +402,8 @@ func TestPageRetriesMissingTemplate(t *testing.T) {
 			if err := os.WriteFile(a.paths.template, []byte("broken"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			a.dl = newDownloadManager(a.dir)
-			a.dl.baseURL = d.srv.URL
+			a.dl = models.NewManager(a.dir, version)
+			a.dl.SetBaseURL(d.Srv.URL)
 			t.Cleanup(a.dl.Close)
 			s := f.server(t)
 			if resp, body := s.do(t, "POST", "/api/model/download", map[string]string{"key": "t1"}, nil); resp.StatusCode != 200 {
@@ -411,13 +412,13 @@ func TestPageRetriesMissingTemplate(t *testing.T) {
 			phase := "failed"
 			var resumed int64
 			if kind == "cancel" {
-				resumed = waitTemplatePartial(t, a.dl)
+				resumed = modeltest.WaitTemplatePartial(t, a.dir, func() string { return a.dl.State().Phase })
 				if resp, body := s.do(t, "POST", "/api/model/cancel", map[string]string{}, nil); resp.StatusCode != 204 {
 					t.Fatalf("cancel: %d %s", resp.StatusCode, body)
 				}
 				phase = "cancelled"
 			}
-			waitFor(t, "template failure on the page", func() bool {
+			modeltest.WaitFor(t, "template failure on the page", func() bool {
 				_, body := s.do(t, "GET", "/api/state", nil, nil)
 				st := decodeAPI(t, body).State
 				return st != nil && st.Download != nil && st.Download.Phase == phase
@@ -430,11 +431,11 @@ func TestPageRetriesMissingTemplate(t *testing.T) {
 			if resp, body := s.do(t, "POST", "/api/model/use", map[string]string{"key": "t1"}, nil); resp.StatusCode != 422 || !strings.Contains(string(body), "retry") {
 				t.Fatalf("incomplete model switch must explain recovery: %d %s", resp.StatusCode, body)
 			}
-			d.repairTemplate()
+			d.RepairTemplate()
 			if resp, body := s.do(t, "POST", "/api/model/download", map[string]string{"key": "t1"}, nil); resp.StatusCode != 200 {
 				t.Fatalf("template retry: %d %s", resp.StatusCode, body)
 			}
-			waitFor(t, "template recovery on the page", func() bool {
+			modeltest.WaitFor(t, "template recovery on the page", func() bool {
 				_, body := s.do(t, "GET", "/api/state", nil, nil)
 				st := decodeAPI(t, body).State
 				if st == nil || st.Download == nil || st.Download.Phase != "done" {
@@ -443,12 +444,12 @@ func TestPageRetriesMissingTemplate(t *testing.T) {
 				m := findModel(*st, "t1")
 				return m.Installed && m.TemplateInstalled && !m.Downloading
 			})
-			d.checkTemplateRecovery(t, a.dir, resumed)
+			d.CheckTemplateRecovery(t, a.dir, resumed)
 			// The repaired model can now be selected through the same page.
 			if resp, body := s.do(t, "POST", "/api/model/use", map[string]string{"key": "t1"}, nil); resp.StatusCode != 200 {
 				t.Fatalf("use repaired model: %d %s", resp.StatusCode, body)
 			}
-			waitFor(t, "repaired model selection", func() bool {
+			modeltest.WaitFor(t, "repaired model selection", func() bool {
 				_, body := s.do(t, "GET", "/api/state", nil, nil)
 				st := decodeAPI(t, body).State
 				return st != nil && st.Busy == "" && findModel(*st, "t1").Active
@@ -459,24 +460,24 @@ func TestPageRetriesMissingTemplate(t *testing.T) {
 
 func TestDownloadOutlivesTheSettingsPage(t *testing.T) {
 	d := newDLFixture(t)
-	d.gate = make(chan struct{})
+	d.Gate = make(chan struct{})
 	f := newSettingsFixture(t)
-	f.a.dl = newDownloadManager(f.a.dir)
-	f.a.dl.baseURL = d.srv.URL
+	f.a.dl = models.NewManager(f.a.dir, version)
+	f.a.dl.SetBaseURL(d.Srv.URL)
 	t.Cleanup(f.a.dl.Close)
 	s := f.server(t)
 	s.do(t, "POST", "/api/model/download", map[string]string{"key": "t1"}, nil)
-	waitFor(t, "the download to start", func() bool { return f.a.dl.State().Done > 0 })
+	modeltest.WaitFor(t, "the download to start", func() bool { return f.a.dl.State().Done > 0 })
 
 	s.Close() // the page is closed (or went idle)
 	if !f.a.dl.Downloading("t1") {
 		t.Fatal("closing the settings page stopped the download")
 	}
-	d.mu.Lock()
-	d.gate <- struct{}{} // let the rest arrive
-	d.mu.Unlock()
-	waitFor(t, "the download to finish without a page", func() bool { return f.a.dl.State().Phase == "done" })
-	if e, _ := modelByKey("t1"); !e.installed(f.a.dir) {
+	d.Mu.Lock()
+	d.Gate <- struct{}{} // let the rest arrive
+	d.Mu.Unlock()
+	modeltest.WaitFor(t, "the download to finish without a page", func() bool { return f.a.dl.State().Phase == "done" })
+	if e, _ := models.ByKey("t1"); !e.Installed(f.a.dir) {
 		t.Error("the model is not installed")
 	}
 }
@@ -521,9 +522,9 @@ func TestPageSavesMaxChars(t *testing.T) {
 func TestModelDeleteInstalledAndPartial(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
-	e, _ := modelByKey("2b")
+	e, _ := models.ByKey("2b")
 	putModel(t, f.a.dir, e)
-	partialPath := e.path(f.a.dir) + ".partial"
+	partialPath := e.Path(f.a.dir) + ".partial"
 	if err := os.WriteFile(partialPath, []byte("partial download data"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +577,7 @@ func TestModelDeleteInstalledAndPartial(t *testing.T) {
 	f.a.settingsNotice = ""
 
 	// Verify model file was removed, but partial file remains.
-	if _, err := os.Stat(e.path(f.a.dir)); !os.IsNotExist(err) {
+	if _, err := os.Stat(e.Path(f.a.dir)); !os.IsNotExist(err) {
 		t.Errorf("model file was not removed: %v", err)
 	}
 	if _, err := os.Stat(partialPath); err != nil {
@@ -621,14 +622,14 @@ func TestModelDeleteInstalledAndPartial(t *testing.T) {
 func TestModelDeleteIncompleteFile(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
-	e, _ := modelByKey("8b")
+	e, _ := models.ByKey("8b")
 	if err := os.MkdirAll(filepath.Join(f.a.dir, "models"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create an incomplete/corrupt .gguf (< e.MinBytes).
 	incompleteData := []byte("corrupt incomplete gguf header")
-	if err := os.WriteFile(e.path(f.a.dir), incompleteData, 0o644); err != nil {
+	if err := os.WriteFile(e.Path(f.a.dir), incompleteData, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -651,7 +652,7 @@ func TestModelDeleteIncompleteFile(t *testing.T) {
 	if r.Notice != wantNotice {
 		t.Errorf("notice: want %q, got %q", wantNotice, r.Notice)
 	}
-	if _, err := os.Stat(e.path(f.a.dir)); !os.IsNotExist(err) {
+	if _, err := os.Stat(e.Path(f.a.dir)); !os.IsNotExist(err) {
 		t.Errorf("incomplete model file was not removed: %v", err)
 	}
 }
@@ -659,11 +660,11 @@ func TestModelDeleteIncompleteFile(t *testing.T) {
 func TestModelDeletePartialOnly(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
-	e, _ := modelByKey("8b")
+	e, _ := models.ByKey("8b")
 	if err := os.MkdirAll(filepath.Join(f.a.dir, "models"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	partialPath := e.path(f.a.dir) + ".partial"
+	partialPath := e.Path(f.a.dir) + ".partial"
 	pf, err := os.Create(partialPath)
 	if err != nil {
 		t.Fatal(err)
@@ -699,7 +700,7 @@ func TestModelDeletePartialOnly(t *testing.T) {
 }
 
 func TestModelDeleteRefusesActiveModel(t *testing.T) {
-	e, _ := modelByKey("0.8b")
+	e, _ := models.ByKey("0.8b")
 	cases := []struct {
 		name      string
 		modelFile string
@@ -732,12 +733,12 @@ func TestModelDeleteRefusesActiveModel(t *testing.T) {
 			if resp.StatusCode != 422 || !strings.Contains(r.Error, "currently in use") {
 				t.Errorf("active model deletion: status %d error %q", resp.StatusCode, r.Error)
 			}
-			if _, err := os.Stat(e.path(f.a.dir)); err != nil {
+			if _, err := os.Stat(e.Path(f.a.dir)); err != nil {
 				t.Errorf("active model file must not be removed: %v", err)
 			}
 
 			// A partial file for the active model CAN be removed!
-			partialPath := e.path(f.a.dir) + ".partial"
+			partialPath := e.Path(f.a.dir) + ".partial"
 			if err := os.WriteFile(partialPath, []byte("leftover partial"), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -750,7 +751,7 @@ func TestModelDeleteRefusesActiveModel(t *testing.T) {
 				t.Errorf("active model partial file was not removed: %v", err)
 			}
 			// Active model file remains untouched.
-			if _, err := os.Stat(e.path(f.a.dir)); err != nil {
+			if _, err := os.Stat(e.Path(f.a.dir)); err != nil {
 				t.Errorf("active model file must still be present: %v", err)
 			}
 		})
@@ -763,7 +764,7 @@ func TestModelDeleteRefusesActiveModel(t *testing.T) {
 		putModel(t, f.a.dir, e)
 
 		linkPath := filepath.Join(f.a.dir, "models", "custom-alias.gguf")
-		if err := os.Symlink(e.path(f.a.dir), linkPath); err != nil {
+		if err := os.Symlink(e.Path(f.a.dir), linkPath); err != nil {
 			t.Skipf("symlink creation not supported in this environment: %v", err)
 		}
 		defer os.Remove(linkPath)
@@ -789,7 +790,7 @@ func TestModelDeleteRefusesActiveModel(t *testing.T) {
 func TestModelDownloadAndDeletionRace(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
-	e, _ := modelByKey("2b")
+	e, _ := models.ByKey("2b")
 	putModel(t, f.a.dir, e)
 
 	// 1. Delete reservation held -> Start refused.
@@ -814,10 +815,8 @@ func TestModelDownloadAndDeletionRace(t *testing.T) {
 	release()
 
 	// 2. Download running -> delete refused.
-	f.a.dl.set(func(ds *downloadState) {
-		*ds = downloadState{Key: "2b", Phase: "downloading"}
-	})
-	defer f.a.dl.set(func(ds *downloadState) { *ds = downloadState{} })
+	f.a.dl.SetState(models.DownloadState{Key: "2b", Phase: "downloading"})
+	defer f.a.dl.SetState(models.DownloadState{})
 
 	// dl.ReserveDelete is refused.
 	if _, err := f.a.dl.ReserveDelete("2b"); err == nil || !strings.Contains(err.Error(), "currently being downloaded") {
@@ -886,10 +885,10 @@ func TestModelDeleteRefusesUnknownAndPathTraversal(t *testing.T) {
 func TestModelDeleteRefusesNonRegularFile(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
-	e, _ := modelByKey("2b")
+	e, _ := models.ByKey("2b")
 
 	// 1. Directory with the catalog name.
-	dirPath := e.path(f.a.dir)
+	dirPath := e.Path(f.a.dir)
 	if err := os.MkdirAll(dirPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -937,11 +936,11 @@ func TestTranslationModelMenuInstalledCounts(t *testing.T) {
 	for n := 0; n <= 3; n++ {
 		t.Run(fmt.Sprintf("%d installed models", n), func(t *testing.T) {
 			a, _, _ := newTestApp(t)
-			for i := 0; i < n && i < len(modelCatalog); i++ {
-				putModel(t, a.dir, modelCatalog[i])
+			for i := 0; i < n && i < len(models.Catalog); i++ {
+				putModel(t, a.dir, models.Catalog[i])
 			}
 			if n > 0 {
-				a.conf.ModelFile = "models/" + modelCatalog[0].File
+				a.conf.ModelFile = "models/" + models.Catalog[0].File
 				paths, err := resolvePaths(a.dir, a.conf)
 				if err != nil {
 					t.Fatal(err)
@@ -989,14 +988,14 @@ func TestTranslationModelMenuInstalledCounts(t *testing.T) {
 				t.Fatalf("expected %d submenu entries, got %d", n, len(sub))
 			}
 			for j := 0; j < n; j++ {
-				wantLabel := modelCatalog[j].Name + " (" + modelCatalog[j].SizeLabel + ")"
+				wantLabel := models.Catalog[j].Name + " (" + models.Catalog[j].SizeLabel + ")"
 				if sub[j].Label != wantLabel {
 					t.Errorf("entry %d: got label %q, want %q", j, sub[j].Label, wantLabel)
 				}
 				if sub[j].ID != cmdModelBase+j {
 					t.Errorf("entry %d: got ID %d, want %d", j, sub[j].ID, cmdModelBase+j)
 				}
-				wantChecked := j == 0 // we configured modelCatalog[0]
+				wantChecked := j == 0 // we configured models.Catalog[0]
 				if sub[j].Checked != wantChecked {
 					t.Errorf("entry %d: got checked %v, want %v", j, sub[j].Checked, wantChecked)
 				}
@@ -1010,7 +1009,7 @@ func TestTranslationModelMenuInstalledCounts(t *testing.T) {
 
 func TestTranslationModelMenuCustomModelActive(t *testing.T) {
 	a, _, _ := newTestApp(t)
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		putModel(t, a.dir, m)
 	}
 	a.conf.ModelFile = "models/custom-translate.gguf"
@@ -1019,8 +1018,8 @@ func TestTranslationModelMenuCustomModelActive(t *testing.T) {
 	if tm == nil {
 		t.Fatal("Translation model submenu missing")
 	}
-	if len(tm.Sub) != len(modelCatalog) {
-		t.Fatalf("expected %d entries, got %d", len(modelCatalog), len(tm.Sub))
+	if len(tm.Sub) != len(models.Catalog) {
+		t.Fatalf("expected %d entries, got %d", len(models.Catalog), len(tm.Sub))
 	}
 	for i, sub := range tm.Sub {
 		if sub.Checked {
@@ -1031,9 +1030,9 @@ func TestTranslationModelMenuCustomModelActive(t *testing.T) {
 
 func TestTranslationModelMenuDisabledWhileBusy(t *testing.T) {
 	a, _, _ := newTestApp(t)
-	putModel(t, a.dir, modelCatalog[0])
-	putModel(t, a.dir, modelCatalog[1])
-	a.conf.ModelFile = "models/" + modelCatalog[1].File
+	putModel(t, a.dir, models.Catalog[0])
+	putModel(t, a.dir, models.Catalog[1])
+	a.conf.ModelFile = "models/" + models.Catalog[1].File
 	paths, err := resolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
@@ -1092,9 +1091,9 @@ func TestTranslationModelMenuDisabledWhileBusy(t *testing.T) {
 
 func TestTranslationModelMenuSwitching(t *testing.T) {
 	a, tray, _ := newTestApp(t)
-	putModel(t, a.dir, modelCatalog[0])
-	putModel(t, a.dir, modelCatalog[1])
-	a.conf.ModelFile = "models/" + modelCatalog[1].File
+	putModel(t, a.dir, models.Catalog[0])
+	putModel(t, a.dir, models.Catalog[1])
+	a.conf.ModelFile = "models/" + models.Catalog[1].File
 	paths, err := resolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
@@ -1116,7 +1115,7 @@ func TestTranslationModelMenuSwitching(t *testing.T) {
 	a.handleCommand(cmdModelBase + 0)
 
 	// Verify model switched.
-	wantModelRel := "models/" + modelCatalog[0].File
+	wantModelRel := "models/" + models.Catalog[0].File
 	if a.conf.ModelFile != wantModelRel {
 		t.Fatalf("conf.ModelFile = %q, want %q", a.conf.ModelFile, wantModelRel)
 	}
@@ -1150,8 +1149,8 @@ func TestTranslationModelMenuSwitching(t *testing.T) {
 			t.Fatalf("unexpected error notification %d: %q", i, tray.notes[i])
 		}
 	}
-	if !strings.Contains(tray.lastNote(), modelCatalog[0].Name) {
-		t.Fatalf("last note %q does not contain model name %q", tray.lastNote(), modelCatalog[0].Name)
+	if !strings.Contains(tray.lastNote(), models.Catalog[0].Name) {
+		t.Fatalf("last note %q does not contain model name %q", tray.lastNote(), models.Catalog[0].Name)
 	}
 
 	// Verify menu checkmark moved to 0.8B.
@@ -1164,9 +1163,9 @@ func TestTranslationModelMenuSwitching(t *testing.T) {
 
 func TestTranslationModelMenuSelectActiveDoesNothing(t *testing.T) {
 	a, tray, _ := newTestApp(t)
-	putModel(t, a.dir, modelCatalog[0])
-	putModel(t, a.dir, modelCatalog[1])
-	a.conf.ModelFile = "models/" + modelCatalog[0].File
+	putModel(t, a.dir, models.Catalog[0])
+	putModel(t, a.dir, models.Catalog[1])
+	a.conf.ModelFile = "models/" + models.Catalog[0].File
 	paths, err := resolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
@@ -1189,7 +1188,7 @@ func TestTranslationModelMenuSelectActiveDoesNothing(t *testing.T) {
 	if a.sup.cmd.Process.Pid != oldPID {
 		t.Fatalf("server restarted when active model was selected: pid %d != %d", a.sup.cmd.Process.Pid, oldPID)
 	}
-	if a.conf.ModelFile != "models/"+modelCatalog[0].File {
+	if a.conf.ModelFile != "models/"+models.Catalog[0].File {
 		t.Fatalf("conf.ModelFile changed: %q", a.conf.ModelFile)
 	}
 }
@@ -1197,9 +1196,9 @@ func TestTranslationModelMenuSelectActiveDoesNothing(t *testing.T) {
 func TestTranslationModelMenuFailureKeepsOldModel(t *testing.T) {
 	t.Run("truncated file at switch time", func(t *testing.T) {
 		a, tray, _ := newTestApp(t)
-		putModel(t, a.dir, modelCatalog[0])
-		putModel(t, a.dir, modelCatalog[1])
-		a.conf.ModelFile = "models/" + modelCatalog[1].File
+		putModel(t, a.dir, models.Catalog[0])
+		putModel(t, a.dir, models.Catalog[1])
+		a.conf.ModelFile = "models/" + models.Catalog[1].File
 		paths, err := resolvePaths(a.dir, a.conf)
 		if err != nil {
 			t.Fatal(err)
@@ -1211,14 +1210,14 @@ func TestTranslationModelMenuFailureKeepsOldModel(t *testing.T) {
 		}
 
 		// Truncate 0.8B so checkModelSwitch fails.
-		if err := os.Truncate(modelCatalog[0].path(a.dir), 10); err != nil {
+		if err := os.Truncate(models.Catalog[0].Path(a.dir), 10); err != nil {
 			t.Fatal(err)
 		}
 
 		a.handleCommand(cmdModelBase + 0)
 
 		// Old model kept.
-		if a.conf.ModelFile != "models/"+modelCatalog[1].File {
+		if a.conf.ModelFile != "models/"+models.Catalog[1].File {
 			t.Fatalf("model changed on failed switch: %q", a.conf.ModelFile)
 		}
 		if !healthy(a) {
@@ -1238,9 +1237,9 @@ func TestTranslationModelMenuFailureKeepsOldModel(t *testing.T) {
 	t.Run("server startup failure restores old model", func(t *testing.T) {
 		withModels(t, testEntry("ok", "ok.gguf"), testEntry("bad", "bad-FAIL.gguf"))
 		a, tray, _ := newTestApp(t)
-		putModel(t, a.dir, modelCatalog[0])
-		putModel(t, a.dir, modelCatalog[1])
-		a.conf.ModelFile = "models/" + modelCatalog[0].File
+		putModel(t, a.dir, models.Catalog[0])
+		putModel(t, a.dir, models.Catalog[1])
+		a.conf.ModelFile = "models/" + models.Catalog[0].File
 		paths, err := resolvePaths(a.dir, a.conf)
 		if err != nil {
 			t.Fatal(err)
@@ -1254,7 +1253,7 @@ func TestTranslationModelMenuFailureKeepsOldModel(t *testing.T) {
 		a.handleCommand(cmdModelBase + 1)
 
 		// Old model restored.
-		if a.conf.ModelFile != "models/"+modelCatalog[0].File {
+		if a.conf.ModelFile != "models/"+models.Catalog[0].File {
 			t.Fatalf("old model not kept: conf=%q", a.conf.ModelFile)
 		}
 		if !healthy(a) {
@@ -1271,9 +1270,9 @@ func TestTranslationModelMenuFailureKeepsOldModel(t *testing.T) {
 
 func TestTranslationModelMenuUnloadedState(t *testing.T) {
 	a, tray, _ := newTestApp(t)
-	putModel(t, a.dir, modelCatalog[0])
-	putModel(t, a.dir, modelCatalog[1])
-	a.conf.ModelFile = "models/" + modelCatalog[1].File
+	putModel(t, a.dir, models.Catalog[0])
+	putModel(t, a.dir, models.Catalog[1])
+	a.conf.ModelFile = "models/" + models.Catalog[1].File
 	paths, err := resolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
@@ -1323,7 +1322,7 @@ func TestTranslationModelMenuUnloadedState(t *testing.T) {
 	if !a.sup.Running() || !healthy(a) {
 		t.Fatal("server must be running and healthy with new model")
 	}
-	if a.conf.ModelFile != "models/"+modelCatalog[0].File {
+	if a.conf.ModelFile != "models/"+models.Catalog[0].File {
 		t.Fatalf("conf.ModelFile = %q, want 0.8b", a.conf.ModelFile)
 	}
 	if !strings.Contains(a.readyTip, "ready") || tray.status != a.readyTip {
@@ -1331,7 +1330,7 @@ func TestTranslationModelMenuUnloadedState(t *testing.T) {
 	}
 
 	// Case C: Switch while unloaded to a damaged file.
-	if err := os.Truncate(modelCatalog[1].path(a.dir), 10); err != nil {
+	if err := os.Truncate(models.Catalog[1].Path(a.dir), 10); err != nil {
 		t.Fatal(err)
 	}
 	a.unloadModel()
@@ -1342,7 +1341,7 @@ func TestTranslationModelMenuUnloadedState(t *testing.T) {
 	if !a.modelUnloaded {
 		t.Fatal("modelUnloaded must remain true after failed switch attempt")
 	}
-	if a.conf.ModelFile != "models/"+modelCatalog[0].File {
+	if a.conf.ModelFile != "models/"+models.Catalog[0].File {
 		t.Fatalf("conf.ModelFile must remain 0.8b: got %q", a.conf.ModelFile)
 	}
 	if !strings.Contains(tray.status, "model unloaded") {

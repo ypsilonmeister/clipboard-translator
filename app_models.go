@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
 
 // Model and engine choice for the settings page. Everything here runs on the UI
@@ -18,14 +20,14 @@ import (
 // requests only.
 
 // isModelActive reports whether e is currently the active model in use by the app.
-// It checks modelForFile(a.conf.ModelFile) and also checks if the resolved path
+// It checks models.ForFile(a.conf.ModelFile) and also checks if the resolved path
 // of the configured model file (a.paths.model / a.sup.model) points to the same
 // file as the catalog entry (via os.SameFile and case-insensitive cleaned paths).
-func (a *app) isModelActive(e modelEntry) bool {
-	if active, known := modelForFile(a.conf.ModelFile); known && strings.EqualFold(active.Key, e.Key) {
+func (a *app) isModelActive(e models.Entry) bool {
+	if active, known := models.ForFile(a.conf.ModelFile); known && strings.EqualFold(active.Key, e.Key) {
 		return true
 	}
-	catalogPath := filepath.Clean(e.path(a.dir))
+	catalogPath := filepath.Clean(e.Path(a.dir))
 	catInfo, catErr := os.Stat(catalogPath)
 
 	activePaths := []string{a.paths.model}
@@ -58,16 +60,16 @@ func (a *app) isModelActive(e modelEntry) bool {
 
 // fillModelsAndEngines adds what the model and engine sections show.
 func (a *app) fillModelsAndEngines(st *settingsState) {
-	_, known := modelForFile(a.conf.ModelFile)
+	_, known := models.ForFile(a.conf.ModelFile)
 	// One snapshot of the download for the whole state: reading it per model
 	// could show "downloading" in one place and "done" in another.
 	d := a.dl.State()
-	for _, e := range modelCatalog {
-		installed := e.installed(a.dir)
-		hasFile, fileBytes := e.fileInfo(a.dir)
-		partial, partialBytes := e.partialInfo(a.dir)
+	for _, e := range models.Catalog {
+		installed := e.Installed(a.dir)
+		hasFile, fileBytes := e.FileInfo(a.dir)
+		partial, partialBytes := e.PartialInfo(a.dir)
 		isActive := a.isModelActive(e)
-		isDownloading := d.Key == e.Key && d.running()
+		isDownloading := d.Key == e.Key && d.Running()
 
 		canDelete := (installed || hasFile) && !isActive && !isDownloading
 		canDeletePartial := partial && !isDownloading
@@ -84,7 +86,7 @@ func (a *app) fillModelsAndEngines(st *settingsState) {
 			Note:              e.Note,
 			Size:              e.SizeLabel,
 			Installed:         installed,
-			TemplateInstalled: e.templateInstalled(a.dir),
+			TemplateInstalled: e.TemplateInstalled(a.dir),
 			Active:            isActive,
 			Downloading:       isDownloading,
 			Partial:           partial,
@@ -139,7 +141,7 @@ func (a *app) startModelSwitch(req settingsRequest) {
 		req.reply <- settingsReply{state: a.settingsState(), err: err}
 		return
 	}
-	if cur, ok := modelForFile(a.conf.ModelFile); ok && cur.Key == e.Key {
+	if cur, ok := models.ForFile(a.conf.ModelFile); ok && cur.Key == e.Key {
 		req.reply <- settingsReply{state: a.settingsState()}
 		return
 	}
@@ -152,22 +154,22 @@ func (a *app) startModelSwitch(req settingsRequest) {
 	}
 }
 
-func (a *app) checkModelSwitch(key string) (modelEntry, error) {
-	e, ok := modelByKey(key)
+func (a *app) checkModelSwitch(key string) (models.Entry, error) {
+	e, ok := models.ByKey(key)
 	if !ok {
 		return e, fmt.Errorf("unknown model %q", key)
 	}
 	switch {
 	case a.dl.Downloading(key):
 		return e, fmt.Errorf("%s is still being downloaded", e.Name)
-	case !e.installed(a.dir):
+	case !e.Installed(a.dir):
 		return e, fmt.Errorf("%s is not installed; download it first", e.Name)
 	}
-	if isCustomTemplate(a.conf.TemplateFile) {
+	if models.IsCustomTemplate(a.conf.TemplateFile) {
 		if err := checkFile(a.paths.template); err != nil {
 			return e, fmt.Errorf("the configured chat template is missing (%v); check template_file in config.json", err)
 		}
-	} else if !e.templateInstalled(a.dir) {
+	} else if !e.TemplateInstalled(a.dir) {
 		return e, errors.New("the chat template is missing or incomplete; retry this model's download in Settings to fetch it")
 	}
 	return e, nil
@@ -177,7 +179,7 @@ func (a *app) checkModelSwitch(key string) (modelEntry, error) {
 // not come up, the previous model is put back before the server is started
 // again, because the main loop's recovery reads the model from the supervisor.
 // config.json changes only once the new model works.
-func (a *app) switchModel(e modelEntry) error {
+func (a *app) switchModel(e models.Entry) error {
 	defer a.beginServerWork()()
 	oldModel := a.sup.model
 	oldTemplate := a.sup.template
@@ -185,12 +187,12 @@ func (a *app) switchModel(e modelEntry) error {
 	newConf := a.conf
 	newConf.ModelFile = "models/" + e.File
 	saveMap := map[string]any{"model_file": newConf.ModelFile}
-	if !isCustomTemplate(a.conf.TemplateFile) {
-		tplPath, ok := e.installedTemplatePath(a.dir)
+	if !models.IsCustomTemplate(a.conf.TemplateFile) {
+		tplPath, ok := e.InstalledTemplatePath(a.dir)
 		if ok && tplPath == filepath.Join(a.dir, "models", "chat_template.jinja") {
 			newConf.TemplateFile = "models/chat_template.jinja"
 		} else {
-			newConf.TemplateFile = "models/" + e.templateFile()
+			newConf.TemplateFile = "models/" + e.TemplateFile()
 		}
 		saveMap["template_file"] = newConf.TemplateFile
 	}
@@ -198,8 +200,8 @@ func (a *app) switchModel(e modelEntry) error {
 	if err != nil {
 		return err
 	}
-	if !isCustomTemplate(newConf.TemplateFile) && e.TemplateSha256 != "" {
-		if !verifyFileSha256(paths.template, e.TemplateSha256) {
+	if !models.IsCustomTemplate(newConf.TemplateFile) && e.TemplateSha256 != "" {
+		if !models.VerifyFileSha256(paths.template, e.TemplateSha256) {
 			return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(paths.template), e.Name)
 		}
 	}
@@ -283,8 +285,8 @@ func (a *app) startEngineSwitch(req settingsRequest) {
 }
 
 // onDownloadFinished tells the user, on the tray, how a model download ended.
-func (a *app) onDownloadFinished(st downloadState) {
-	e, _ := modelByKey(st.Key)
+func (a *app) onDownloadFinished(st models.DownloadState) {
+	e, _ := models.ByKey(st.Key)
 	switch st.Phase {
 	case "done":
 		a.tray.Notify("Clipboard Translator", e.Name+" is downloaded. Open Settings... to use it.", false)
@@ -300,7 +302,7 @@ func (a *app) handleDeleteModelRequest(req settingsRequest) {
 		return
 	}
 
-	e, ok := modelByKey(req.arg)
+	e, ok := models.ByKey(req.arg)
 	if !ok {
 		req.reply <- settingsReply{state: a.settingsState(), err: fmt.Errorf("unknown model %q", req.arg)}
 		return
@@ -341,7 +343,7 @@ func (a *app) handleDeleteModelRequest(req settingsRequest) {
 		req.reply <- settingsReply{state: a.settingsState(), err: sanitizeFileErr(targetRel, errStat)}
 		return
 	}
-	if errStat == nil && !isRemovableFile(info) {
+	if errStat == nil && !models.IsRemovableFile(info) {
 		req.reply <- settingsReply{state: a.settingsState(), err: fmt.Errorf("refusing to delete %s: not a regular file", filepath.ToSlash(targetRel))}
 		return
 	}

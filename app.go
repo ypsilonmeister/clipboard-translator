@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
 
 // app ties the tray, the llama-server supervisor, the clipboard and the hotkey
@@ -55,7 +57,7 @@ type app struct {
 	openURL        func(target string) error // openTarget, replaceable in tests
 	fallbackEditor func(path string) error   // startFallbackEditor, replaceable in tests
 	askYesNo       func(msg string) bool     // askYesNo, replaceable in tests
-	dl             *downloadManager          // model downloads; they outlive the settings page
+	dl             *models.Manager           // model downloads; they outlive the settings page
 
 	confRevision        int // bumped on every configuration change
 	profilesRev         int // bumped when profiles (languages/hotkeys) change
@@ -117,7 +119,7 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 		maxCharsRev:         1,
 		hotkeyLimit:         hotkeyLimit(),
 		settingsReqs:        make(chan settingsRequest, 8),
-		dl:                  newDownloadManager(dir),
+		dl:                  models.NewManager(dir, version),
 		openURL:             openTarget,
 		fallbackEditor:      startFallbackEditor,
 		askYesNo:            askYesNo,
@@ -204,9 +206,9 @@ func (a *app) failed(err error) {
 // again at the next start, and runningBackend tells what runs now.
 func (a *app) startServer() error {
 	defer a.beginServerWork()()
-	if !isCustomTemplate(a.conf.TemplateFile) {
-		if m, known := modelForFile(a.conf.ModelFile); known {
-			if !verifyFileSha256(a.sup.template, m.TemplateSha256) {
+	if !models.IsCustomTemplate(a.conf.TemplateFile) {
+		if m, known := models.ForFile(a.conf.ModelFile); known {
+			if !models.VerifyFileSha256(a.sup.template, m.TemplateSha256) {
 				return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(a.sup.template), m.Name)
 			}
 		}
@@ -261,9 +263,9 @@ func (a *app) onFallback() bool {
 // startFallback starts the CPU fallback build.
 func (a *app) startFallback() error {
 	defer a.beginServerWork()()
-	if !isCustomTemplate(a.conf.TemplateFile) {
-		if m, known := modelForFile(a.conf.ModelFile); known {
-			if !verifyFileSha256(a.sup.template, m.TemplateSha256) {
+	if !models.IsCustomTemplate(a.conf.TemplateFile) {
+		if m, known := models.ForFile(a.conf.ModelFile); known {
+			if !models.VerifyFileSha256(a.sup.template, m.TemplateSha256) {
 				return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(a.sup.template), m.Name)
 			}
 		}
@@ -578,7 +580,7 @@ func (a *app) serve(cb Clipboard) {
 			a.tickIdleUnload()
 		case req := <-a.settingsReqs:
 			a.handleSettingsRequest(req)
-		case st := <-a.dl.events:
+		case st := <-a.dl.Events():
 			a.onDownloadFinished(st)
 		case u := <-a.updates:
 			a.onUpdateResult(u)

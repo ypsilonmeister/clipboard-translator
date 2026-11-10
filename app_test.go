@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
 
 func freePort(t *testing.T) int {
@@ -250,7 +252,7 @@ func TestBuildMenu(t *testing.T) {
 		}
 	}
 	walk(items)
-	for _, m := range modelCatalog {
+	for _, m := range models.Catalog {
 		putModel(t, a.dir, m)
 	}
 	seen = map[int]bool{}
@@ -289,11 +291,11 @@ func TestBuildMenuExactLabels(t *testing.T) {
 	defer func() { version = old }()
 	for _, state := range []string{"idle", "translating", "unloaded", "no hotkey active", "target profile", "checking", "update"} {
 		for _, engines := range []int{1, 3} {
-			for _, models := range []int{0, 2} {
-				t.Run(fmt.Sprintf("%s/%d engines/%d models", state, engines, models), func(t *testing.T) {
+			for _, nModels := range []int{0, 2} {
+				t.Run(fmt.Sprintf("%s/%d engines/%d models", state, engines, nModels), func(t *testing.T) {
 					a, _, _ := newTestApp(t)
-					for i := 0; i < models && i < len(modelCatalog); i++ {
-						putModel(t, a.dir, modelCatalog[i])
+					for i := 0; i < nModels && i < len(models.Catalog); i++ {
+						putModel(t, a.dir, models.Catalog[i])
 					}
 					a.registerStartupHotkey()
 					if engines == 1 {
@@ -332,7 +334,7 @@ func TestBuildMenuExactLabels(t *testing.T) {
 						update = "Update to v2.0.0..."
 					}
 					want = append(want, "Unload model")
-					if models >= 2 {
+					if nModels >= 2 {
 						want = append(want, "Translation model")
 					}
 					want = append(want, "Recent translations (click to copy)", "---", update, "Open config.json", "---", "Built with PLaMo (license)", "Clipboard Translator 1.0.0")

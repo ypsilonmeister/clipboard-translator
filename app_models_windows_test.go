@@ -4,17 +4,19 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
 
 func TestModelDeleteWindowsLockedFile(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)
-	e, _ := modelByKey("2b")
+	e, _ := models.ByKey("2b")
 	putModel(t, f.a.dir, e)
 
 	// Opening with os.Open holds a handle without FILE_SHARE_DELETE,
 	// which prevents os.Remove from deleting it on Windows.
-	handle, err := os.Open(e.path(f.a.dir))
+	handle, err := os.Open(e.Path(f.a.dir))
 	if err != nil {
 		t.Fatal(err)
 	}
