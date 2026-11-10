@@ -1,6 +1,6 @@
 //go:build llamasmoke
 
-package main
+package llamaserver
 
 import (
 	"bytes"
