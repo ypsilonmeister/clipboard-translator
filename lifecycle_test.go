@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
@@ -53,7 +54,7 @@ func TestStartupHotkeyConflictFallsBackToNoHotkey(t *testing.T) {
 	if a.conf.Hotkey != "Ctrl+Shift+Y" || !strings.Contains(a.readyTip, "Ctrl+Shift+Y") {
 		t.Fatalf("hotkey not applied: %q / %q", a.conf.Hotkey, a.readyTip)
 	}
-	if c, _ := loadConfig(a.dir); c.Hotkey != "Ctrl+Shift+Y" {
+	if c, _ := config.Load(a.dir); c.Hotkey != "Ctrl+Shift+Y" {
 		t.Fatalf("hotkey not saved: %q", c.Hotkey)
 	}
 }
@@ -62,7 +63,7 @@ func TestStartupHotkeyConflictFallsBackToNoHotkey(t *testing.T) {
 // runtime it was using had been deleted or damaged.
 func breakPreviousEngine(a *app) {
 	missing := filepath.Join(a.dir, "runtime", "gone", platform.ServerBinaryName())
-	a.paths.server, a.paths.fallback = missing, missing
+	a.paths.Server, a.paths.Fallback = missing, missing
 }
 
 func TestSwitchBackendBothFailLeavesRecoverableState(t *testing.T) {

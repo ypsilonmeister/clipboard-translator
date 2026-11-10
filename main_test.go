@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
@@ -26,7 +27,7 @@ func TestDetectDirection(t *testing.T) {
 			t.Errorf("%q: got %+v, %v", tc.input, got, ok)
 		}
 	}
-	if _, ok := (Profile{Languages: languages.Default}).direction("日本語をたくさん", 2); ok {
+	if _, ok := (config.Profile{Languages: languages.Default}).Direction("日本語をたくさん", 2); ok {
 		t.Fatal("max chars ignored")
 	}
 }

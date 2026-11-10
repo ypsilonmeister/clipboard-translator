@@ -80,7 +80,7 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 
 | File | Role |
 | --- | --- |
-| `main.go` | `main()`, `Profile.direction` (what one hotkey translates), `fatal`, `pathWithin` |
+| `main.go` | `main()`, `fatal`, `applyTranslation`, the `version` string |
 | `internal/languages/` | The 53 model languages, `Validate`, and `DirectionFor`: the script of the text picks the direction of a language pair (URLs are skipped). Standard library only; the first package split out of `main` (Issue #104) |
 | `app.go` | `app` struct and the main loop `serve`: hotkeys (one per profile), tray commands, update results, translation results, Settings-page requests, download results. `startTranslation` / `handleResult` / `abortTranslation` |
 | `app_menu.go`, `app_idle.go` | Daily tray commands (Settings first, cancel, unload, model switch when multiple are installed, history, updates, config and license); configuration is edited in Settings; UI-thread idle timer and intentional unload/reload state |
@@ -88,10 +88,10 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 | `settings_server.go`, `app_settings.go`, `settings_web/` | The Settings page: `settings_server.go` serves it on 127.0.0.1 while it is open (token, Host/Origin checks, CSP) and never touches app state; `app_settings.go` answers its requests on the UI thread and applies hotkeys, auto-paste, notifications, `max_chars` and `idle_unload_minutes`; `settings_web/` is the embedded HTML/CSS/JS |
 | `internal/models/` (`models.go`, `modeldl.go`), `app_models.go` | `models.go` is the model catalog (pinned revision and SHA-256, kept equal to `setup.ps1`, `setup.sh` and `setup-macos.sh`; tests compare them); `modeldl.go` is the download manager (resume, SHA-256 check, cancel; owned by `app`, not by the settings server; the only code that contacts the model host); `internal/models/modeltest` is a fake model host for tests and `internal/testsupport` holds the loopback-only transport; `app_models.go` switches model and engine for the page, answers it while the server loads, and deletes unused models or partials |
 | `internal/llamaserver/` | `Supervisor` for `llama-server` (`server.go`: start, stop, exit detection), `RestartLimiter` (max 3 per 10 min) and backoff, and the loopback HTTP client (`client.go`: `WaitReady`, `Translate`). Its fields, `Start` and `Stop` belong to the UI thread; `Supervisor.APIKey` is never logged |
-| `setup_flow.go` | Resolves config paths, checks the model/runtime exist, offers to run `setup.ps1` (embedded in the exe with `//go:embed`) |
+| `setup_flow.go` | Checks the model/runtime exist (using `config.ResolvePaths`), offers to run `setup.ps1` (embedded in the exe with `//go:embed`) |
 | `internal/platform/` | Everything that differs per OS (tray, hotkeys, clipboard, selection capture, autostart, child-process lifetime, data directory, the native cgo files). One package; per-OS files are selected by file suffix and build tags. The app reaches it through exported names (`platform.NewHotkey`, `platform.NewTray`, ...) and keeps its test seams as fields of `app`. Its tests have their own `TestMain` (fake server, mac harness). `assets/` embeds `icon.png` for the Linux tray |
 | `internal/hotkeyspec/` | The hotkey syntax (`Ctrl+Alt+E`): one parser shared by the config check and the per-OS hotkey code; no OS dependency |
-| `config.go` / `settings.go` | `Config` + validation; order-preserving in-place `config.json` edits with a `.bak` |
+| `internal/config/` | `Config` + validation (`config.go`); order-preserving in-place `config.json` edits with a `.bak` and backend detection (`settings.go`); `Profile` and what one hotkey translates, skip reasons and messages (`profile.go`); `PathWithin`, `ResolvePaths`, `CheckFile` (`paths.go`) |
 | `internal/update/`, `internal/platform/update_windows.go` | "Check for updates" (GitHub API, only on click), version compare, install-kind detection (installer / Scoop / portable); the release-tag check and the `install.ps1` URL are in `internal/update` (`InstallScriptURL`), `update_windows.go` only runs the script it is given |
 | `history.go` | Last 10 translations (memory only) and `decidePaste` for auto-paste |
 | `internal/platform/tray.go` (+ `_windows`/`_other`) | `Tray` interface; Windows impl is a hidden window + `Shell_NotifyIconW` |
@@ -128,7 +128,7 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
   text (the cost: with nothing selected the clipboard text is used 2 s after the key press).
   A profile with `input: "clipboard"` skips the capture entirely (no Ctrl+C, no wait,
   never auto-pasted).
-- **Paths in `config.json` are relative to the exe folder** (`pathWithin`
+- **Paths in `config.json` are relative to the exe folder** (`config.PathWithin`
   rejects absolute paths and `..`), and may use `/` or `\`. Unknown keys must
   survive `updateConfigFile`.
 - **Single instance** is enforced by listening on `port+1`; the server uses

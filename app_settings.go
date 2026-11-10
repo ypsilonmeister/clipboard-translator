@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
@@ -151,12 +152,12 @@ func (a *app) inactiveHotkeys() []string {
 	var out []string
 	if a.hasNoHotkey() && len(a.conf.Profiles) > 0 {
 		p := a.conf.Profiles[0]
-		out = append(out, fmt.Sprintf("%s (%s): could not be registered (another program may be using it)", p.Hotkey, p.label()))
+		out = append(out, fmt.Sprintf("%s (%s): could not be registered (another program may be using it)", p.Hotkey, p.Label()))
 	}
 	for _, e := range a.extras {
 		if e.hk == nil {
 			p := a.conf.Profiles[e.profile]
-			out = append(out, fmt.Sprintf("%s (%s): %s", p.Hotkey, p.label(), e.why))
+			out = append(out, fmt.Sprintf("%s (%s): %s", p.Hotkey, p.Label(), e.why))
 		}
 	}
 	return out
@@ -187,12 +188,12 @@ func (a *app) anyHotkeyActive() bool {
 	return false
 }
 
-func sameProfiles(a, b []Profile) bool {
+func sameProfiles(a, b []config.Profile) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if a[i].Hotkey != b[i].Hotkey || a[i].Target != b[i].Target || a[i].outputMode() != b[i].outputMode() || a[i].inputMode() != b[i].inputMode() || len(a[i].Languages) != len(b[i].Languages) {
+		if a[i].Hotkey != b[i].Hotkey || a[i].Target != b[i].Target || a[i].OutputMode() != b[i].OutputMode() || a[i].InputMode() != b[i].InputMode() || len(a[i].Languages) != len(b[i].Languages) {
 			return false
 		}
 		for j := range a[i].Languages {
@@ -286,7 +287,7 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 		// profiles even for legacy files; loadConfig prefers that key.
 		a.conf.AutoPaste, a.conf.NotifyOnComplete, a.conf.MaxChars = cand.AutoPaste, cand.NotifyOnComplete, cand.MaxChars
 		a.conf.IdleUnloadMinutes = cand.IdleUnloadMinutes
-		a.conf.explicitProfiles = cand.explicitProfiles
+		a.conf.ExplicitProfiles = cand.ExplicitProfiles
 	} else {
 		old := a.conf
 		a.closeHotkeys()
@@ -324,7 +325,7 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 	if a.conf.Profiles[0].Languages != nil {
 		set["languages"] = a.conf.Profiles[0].Languages
 	}
-	if err := updateConfigFile(a.dir, set); err != nil {
+	if err := config.UpdateFile(a.dir, set); err != nil {
 		log.Printf("could not save config.json: %v", err)
 		warnings = append(warnings, "The settings work now but could not be saved to config.json: "+err.Error())
 	}

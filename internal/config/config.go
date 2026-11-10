@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"bytes"
@@ -46,7 +46,7 @@ type Config struct {
 	// mirrored in Hotkey and (for a pair profile) Languages for legacy config files.
 	Profiles []Profile `json:"profiles"`
 
-	explicitProfiles bool // config.json has a "profiles" key rather than only legacy hotkey/languages
+	ExplicitProfiles bool `json:"-"` // config.json has a "profiles" key rather than only legacy hotkey/languages
 }
 
 const (
@@ -72,14 +72,14 @@ type Profile struct {
 	Input     string   `json:"input,omitempty"`
 }
 
-func (p Profile) inputMode() string {
+func (p Profile) InputMode() string {
 	if p.Input == InputClipboard {
 		return InputClipboard
 	}
 	return InputSelection
 }
 
-func (p Profile) outputMode() string {
+func (p Profile) OutputMode() string {
 	if p.Output == OutputBilingual {
 		return OutputBilingual
 	}
@@ -88,7 +88,7 @@ func (p Profile) outputMode() string {
 
 // normalizeProfiles makes Profiles non-empty and mirrors profile 0 into
 // Hotkey/Languages. It does not validate.
-func (c *Config) normalizeProfiles() {
+func (c *Config) NormalizeProfiles() {
 	if len(c.Profiles) == 0 {
 		c.Profiles = []Profile{{Hotkey: c.Hotkey, Languages: append([]string(nil), c.Languages...), Output: OutputReplace, Input: InputSelection}}
 		return
@@ -109,7 +109,7 @@ func (c *Config) normalizeProfiles() {
 
 // resolveProfiles validates the hotkey/languages pair, or the profiles when the
 // file has them, and fills Profiles.
-func (c *Config) resolveProfiles(explicit bool) error {
+func (c *Config) ResolveProfiles(explicit bool) error {
 	if !explicit {
 		if c.Hotkey == "" {
 			return errors.New("hotkey cannot be empty")
@@ -123,7 +123,7 @@ func (c *Config) resolveProfiles(explicit bool) error {
 		}
 		c.Languages = langs
 		c.Profiles = nil
-		c.normalizeProfiles()
+		c.NormalizeProfiles()
 		return nil
 	}
 	if len(c.Profiles) == 0 {
@@ -178,12 +178,12 @@ func (c *Config) resolveProfiles(explicit bool) error {
 			return fmt.Errorf("%s: input %q is not supported; valid values: %q, %q", where, p.Input, InputSelection, InputClipboard)
 		}
 	}
-	c.explicitProfiles = true
-	c.normalizeProfiles()
+	c.ExplicitProfiles = true
+	c.NormalizeProfiles()
 	return nil
 }
 
-func defaultConfig() Config {
+func Default() Config {
 	return Config{
 		Hotkey: "Ctrl+Alt+E", Port: 18119, PollMS: 50, MaxChars: 4000, MaxTokens: 2048, ContextTokens: 4096,
 		GPULayers: 0, TranslationTimeoutSec: 180, StartupTimeoutSec: 120,
@@ -203,23 +203,23 @@ var utf8BOM = []byte("\xEF\xBB\xBF")
 func validateHotkey(s string) error { return hotkeyspec.Validate(runtime.GOOS, s) }
 
 // Shared validation keeps config.json and the Settings page consistent.
-func validateIdleUnloadMinutes(n int) error {
+func ValidateIdleUnloadMinutes(n int) error {
 	if n < 0 || n > 1440 {
 		return errors.New("idle_unload_minutes must be a whole number from 0 to 1440 (0 disables automatic unloading)")
 	}
 	return nil
 }
 
-// validateMaxChars is the one check of max_chars, for config.json and the settings page.
-func validateMaxChars(n int) error {
+// ValidateMaxChars is the one check of max_chars, for config.json and the settings page.
+func ValidateMaxChars(n int) error {
 	if n < 1 || n > 100000 {
 		return errors.New("max_chars out of range (1..100000)")
 	}
 	return nil
 }
 
-func loadConfig(dir string) (Config, error) {
-	c := defaultConfig()
+func Load(dir string) (Config, error) {
+	c := Default()
 	b, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return c, nil
@@ -230,7 +230,7 @@ func loadConfig(dir string) (Config, error) {
 	if err := json.Unmarshal(bytes.TrimPrefix(b, utf8BOM), &c); err != nil {
 		return c, err
 	}
-	if err := c.resolveProfiles(c.Profiles != nil); err != nil {
+	if err := c.ResolveProfiles(c.Profiles != nil); err != nil {
 		return c, err
 	}
 	// main() also listens on port+1 to allow only one instance, so 65535 would overflow.
@@ -240,10 +240,10 @@ func loadConfig(dir string) (Config, error) {
 	if c.PollMS < 20 || c.PollMS > 10000 {
 		return c, errors.New("poll_ms must be 20..10000")
 	}
-	if err := validateIdleUnloadMinutes(c.IdleUnloadMinutes); err != nil {
+	if err := ValidateIdleUnloadMinutes(c.IdleUnloadMinutes); err != nil {
 		return c, err
 	}
-	if err := validateMaxChars(c.MaxChars); err != nil {
+	if err := ValidateMaxChars(c.MaxChars); err != nil {
 		return c, err
 	}
 	if c.MaxTokens < 1 || c.MaxTokens > 32768 {

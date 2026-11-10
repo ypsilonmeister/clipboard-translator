@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/hotkeyspec"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
@@ -539,13 +540,13 @@ func winKeyName(goos string) string {
 }
 
 // formFromProfile splits a profile's hotkey into check boxes and a key name.
-func formFromProfile(p Profile, goos string) (profileForm, error) {
+func formFromProfile(p config.Profile, goos string) (profileForm, error) {
 	spec, err := hotkeyspec.ParseNames(p.Hotkey, goos != "windows", goos == "darwin")
 	if err != nil {
 		return profileForm{}, err
 	}
 	return profileForm{Ctrl: spec.Ctrl, Alt: spec.Alt, Shift: spec.Shift, Win: spec.Win, Key: spec.Key,
-		Languages: append([]string(nil), p.Languages...), Target: p.Target, Output: p.outputMode(), Input: p.inputMode()}, nil
+		Languages: append([]string(nil), p.Languages...), Target: p.Target, Output: p.OutputMode(), Input: p.InputMode()}, nil
 }
 
 // hotkeyString writes the form's hotkey the way config.json does.
@@ -564,7 +565,7 @@ func (f profileForm) hotkeyString() string {
 
 // toConfig is base with the form's profiles and auto-paste, validated like a
 // config.json read at start-up. base is not modified.
-func (f settingsForm) toConfig(base Config) (Config, error) {
+func (f settingsForm) toConfig(base config.Config) (config.Config, error) {
 	c := base
 	hasField := func(field string) bool {
 		if len(f.Changed) == 0 {
@@ -581,12 +582,12 @@ func (f settingsForm) toConfig(base Config) (Config, error) {
 		if len(f.Profiles) == 0 {
 			return base, errors.New("There must be at least one hotkey.")
 		}
-		c.Profiles = make([]Profile, len(f.Profiles))
+		c.Profiles = make([]config.Profile, len(f.Profiles))
 		for i, p := range f.Profiles {
 			if p.Target != "" && len(p.Languages) > 0 {
 				return base, fmt.Errorf("profiles[%d]: use either two languages or one target language, not both", i)
 			}
-			c.Profiles[i] = Profile{Hotkey: p.hotkeyString(), Output: p.Output, Input: p.Input}
+			c.Profiles[i] = config.Profile{Hotkey: p.hotkeyString(), Output: p.Output, Input: p.Input}
 			if p.Target != "" {
 				c.Profiles[i].Target = p.Target
 			} else {
@@ -601,18 +602,18 @@ func (f settingsForm) toConfig(base Config) (Config, error) {
 		c.NotifyOnComplete = f.NotifyOnComplete
 	}
 	if hasField("idle_unload_minutes") {
-		if err := validateIdleUnloadMinutes(f.IdleUnloadMinutes); err != nil {
+		if err := config.ValidateIdleUnloadMinutes(f.IdleUnloadMinutes); err != nil {
 			return base, err
 		}
 		c.IdleUnloadMinutes = f.IdleUnloadMinutes
 	}
 	if hasField("max_chars") {
-		if err := validateMaxChars(f.MaxChars); err != nil {
+		if err := config.ValidateMaxChars(f.MaxChars); err != nil {
 			return base, err
 		}
 		c.MaxChars = f.MaxChars
 	}
-	if err := c.resolveProfiles(true); err != nil {
+	if err := c.ResolveProfiles(true); err != nil {
 		return base, err
 	}
 	return c, nil

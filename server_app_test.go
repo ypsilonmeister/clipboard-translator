@@ -8,21 +8,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 func TestMissingFilesAndPaths(t *testing.T) {
 	dir := t.TempDir()
-	conf := defaultConfig()
-	p, err := resolvePaths(dir, conf)
+	conf := config.Default()
+	p, err := config.ResolvePaths(dir, conf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := p.missing(); len(got) != 3 {
+	if got := p.Missing(); len(got) != 3 {
 		t.Fatalf("empty folder: missing = %v, want model, template and server", got)
 	}
-	for _, f := range []string{p.model, p.template, p.server} {
+	for _, f := range []string{p.Model, p.Template, p.Server} {
 		if err := os.MkdirAll(filepath.Dir(f), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -30,11 +31,11 @@ func TestMissingFilesAndPaths(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := p.missing(); len(got) != 0 {
+	if got := p.Missing(); len(got) != 0 {
 		t.Fatalf("all present: missing = %v", got)
 	}
 	conf.ModelFile = filepath.Join("..", "outside.gguf")
-	if _, err := resolvePaths(dir, conf); err == nil {
+	if _, err := config.ResolvePaths(dir, conf); err == nil {
 		t.Fatal("a path outside the app folder must be rejected")
 	}
 }

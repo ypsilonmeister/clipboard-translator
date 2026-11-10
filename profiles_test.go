@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
@@ -20,16 +21,16 @@ import (
 
 func TestLoadConfigProfiles(t *testing.T) {
 	// No "profiles": one profile from hotkey and languages.
-	c, err := loadConfig(writeConfig(t, `{"hotkey": "Ctrl+Shift+Y", "languages": ["en", "ko"]}`))
-	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Hotkey != "Ctrl+Shift+Y" || !languages.SamePair(c.Profiles[0].Languages, []string{"en", "ko"}) || c.explicitProfiles {
+	c, err := config.Load(writeConfig(t, `{"hotkey": "Ctrl+Shift+Y", "languages": ["en", "ko"]}`))
+	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Hotkey != "Ctrl+Shift+Y" || !languages.SamePair(c.Profiles[0].Languages, []string{"en", "ko"}) || c.ExplicitProfiles {
 		t.Fatalf("derived profile: %+v, %v", c, err)
 	}
 
 	// Explicit profiles win over hotkey/languages, and profile 0 is mirrored.
-	c, err = loadConfig(writeConfig(t, `{"hotkey": "Ctrl+Alt+Q", "languages": ["en", "ko"], "profiles": [
+	c, err = config.Load(writeConfig(t, `{"hotkey": "Ctrl+Alt+Q", "languages": ["en", "ko"], "profiles": [
 		{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]},
 		{"hotkey": "Ctrl+Alt+K", "target": "KO"}]}`))
-	if err != nil || len(c.Profiles) != 2 || !c.explicitProfiles {
+	if err != nil || len(c.Profiles) != 2 || !c.ExplicitProfiles {
 		t.Fatalf("explicit profiles: %+v, %v", c, err)
 	}
 	if c.Hotkey != "Ctrl+Alt+E" || !languages.SamePair(c.Languages, []string{"ja", "en"}) {
@@ -57,9 +58,9 @@ func TestLoadConfigProfiles(t *testing.T) {
 }
 
 func TestProfileDirection(t *testing.T) {
-	target := Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"}
+	target := config.Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"}
 	cases := []struct {
-		p      Profile
+		p      config.Profile
 		input  string
 		source string
 		target string
@@ -71,15 +72,15 @@ func TestProfileDirection(t *testing.T) {
 		{target, "https://example.com", "", "", false},
 		{target, "12345 !?", "", "", false},
 		{target, "   ", "", "", false},
-		{Profile{Languages: []string{"ja", "en"}}, "Hello", "en", "ja", true},
+		{config.Profile{Languages: []string{"ja", "en"}}, "Hello", "en", "ja", true},
 	}
 	for _, tc := range cases {
-		got, ok := tc.p.direction(tc.input, 100)
+		got, ok := tc.p.Direction(tc.input, 100)
 		if ok != tc.ok || got.Source != tc.source || got.Target != tc.target {
 			t.Errorf("%+v %q: got %+v, %v", tc.p, tc.input, got, ok)
 		}
 	}
-	if _, ok := target.direction(strings.Repeat("a", 101), 100); ok {
+	if _, ok := target.Direction(strings.Repeat("a", 101), 100); ok {
 		t.Error("max_chars ignored for a target profile")
 	}
 }
@@ -117,21 +118,21 @@ func (p pressable) Pressed() (bool, error) {
 }
 func (pressable) Close() error { return nil }
 
-func profilesApp(t *testing.T, profiles ...Profile) *app {
+func profilesApp(t *testing.T, profiles ...config.Profile) *app {
 	t.Helper()
 	a, _, _ := newTestApp(t)
 	a.conf.Profiles = profiles
-	a.conf.normalizeProfiles()
+	a.conf.NormalizeProfiles()
 	a.hotkeyLimit = 8
 	return a
 }
 
 func TestExtraHotkeysRegisterAndReportFailures(t *testing.T) {
 	a := profilesApp(t,
-		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
-		Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"},
-		Profile{Hotkey: "Ctrl+Alt+D", Target: "de"},
-		Profile{Hotkey: "Ctrl+Alt+F", Target: "fr"})
+		config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
+		config.Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"},
+		config.Profile{Hotkey: "Ctrl+Alt+D", Target: "de"},
+		config.Profile{Hotkey: "Ctrl+Alt+F", Target: "fr"})
 	a.hotkeyLimit = 3 // profile 4 is beyond what this "OS" can hold
 	a.newHotkey = func(spec string) (platform.Hotkey, error) {
 		if spec == "Ctrl+Alt+D" {
@@ -162,8 +163,8 @@ func TestExtraHotkeysRegisterAndReportFailures(t *testing.T) {
 
 func TestSecondProfileWorksWhenFirstHotkeyIsTaken(t *testing.T) {
 	a := profilesApp(t,
-		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
-		Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"})
+		config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
+		config.Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"})
 	a.newHotkey = func(spec string) (platform.Hotkey, error) {
 		if spec == "Ctrl+Alt+E" {
 			return nil, errors.New("already registered")
@@ -182,9 +183,9 @@ func TestSecondProfileWorksWhenFirstHotkeyIsTaken(t *testing.T) {
 func TestPollHotkeysReportsTheProfileThatFired(t *testing.T) {
 	var f0, f1, f2 bool
 	a := profilesApp(t,
-		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
-		Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"},
-		Profile{Hotkey: "Ctrl+Alt+D", Target: "de"})
+		config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
+		config.Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"},
+		config.Profile{Hotkey: "Ctrl+Alt+D", Target: "de"})
 	a.hotkey = pressable{"Ctrl+Alt+E", &f0}
 	a.extras = []extraHotkey{{profile: 1, hk: pressable{"Ctrl+Alt+K", &f1}}, {profile: 2, hk: pressable{"Ctrl+Alt+D", &f2}}}
 
@@ -220,8 +221,8 @@ func TestEachProfileTranslatesWithItsOwnLanguages(t *testing.T) {
 	defer srv.Close()
 
 	a := profilesApp(t,
-		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
-		Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"})
+		config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
+		config.Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"})
 	a.endpoint = srv.URL
 	a.cb = &testClipboard{text: "Hello"}
 	a.foreground = func() uintptr { return 1 }
@@ -255,8 +256,8 @@ func TestEachProfileTranslatesWithItsOwnOutputMode(t *testing.T) {
 	defer srv.Close()
 
 	a := profilesApp(t,
-		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Output: OutputReplace},
-		Profile{Hotkey: "Ctrl+Alt+B", Languages: []string{"ja", "en"}, Output: OutputBilingual})
+		config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Output: config.OutputReplace},
+		config.Profile{Hotkey: "Ctrl+Alt+B", Languages: []string{"ja", "en"}, Output: config.OutputBilingual})
 	a.endpoint = srv.URL
 	a.foreground = func() uintptr { return 1 }
 	a.paste = func(uintptr) error { return nil }
@@ -301,8 +302,8 @@ func TestClipboardInputProfileDoesNotCapture(t *testing.T) {
 	defer srv.Close()
 
 	a := profilesApp(t,
-		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Input: InputClipboard},
-		Profile{Hotkey: "Ctrl+Alt+S", Languages: []string{"ja", "en"}, Input: InputSelection})
+		config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Input: config.InputClipboard},
+		config.Profile{Hotkey: "Ctrl+Alt+S", Languages: []string{"ja", "en"}, Input: config.InputSelection})
 	a.endpoint = srv.URL
 	a.foreground = func() uintptr { return 1 }
 	pastes := 0
@@ -356,7 +357,7 @@ func TestClipboardInputProfileDoesNotCapture(t *testing.T) {
 
 // An empty clipboard with a clipboard profile is a routine skip, not an error.
 func TestClipboardInputProfileEmptyClipboardIsSkipped(t *testing.T) {
-	a := profilesApp(t, Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Input: InputClipboard})
+	a := profilesApp(t, config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Input: config.InputClipboard})
 	a.foreground = func() uintptr { return 1 }
 	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) {
 		t.Error("capture must not be called for a clipboard profile")
@@ -376,9 +377,9 @@ func TestClipboardInputProfileEmptyClipboardIsSkipped(t *testing.T) {
 
 func TestSettingsChangesSaveProfilesWhenTheFileHasThem(t *testing.T) {
 	a := profilesApp(t,
-		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
-		Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"})
-	a.conf.explicitProfiles = true
+		config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
+		config.Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"})
+	a.conf.ExplicitProfiles = true
 	a.hotkey = fakeHotkey{"Ctrl+Alt+E"}
 
 	changeSettingsLanguages(t, a, []string{"en", "ru"})
@@ -389,7 +390,7 @@ func TestSettingsChangesSaveProfilesWhenTheFileHasThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out struct {
-		Profiles []Profile `json:"profiles"`
+		Profiles []config.Profile `json:"profiles"`
 	}
 	if err := json.Unmarshal(b, &out); err != nil || len(out.Profiles) != 2 {
 		t.Fatalf("profiles not saved: %s %v", b, err)
@@ -406,7 +407,7 @@ func TestSettingsChangesSaveProfilesWhenTheFileHasThem(t *testing.T) {
 }
 
 func TestSettingsPreservesTargetOnUnrelatedSave(t *testing.T) {
-	a := profilesApp(t, Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"})
+	a := profilesApp(t, config.Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"})
 	saveSettingsField(t, a, "auto_paste", true)
 	st := a.settingsState()
 	if st.Profiles[0].Target != "ko" || st.Profiles[0].Languages != nil {
@@ -425,12 +426,12 @@ func TestSettingsPreservesTargetOnUnrelatedSave(t *testing.T) {
 func TestChangeHotkeyRefusesAKeyUsedByAnInactiveProfile(t *testing.T) {
 	a, _, _ := newTestApp(t)
 	a.hotkeyLimit = 1
-	a.conf.Profiles = []Profile{
+	a.conf.Profiles = []config.Profile{
 		{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
 		{Hotkey: "Ctrl+Alt+K", Target: "ko"},
 	}
-	a.conf.explicitProfiles = true
-	a.conf.normalizeProfiles()
+	a.conf.ExplicitProfiles = true
+	a.conf.NormalizeProfiles()
 	cfg := `{"port": ` + strconv.Itoa(a.conf.Port) + `, "profiles": [{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko"}]}`
 	path := filepath.Join(a.dir, "config.json")
 	if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
@@ -456,7 +457,7 @@ func TestChangeHotkeyRefusesAKeyUsedByAnInactiveProfile(t *testing.T) {
 	if err != nil || string(got) != cfg {
 		t.Errorf("config.json must be left alone: %s %v", got, err)
 	}
-	if _, err := loadConfig(a.dir); err != nil {
+	if _, err := config.Load(a.dir); err != nil {
 		t.Errorf("the saved configuration must still load: %v", err)
 	}
 
@@ -465,7 +466,7 @@ func TestChangeHotkeyRefusesAKeyUsedByAnInactiveProfile(t *testing.T) {
 	if a.conf.Hotkey != "Ctrl+Shift+Y" {
 		t.Fatalf("a free key was refused: %q", a.conf.Hotkey)
 	}
-	if _, err := loadConfig(a.dir); err != nil {
+	if _, err := config.Load(a.dir); err != nil {
 		t.Errorf("config after a valid change must load: %v", err)
 	}
 }
