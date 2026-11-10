@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
@@ -27,8 +28,8 @@ type app struct {
 	endpoint string
 	paths    appPaths
 	tray     platform.Tray
-	sup      *supervisor
-	limiter  restartLimiter
+	sup      *llamaserver.Supervisor
+	limiter  llamaserver.RestartLimiter
 	readyTip string
 
 	modelUnloaded   bool // intentional stop; hotkeys load it again
@@ -129,7 +130,7 @@ func newApp(dir string, conf Config, paths appPaths, tray platform.Tray, serverL
 		endpoint:            fmt.Sprintf("http://127.0.0.1:%d", conf.Port),
 		paths:               paths,
 		tray:                tray,
-		limiter:             restartLimiter{max: 3, window: 10 * time.Minute},
+		limiter:             llamaserver.RestartLimiter{Max: 3, Window: 10 * time.Minute},
 		readyTip:            "Clipboard Translator - ready (" + conf.Hotkey + ")",
 
 		newHotkey:    platform.NewHotkey,
@@ -143,16 +144,16 @@ func newApp(dir string, conf Config, paths appPaths, tray platform.Tray, serverL
 		now:          time.Now,
 	}
 	tray.SetMenu(a.buildMenu)
-	a.sup = &supervisor{
-		model: paths.model, template: paths.template,
-		contextTokens: conf.ContextTokens, port: conf.Port, endpoint: a.endpoint,
-		logOut:         serverLog,
-		onStarted:      a.serverStarted,
-		startupTimeout: time.Duration(conf.StartupTimeoutSec) * time.Second,
-		pidFile:        platform.ChildRecordPath(dir, conf.Port),
+	a.sup = &llamaserver.Supervisor{
+		Model: paths.model, Template: paths.template,
+		ContextTokens: conf.ContextTokens, Port: conf.Port, Endpoint: a.endpoint,
+		LogOut:         serverLog,
+		OnStarted:      a.serverStarted,
+		StartupTimeout: time.Duration(conf.StartupTimeoutSec) * time.Second,
+		PIDFile:        platform.ChildRecordPath(dir, conf.Port),
 	}
 	lastSec := time.Duration(-1)
-	a.sup.ui = func(label string, elapsed time.Duration) bool {
+	a.sup.UI = func(label string, elapsed time.Duration) bool {
 		if a.pendingDuringLoad != nil {
 			if pressed, profile, err := a.pollHotkeys(); err == nil && pressed {
 				*a.pendingDuringLoad = profile
@@ -209,21 +210,21 @@ func (a *app) startServer() error {
 	defer a.beginServerWork()()
 	if !models.IsCustomTemplate(a.conf.TemplateFile) {
 		if m, known := models.ForFile(a.conf.ModelFile); known {
-			if !models.VerifyFileSha256(a.sup.template, m.TemplateSha256) {
-				return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(a.sup.template), m.Name)
+			if !models.VerifyFileSha256(a.sup.Template, m.TemplateSha256) {
+				return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(a.sup.Template), m.Name)
 			}
 		}
 	}
-	err := a.sup.start(a.paths.server, a.conf.GPULayers, "loading model")
+	err := a.sup.Start(a.paths.server, a.conf.GPULayers, "loading model")
 	if err == nil {
 		a.activeBackend = currentBackend(a.conf.ServerFile)
 		return nil
 	}
-	if errors.Is(err, errQuit) {
+	if errors.Is(err, llamaserver.ErrQuit) {
 		return err
 	}
-	var dnf *dllNotFoundError
-	if errors.As(err, &dnf) && dnf.vcMissing {
+	var dnf *llamaserver.DLLNotFoundError
+	if errors.As(err, &dnf) && dnf.VCMissing {
 		return err // every build needs the runtime; the CPU build cannot help
 	}
 	log.Printf("preferred backend failed: %v; see server.log", err)
@@ -242,7 +243,7 @@ func (a *app) startServer() error {
 // tried. It remembers what it sees in activeBackend.
 func (a *app) runningBackend() string {
 	if a.sup.Running() {
-		rel, err := filepath.Rel(a.dir, a.sup.cmd.Path)
+		rel, err := filepath.Rel(a.dir, a.sup.BinaryPath())
 		if err == nil {
 			b := currentBackend(rel)
 			a.activeBackend = b
@@ -258,7 +259,7 @@ func (a *app) runningBackend() string {
 // onFallback reports whether the server running now is the CPU fallback that
 // startServer chose because the preferred engine did not start.
 func (a *app) onFallback() bool {
-	return a.sup.Running() && a.paths.server != a.paths.fallback && a.sup.cmd.Path == a.paths.fallback
+	return a.sup.Running() && a.paths.server != a.paths.fallback && a.sup.BinaryPath() == a.paths.fallback
 }
 
 // startFallback starts the CPU fallback build.
@@ -266,8 +267,8 @@ func (a *app) startFallback() error {
 	defer a.beginServerWork()()
 	if !models.IsCustomTemplate(a.conf.TemplateFile) {
 		if m, known := models.ForFile(a.conf.ModelFile); known {
-			if !models.VerifyFileSha256(a.sup.template, m.TemplateSha256) {
-				return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(a.sup.template), m.Name)
+			if !models.VerifyFileSha256(a.sup.Template, m.TemplateSha256) {
+				return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(a.sup.Template), m.Name)
 			}
 		}
 	}
@@ -275,11 +276,11 @@ func (a *app) startFallback() error {
 		return fmt.Errorf("CPU fallback unavailable: %w", statErr)
 	}
 	log.Print("falling back to CPU")
-	if err := a.sup.start(a.paths.fallback, 0, "loading model (CPU)"); err != nil {
-		if errors.Is(err, errQuit) {
+	if err := a.sup.Start(a.paths.fallback, 0, "loading model (CPU)"); err != nil {
+		if errors.Is(err, llamaserver.ErrQuit) {
 			return err
 		}
-		var dnf *dllNotFoundError
+		var dnf *llamaserver.DLLNotFoundError
 		if errors.As(err, &dnf) {
 			return err // the same missing runtime stops both builds; say that, not "fallback failed"
 		}
@@ -313,11 +314,11 @@ func (a *app) restartServer() bool {
 	for {
 		if !a.limiter.Allow(time.Now()) {
 			a.failed(fmt.Errorf("The translation server keeps stopping (%d times in %s), so the app is quitting",
-				a.limiter.max, a.limiter.window))
+				a.limiter.Max, a.limiter.Window))
 			return false
 		}
-		wait := restartBackoff(a.limiter.Attempt())
-		log.Printf("restarting the server in %s (attempt %d of %d)", wait, a.limiter.Attempt(), a.limiter.max)
+		wait := llamaserver.RestartBackoff(a.limiter.Attempt())
+		log.Printf("restarting the server in %s (attempt %d of %d)", wait, a.limiter.Attempt(), a.limiter.Max)
 		a.cancelTransientStatus()
 		a.tray.SetStatus("Clipboard Translator - server stopped, restarting...")
 		a.tray.Notify("Clipboard Translator", "The translation server stopped. Restarting it...", true)
@@ -329,7 +330,7 @@ func (a *app) restartServer() bool {
 		if err == nil {
 			break
 		}
-		if errors.Is(err, errQuit) {
+		if errors.Is(err, llamaserver.ErrQuit) {
 			log.Print("quit requested during restart")
 			return false
 		}
@@ -356,7 +357,7 @@ func (a *app) run() {
 	a.tray.SetStatus("Clipboard Translator - loading model...")
 	defer a.sup.Stop()
 	if err := a.startServer(); err != nil {
-		if errors.Is(err, errQuit) {
+		if errors.Is(err, llamaserver.ErrQuit) {
 			log.Print("quit requested during startup")
 			return
 		}
@@ -776,7 +777,7 @@ func (a *app) translateCaptured(profile Profile, win uintptr, source string, fro
 			a.modelUnloaded = true
 			a.updateReadyTip()
 			a.refreshStatus()
-			if !errors.Is(err, errQuit) {
+			if !errors.Is(err, llamaserver.ErrQuit) {
 				a.failed(err)
 			}
 			return
@@ -808,7 +809,7 @@ func (a *app) translateCaptured(profile Profile, win uintptr, source string, fro
 	a.cancelTransientStatus()
 	a.translating, a.translateStart, a.lastTranslSec = true, a.timeNow(), 0
 	g := a.generation
-	key := a.sup.apiKey // read here: the supervisor belongs to this thread
+	key := a.sup.APIKey() // read here: the supervisor belongs to this thread
 	from := direction.Source
 	if from == "" {
 		from = "auto"
@@ -817,7 +818,7 @@ func (a *app) translateCaptured(profile Profile, win uintptr, source string, fro
 	a.tray.SetStatus("Clipboard Translator - translating... (0s)")
 	outputMode := profile.outputMode()
 	go func() {
-		translated, err := translate(ctx, a.endpoint, key, source, direction, a.conf.MaxTokens)
+		translated, err := llamaserver.Translate(ctx, a.endpoint, key, source, direction, a.conf.MaxTokens)
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
 			direction: direction, window: win, fromSelection: fromSelection, output: outputMode,
@@ -839,7 +840,7 @@ func (a *app) handleResult(res result) {
 		if !errors.Is(res.err, context.Canceled) {
 			log.Printf("translation failed: %v", res.err)
 			msg := "See translator.log for details."
-			if errors.Is(res.err, errTruncated) {
+			if errors.Is(res.err, llamaserver.ErrTruncated) {
 				msg = "The translation was cut off at the token limit, so no translation was put on the clipboard. Select less text, or raise max_tokens / context_tokens in config.json."
 			}
 			a.tray.Notify("Translation failed", msg, true)

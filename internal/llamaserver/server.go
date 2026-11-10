@@ -1,4 +1,4 @@
-package main
+package llamaserver
 
 import (
 	"context"
@@ -16,38 +16,84 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
-// errQuit is returned by supervisor.start when the user chose "Quit" while the
+// ErrQuit is returned by Supervisor.Start when the user chose "Quit" while the
 // model was loading.
-var errQuit = errors.New("quit requested")
+var ErrQuit = errors.New("quit requested")
 
-// supervisor owns the llama-server child process: it starts it, waits until the
+// Supervisor owns the llama-server child process: it starts it, waits until the
 // model is loaded, and lets the main loop learn when the process dies.
-type supervisor struct {
-	model, template string
-	contextTokens   int
-	port            int
-	endpoint        string
-	logOut          io.Writer
-	startupTimeout  time.Duration
+type Supervisor struct {
+	Model, Template string
+	ContextTokens   int
+	Port            int
+	Endpoint        string
+	LogOut          io.Writer
+	StartupTimeout  time.Duration
 
-	// ui is called about every 50 ms while start blocks. It must service the
+	// UI is called about every 50 ms while Start blocks. It must service the
 	// tray's message pump and return true when the user asked to quit, which
 	// aborts the wait. label says what is going on ("loading model") and
 	// elapsed how long it has been going on.
-	ui func(label string, elapsed time.Duration) (quit bool)
+	UI func(label string, elapsed time.Duration) (quit bool)
 
-	// pidFile records the running server so a later start can stop it if the
-	// app dies without stopping it (macOS only; see recordChild). Empty: none.
-	pidFile string
+	// PIDFile records the running server so a later start can stop it if the
+	// app dies without stopping it (macOS only; see platform.RecordChild).
+	// Empty: none.
+	PIDFile string
 
-	// apiKey is the key the running server requires (see serverEnv). start makes
-	// a new one each time; it is never logged.
+	// apiKey is the key the running server requires (see serverEnv). Start makes
+	// a new one each time; it is never logged. APIKey reads it.
 	apiKey string
 
-	onStarted func() // UI-thread callback after a successful start
+	OnStarted func() // UI-thread callback after a successful start
 	starting  bool
 	cmd       *exec.Cmd
 	done      chan struct{} // closed when cmd has exited
+}
+
+// APIKey is the key the running server requires, "" when none is running. Like
+// the rest of the Supervisor it belongs to the UI thread.
+func (s *Supervisor) APIKey() string { return s.apiKey }
+
+// BinaryPath is the llama-server executable that is running, "" when none is.
+func (s *Supervisor) BinaryPath() string {
+	if s.cmd == nil {
+		return ""
+	}
+	return s.cmd.Path
+}
+
+// Args is the command line of the running server (without the program name's
+// environment, so without the key), nil when none is running.
+func (s *Supervisor) Args() []string {
+	if s.cmd == nil {
+		return nil
+	}
+	return append([]string(nil), s.cmd.Args...)
+}
+
+// Starting reports whether Start is running (the UI callback can be reached
+// while it blocks).
+func (s *Supervisor) Starting() bool { return s.starting }
+
+// SetStarting overrides Starting. It exists so that tests of the app can stage
+// "the server is starting" without running one.
+func (s *Supervisor) SetStarting(v bool) { s.starting = v }
+
+// Kill ends the server process at once, without Stop's bookkeeping. It exists
+// so that tests can simulate a crash.
+func (s *Supervisor) Kill() {
+	if s.cmd != nil && s.cmd.Process != nil {
+		_ = s.cmd.Process.Kill()
+	}
+}
+
+// PID is the process id of the running server, 0 when none is.
+func (s *Supervisor) PID() int {
+	if s.cmd == nil || s.cmd.Process == nil {
+		return 0
+	}
+	return s.cmd.Process.Pid
 }
 
 // newAPIKey returns 32 random bytes as hex.
@@ -88,19 +134,19 @@ func serverArgs(model, template string, contextTokens, port, gpuLayers int) []st
 }
 
 // serverArgs returns the command-line arguments for this supervisor's server.
-func (s *supervisor) serverArgs(gpuLayers int) []string {
-	return serverArgs(s.model, s.template, s.contextTokens, s.port, gpuLayers)
+func (s *Supervisor) serverArgs(gpuLayers int) []string {
+	return serverArgs(s.Model, s.Template, s.ContextTokens, s.Port, gpuLayers)
 }
 
-// start launches binary and blocks until the server answers /health.
-func (s *supervisor) start(binary string, gpuLayers int, label string) error {
+// Start launches binary and blocks until the server answers /health.
+func (s *Supervisor) Start(binary string, gpuLayers int, label string) error {
 	s.starting = true
 	defer func() { s.starting = false }()
 	// Without the VC++ runtime every llama.cpp build dies at once with no output,
 	// so say so instead of starting a process that cannot work.
 	if !platform.VCRuntimeAvailable(filepath.Dir(binary)) {
 		log.Printf("not starting %s: vcruntime140_1.dll was not found", binary)
-		return &dllNotFoundError{binary: filepath.Base(binary), vcMissing: true}
+		return &DLLNotFoundError{binary: filepath.Base(binary), VCMissing: true}
 	}
 	key, err := newAPIKey()
 	if err != nil {
@@ -110,25 +156,25 @@ func (s *supervisor) start(binary string, gpuLayers int, label string) error {
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = filepath.Dir(binary)
 	cmd.Env = serverEnv(os.Environ(), key)
-	cmd.Stdout, cmd.Stderr = s.logOut, s.logOut
+	cmd.Stdout, cmd.Stderr = s.LogOut, s.LogOut
 	platform.HideConsole(cmd)
 	log.Printf("starting %s (gpu_layers=%d)", binary, gpuLayers)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 	platform.BindToParentLifetime(cmd)
-	platform.RecordChild(s.pidFile, cmd)
+	platform.RecordChild(s.PIDFile, cmd)
 	done := make(chan struct{})
 	var waitErr error                                 // read only after done is closed
 	go func() { waitErr = cmd.Wait(); close(done) }() // the only Wait on this child
 
 	begin := time.Now()
-	startupCtx, cancel := context.WithTimeout(context.Background(), s.startupTimeout)
+	startupCtx, cancel := context.WithTimeout(context.Background(), s.StartupTimeout)
 	defer cancel()
 	// waitReady blocks, so run it aside and keep servicing the tray window on
 	// this thread while the model loads.
 	readyErr := make(chan error, 1)
-	go func() { readyErr <- waitReady(startupCtx, s.endpoint, done) }()
+	go func() { readyErr <- WaitReady(startupCtx, s.Endpoint, done) }()
 	pump := time.NewTicker(50 * time.Millisecond)
 	defer pump.Stop()
 	quit := false
@@ -138,7 +184,7 @@ wait:
 		case err = <-readyErr:
 			break wait
 		case <-pump.C:
-			if s.ui != nil && s.ui(label, time.Since(begin)) && !quit {
+			if s.UI != nil && s.UI(label, time.Since(begin)) && !quit {
 				quit = true
 				cancel()
 			}
@@ -147,18 +193,18 @@ wait:
 	if err != nil {
 		_ = cmd.Process.Kill()
 		<-done
-		platform.ForgetChild(s.pidFile)
+		platform.ForgetChild(s.PIDFile)
 		if quit {
-			return errQuit
+			return ErrQuit
 		}
-		if isDLLNotFound(waitErr) {
-			return &dllNotFoundError{binary: filepath.Base(binary), vcMissing: !platform.VCRuntimeAvailable(filepath.Dir(binary))}
+		if IsDLLNotFound(waitErr) {
+			return &DLLNotFoundError{binary: filepath.Base(binary), VCMissing: !platform.VCRuntimeAvailable(filepath.Dir(binary))}
 		}
 		return err
 	}
 	s.cmd, s.done, s.apiKey = cmd, done, key
-	if s.onStarted != nil {
-		s.onStarted()
+	if s.OnStarted != nil {
+		s.OnStarted()
 	}
 	return nil
 }
@@ -171,23 +217,23 @@ const statusDLLNotFound = 0xC0000135
 
 func exitCodeIsDLLNotFound(code int) bool { return uint32(code) == statusDLLNotFound }
 
-// isDLLNotFound reports whether err (from cmd.Wait) is that exit.
-func isDLLNotFound(err error) bool {
+// IsDLLNotFound reports whether err (from cmd.Wait) is that exit.
+func IsDLLNotFound(err error) bool {
 	var ee *exec.ExitError
 	return errors.As(err, &ee) && exitCodeIsDLLNotFound(ee.ExitCode())
 }
 
-// dllNotFoundError means llama-server could not even start because Windows
+// DLLNotFoundError means llama-server could not even start because Windows
 // could not load a DLL it needs. Another engine build will not help in the
 // common case (the shared runtime is missing), so the message tells the user
 // what to install.
-type dllNotFoundError struct {
+type DLLNotFoundError struct {
 	binary    string
-	vcMissing bool // vcruntime140_1.dll is neither next to the exe nor in System32
+	VCMissing bool // vcruntime140_1.dll is neither next to the exe nor in System32
 }
 
-func (e *dllNotFoundError) Error() string {
-	return dllNotFoundMessage(e.binary, !e.vcMissing)
+func (e *DLLNotFoundError) Error() string {
+	return dllNotFoundMessage(e.binary, !e.VCMissing)
 }
 
 const vcRedistHelp = "Install the Visual C++ Redistributable (x64), then start Clipboard Translator again:\n" +
@@ -205,7 +251,7 @@ func dllNotFoundMessage(binary string, vcInstalled bool) string {
 
 // Exited is closed when the running server dies. It is nil (never ready) when
 // no server is running, so it can sit in a select unconditionally.
-func (s *supervisor) Exited() <-chan struct{} {
+func (s *Supervisor) Exited() <-chan struct{} {
 	if s.done == nil {
 		return nil
 	}
@@ -213,31 +259,31 @@ func (s *supervisor) Exited() <-chan struct{} {
 }
 
 // Running reports whether a server is started and being watched.
-func (s *supervisor) Running() bool { return s.cmd != nil }
+func (s *Supervisor) Running() bool { return s.cmd != nil }
 
 // Stop kills the server if it is still running and reaps it.
-func (s *supervisor) Stop() {
+func (s *Supervisor) Stop() {
 	if s.cmd == nil {
 		return
 	}
 	_ = s.cmd.Process.Kill()
 	<-s.done
-	platform.ForgetChild(s.pidFile)
+	platform.ForgetChild(s.PIDFile)
 	s.cmd, s.done, s.apiKey = nil, nil, ""
 }
 
-// restartLimiter allows at most max restarts within a sliding window, so a
+// RestartLimiter allows at most max restarts within a sliding window, so a
 // server that dies at once, again and again, is given up on instead of being
 // restarted forever.
-type restartLimiter struct {
-	max    int
-	window time.Duration
+type RestartLimiter struct {
+	Max    int
+	Window time.Duration
 	times  []time.Time
 }
 
 // Allow records a restart at now and reports whether it is within the limit.
-func (r *restartLimiter) Allow(now time.Time) bool {
-	cutoff := now.Add(-r.window)
+func (r *RestartLimiter) Allow(now time.Time) bool {
+	cutoff := now.Add(-r.Window)
 	kept := r.times[:0]
 	for _, t := range r.times {
 		if t.After(cutoff) {
@@ -245,7 +291,7 @@ func (r *restartLimiter) Allow(now time.Time) bool {
 		}
 	}
 	r.times = kept
-	if len(r.times) >= r.max {
+	if len(r.times) >= r.Max {
 		return false
 	}
 	r.times = append(r.times, now)
@@ -253,11 +299,11 @@ func (r *restartLimiter) Allow(now time.Time) bool {
 }
 
 // Attempt is the number of restarts recorded in the current window.
-func (r *restartLimiter) Attempt() int { return len(r.times) }
+func (r *RestartLimiter) Attempt() int { return len(r.times) }
 
-// restartBackoff is how long to wait before restart number attempt (1-based):
+// RestartBackoff is how long to wait before restart number attempt (1-based):
 // 1s, 2s, 4s, ... capped at 30s.
-func restartBackoff(attempt int) time.Duration {
+func RestartBackoff(attempt int) time.Duration {
 	if attempt < 1 {
 		attempt = 1
 	}

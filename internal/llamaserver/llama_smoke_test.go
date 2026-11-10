@@ -1,6 +1,6 @@
 //go:build llamasmoke
 
-package main
+package llamaserver
 
 import (
 	"bytes"
@@ -66,19 +66,19 @@ func TestLlamaSmoke(t *testing.T) {
 	endpoint := fmt.Sprintf("http://127.0.0.1:%d", port)
 
 	var logBuf bytes.Buffer
-	sup := &supervisor{
-		model:          smokeModel,
-		template:       smokeTemplate,
-		contextTokens:  2048,
-		port:           port,
-		endpoint:       endpoint,
-		logOut:         io.MultiWriter(os.Stderr, &logBuf),
-		startupTimeout: 180 * time.Second,
-		ui:             func(label string, elapsed time.Duration) bool { return false },
+	sup := &Supervisor{
+		Model:          smokeModel,
+		Template:       smokeTemplate,
+		ContextTokens:  2048,
+		Port:           port,
+		Endpoint:       endpoint,
+		LogOut:         io.MultiWriter(os.Stderr, &logBuf),
+		StartupTimeout: 180 * time.Second,
+		UI:             func(label string, elapsed time.Duration) bool { return false },
 	}
 
 	t.Logf("starting llama-server from %s (port %d)", smokeServer, port)
-	if err := sup.start(smokeServer, 0, "smoke test"); err != nil {
+	if err := sup.Start(smokeServer, 0, "smoke test"); err != nil {
 		t.Fatalf("failed to start llama-server: %v\nServer log:\n%s", err, logBuf.String())
 	}
 	t.Cleanup(func() {
@@ -94,8 +94,8 @@ func TestLlamaSmoke(t *testing.T) {
 
 	// 1. Japanese to English
 	jaInput := "明日の会議は10時からに変更になりました。"
-	ja2en, err := translate(ctx, sup.endpoint, sup.apiKey, jaInput, languages.Direction{Source: "ja", Target: "en"}, 256)
-	if errors.Is(err, errTruncated) {
+	ja2en, err := Translate(ctx, sup.Endpoint, sup.APIKey(), jaInput, languages.Direction{Source: "ja", Target: "en"}, 256)
+	if errors.Is(err, ErrTruncated) {
 		t.Fatalf("ja->en translation was truncated")
 	} else if err != nil {
 		t.Fatalf("ja->en translation failed: %v", err)
@@ -113,8 +113,8 @@ func TestLlamaSmoke(t *testing.T) {
 
 	// 2. English to Japanese
 	enInput := "Could you take a look at the pull request when you get a chance?"
-	en2ja, err := translate(ctx, sup.endpoint, sup.apiKey, enInput, languages.Direction{Source: "en", Target: "ja"}, 256)
-	if errors.Is(err, errTruncated) {
+	en2ja, err := Translate(ctx, sup.Endpoint, sup.APIKey(), enInput, languages.Direction{Source: "en", Target: "ja"}, 256)
+	if errors.Is(err, ErrTruncated) {
 		t.Fatalf("en->ja translation was truncated")
 	} else if err != nil {
 		t.Fatalf("en->ja translation failed: %v", err)
@@ -129,8 +129,8 @@ func TestLlamaSmoke(t *testing.T) {
 
 	// 3. Target-only request (no source_lang)
 	targetOnlyInput := "Could you take a look at the pull request when you get a chance?"
-	targetOnly, err := translate(ctx, sup.endpoint, sup.apiKey, targetOnlyInput, languages.Direction{Target: "ja"}, 256)
-	if errors.Is(err, errTruncated) {
+	targetOnly, err := Translate(ctx, sup.Endpoint, sup.APIKey(), targetOnlyInput, languages.Direction{Target: "ja"}, 256)
+	if errors.Is(err, ErrTruncated) {
 		t.Fatalf("target-only translation was truncated")
 	} else if err != nil {
 		t.Fatalf("target-only request failed: %v", err)
@@ -146,7 +146,7 @@ func TestLlamaSmoke(t *testing.T) {
 	// 4. Server rejects request without API key (HTTP 401)
 	ctxKey, cancelKey := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelKey()
-	_, errNoKey := translate(ctxKey, sup.endpoint, "", "Hello", languages.Direction{Source: "en", Target: "ja"}, 64)
+	_, errNoKey := Translate(ctxKey, sup.Endpoint, "", "Hello", languages.Direction{Source: "en", Target: "ja"}, 64)
 	if errNoKey == nil {
 		t.Error("expected HTTP 401 error without API key, got nil")
 	} else if !strings.Contains(errNoKey.Error(), "401") {

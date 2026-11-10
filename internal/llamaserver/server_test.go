@@ -1,15 +1,10 @@
-package main
+package llamaserver
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 func TestRestartBackoff(t *testing.T) {
@@ -18,14 +13,14 @@ func TestRestartBackoff(t *testing.T) {
 		5: 16 * time.Second, 6: 30 * time.Second, 50: 30 * time.Second,
 	}
 	for attempt, d := range want {
-		if got := restartBackoff(attempt); got != d {
+		if got := RestartBackoff(attempt); got != d {
 			t.Errorf("restartBackoff(%d) = %v, want %v", attempt, got, d)
 		}
 	}
 }
 
 func TestRestartLimiter(t *testing.T) {
-	r := restartLimiter{max: 3, window: 10 * time.Minute}
+	r := RestartLimiter{Max: 3, Window: 10 * time.Minute}
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 1; i <= 3; i++ {
 		if !r.Allow(t0.Add(time.Duration(i) * time.Minute)) {
@@ -49,38 +44,11 @@ func TestRestartLimiter(t *testing.T) {
 }
 
 func TestSupervisorExitedIsNilWhenStopped(t *testing.T) {
-	var s supervisor
+	var s Supervisor
 	if s.Exited() != nil {
 		t.Fatal("Exited must be a nil channel when no server runs, so it never fires in a select")
 	}
 	s.Stop() // must be a harmless no-op
-}
-
-func TestMissingFilesAndPaths(t *testing.T) {
-	dir := t.TempDir()
-	conf := defaultConfig()
-	p, err := resolvePaths(dir, conf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := p.missing(); len(got) != 3 {
-		t.Fatalf("empty folder: missing = %v, want model, template and server", got)
-	}
-	for _, f := range []string{p.model, p.template, p.server} {
-		if err := os.MkdirAll(filepath.Dir(f), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := p.missing(); len(got) != 0 {
-		t.Fatalf("all present: missing = %v", got)
-	}
-	conf.ModelFile = filepath.Join("..", "outside.gguf")
-	if _, err := resolvePaths(dir, conf); err == nil {
-		t.Fatal("a path outside the app folder must be rejected")
-	}
 }
 
 func TestExitCodeIsDLLNotFound(t *testing.T) {
@@ -96,7 +64,7 @@ func TestExitCodeIsDLLNotFound(t *testing.T) {
 			t.Errorf("exit code %#x must not be STATUS_DLL_NOT_FOUND", uint32(code))
 		}
 	}
-	if isDLLNotFound(nil) || isDLLNotFound(errors.New("x")) {
+	if IsDLLNotFound(nil) || IsDLLNotFound(errors.New("x")) {
 		t.Error("only an *exec.ExitError carries an exit code")
 	}
 }
@@ -116,54 +84,12 @@ func TestDLLNotFoundMessage(t *testing.T) {
 	}
 }
 
-// A llama-server that dies with STATUS_DLL_NOT_FOUND must be reported as that,
-// not as "exited before becoming ready" or "CPU fallback failed". Exit codes
-// above 255 only exist on Windows.
-func TestStartServerReportsMissingDLL(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("exit codes above 255 are a Windows thing")
-	}
-	t.Setenv("CT_TEST_FAKE_EXIT_CODE", "3221225781")
-	a, _, _ := newTestApp(t)
-	err := a.startServer()
-	var dnf *dllNotFoundError
-	if !errors.As(err, &dnf) {
-		t.Fatalf("startServer error = %v, want a dllNotFoundError", err)
-	}
-	if strings.Contains(err.Error(), "CPU fallback failed") {
-		t.Errorf("message must not blame the fallback: %v", err)
-	}
-	if a.sup.Running() {
-		t.Error("no server may be left running")
-	}
-}
-
-// Without the VC++ runtime no llama.cpp build can start, so the app must say so
-// without launching a process and without trying the CPU build.
-func TestStartServerWithoutVCRuntime(t *testing.T) {
-	a, _, _ := newTestApp(t)
-	old := platform.VCRuntimeAvailable
-	platform.VCRuntimeAvailable = func(string) bool { return false }
-	t.Cleanup(func() { platform.VCRuntimeAvailable = old })
-	err := a.startServer()
-	var dnf *dllNotFoundError
-	if !errors.As(err, &dnf) || !dnf.vcMissing {
-		t.Fatalf("startServer error = %v, want a dllNotFoundError with vcMissing", err)
-	}
-	if !strings.Contains(err.Error(), "winget install") || strings.Contains(err.Error(), "CPU fallback") {
-		t.Errorf("unexpected message:\n%v", err)
-	}
-	if a.sup.Running() {
-		t.Error("no server may be started")
-	}
-}
-
 func TestServerArgs(t *testing.T) {
-	s := &supervisor{
-		model:         "models/test.gguf",
-		template:      "models/test.jinja",
-		contextTokens: 2048,
-		port:          18119,
+	s := &Supervisor{
+		Model:         "models/test.gguf",
+		Template:      "models/test.jinja",
+		ContextTokens: 2048,
+		Port:          18119,
 	}
 	args := s.serverArgs(0)
 	want := []string{

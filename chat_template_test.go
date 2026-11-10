@@ -32,8 +32,8 @@ func TestChatTemplateFreshInstall(t *testing.T) {
 		t.Fatalf("expected template missing, got: %v", missing)
 	}
 	a.paths = paths
-	a.sup.model = paths.model
-	a.sup.template = paths.template
+	a.sup.Model = paths.model
+	a.sup.Template = paths.template
 	if err := a.startServer(); err == nil {
 		t.Fatal("startServer must fail when template is missing")
 	}
@@ -56,8 +56,8 @@ func TestChatTemplateFreshInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.model = paths.model
-	a.sup.template = paths.template
+	a.sup.Model = paths.model
+	a.sup.Template = paths.template
 
 	missing = paths.missingFor(a.conf, a.dir)
 	if len(missing) != 0 {
@@ -67,7 +67,7 @@ func TestChatTemplateFreshInstall(t *testing.T) {
 	if err := a.startServer(); err != nil {
 		t.Fatalf("startServer failed: %v", err)
 	}
-	if !models.VerifyFileSha256(a.sup.template, m2b.TemplateSha256) {
+	if !models.VerifyFileSha256(a.sup.Template, m2b.TemplateSha256) {
 		t.Errorf("running template sha256 mismatch")
 	}
 
@@ -113,8 +113,8 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 
 	// 2. startServer must refuse to start with stale template
 	a.paths = paths
-	a.sup.model = paths.model
-	a.sup.template = paths.template
+	a.sup.Model = paths.model
+	a.sup.Template = paths.template
 	if err := a.startServer(); err == nil || !strings.Contains(err.Error(), "does not match expected SHA-256") {
 		t.Fatalf("startServer must refuse stale template: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 		t.Fatalf("resolvePaths must pick %s, got %s", m2b.TemplateFile(), paths.template)
 	}
 	a.paths = paths
-	a.sup.template = paths.template
+	a.sup.Template = paths.template
 	if err := a.startServer(); err != nil {
 		t.Fatalf("startServer must succeed with new template: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 		t.Fatalf("resolvePaths must fall back to matching legacy template %s, got %s", legacyPath, paths.template)
 	}
 	a.paths = paths
-	a.sup.template = paths.template
+	a.sup.Template = paths.template
 	if err := a.startServer(); err != nil {
 		t.Fatalf("startServer must succeed with matching legacy template: %v", err)
 	}
@@ -208,12 +208,12 @@ func TestChatTemplateModelSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.model = paths.model
-	a.sup.template = paths.template
+	a.sup.Model = paths.model
+	a.sup.Template = paths.template
 	if err := a.startServer(); err != nil {
 		t.Fatalf("startServer on 2B failed: %v", err)
 	}
-	if !models.VerifyFileSha256(a.sup.template, m2b.TemplateSha256) {
+	if !models.VerifyFileSha256(a.sup.Template, m2b.TemplateSha256) {
 		t.Fatalf("2B template sha mismatch")
 	}
 
@@ -227,10 +227,10 @@ func TestChatTemplateModelSwitch(t *testing.T) {
 	if a.conf.TemplateFile != "models/chat_template.0.8b.jinja" {
 		t.Errorf("conf.TemplateFile = %q, want models/chat_template.0.8b.jinja", a.conf.TemplateFile)
 	}
-	if a.sup.template != filepath.Join(a.dir, "models", "chat_template.0.8b.jinja") {
-		t.Errorf("sup.template = %q, want ...chat_template.0.8b.jinja", a.sup.template)
+	if a.sup.Template != filepath.Join(a.dir, "models", "chat_template.0.8b.jinja") {
+		t.Errorf("sup.Template = %q, want ...chat_template.0.8b.jinja", a.sup.Template)
 	}
-	if !models.VerifyFileSha256(a.sup.template, m08.TemplateSha256) {
+	if !models.VerifyFileSha256(a.sup.Template, m08.TemplateSha256) {
 		t.Errorf("running 0.8B template sha mismatch")
 	}
 
@@ -253,7 +253,7 @@ func TestChatTemplateModelSwitch(t *testing.T) {
 	if a.conf.TemplateFile != "models/chat_template.8b.jinja" {
 		t.Errorf("conf.TemplateFile = %q, want models/chat_template.8b.jinja", a.conf.TemplateFile)
 	}
-	if !models.VerifyFileSha256(a.sup.template, m8b.TemplateSha256) {
+	if !models.VerifyFileSha256(a.sup.Template, m8b.TemplateSha256) {
 		t.Errorf("running 8B template sha mismatch")
 	}
 
@@ -267,7 +267,7 @@ func TestChatTemplateModelSwitch(t *testing.T) {
 	if a.conf.TemplateFile != "models/chat_template.2b.jinja" {
 		t.Errorf("conf.TemplateFile = %q, want models/chat_template.2b.jinja", a.conf.TemplateFile)
 	}
-	if !models.VerifyFileSha256(a.sup.template, m2b.TemplateSha256) {
+	if !models.VerifyFileSha256(a.sup.Template, m2b.TemplateSha256) {
 		t.Errorf("running 2B template sha mismatch")
 	}
 }
@@ -297,8 +297,8 @@ func TestChatTemplateSwitchRefusesMismatchedTemplate(t *testing.T) {
 	a.conf.TemplateFile = "models/" + m2b.TemplateFile()
 	paths, _ := resolvePaths(a.dir, a.conf)
 	a.paths = paths
-	a.sup.model = paths.model
-	a.sup.template = paths.template
+	a.sup.Model = paths.model
+	a.sup.Template = paths.template
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
@@ -315,8 +315,8 @@ func TestChatTemplateSwitchRefusesMismatchedTemplate(t *testing.T) {
 	if a.conf.ModelFile != "models/"+m2b.File {
 		t.Errorf("model changed after failed switch: %s", a.conf.ModelFile)
 	}
-	if a.sup.template != paths.template {
-		t.Errorf("template changed after failed switch: %s", a.sup.template)
+	if a.sup.Template != paths.template {
+		t.Errorf("template changed after failed switch: %s", a.sup.Template)
 	}
 }
 
@@ -349,15 +349,15 @@ func TestChatTemplateCustomTemplatePreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.model = paths.model
-	a.sup.template = paths.template
+	a.sup.Model = paths.model
+	a.sup.Template = paths.template
 
 	// Starts without SHA-256 check
 	if err := a.startServer(); err != nil {
 		t.Fatalf("startServer with custom template failed: %v", err)
 	}
-	if a.sup.template != customPath {
-		t.Errorf("sup.template = %s, want %s", a.sup.template, customPath)
+	if a.sup.Template != customPath {
+		t.Errorf("sup.Template = %s, want %s", a.sup.Template, customPath)
 	}
 
 	// Switch model to 0.8B: custom template must be kept and not hashed
@@ -367,8 +367,8 @@ func TestChatTemplateCustomTemplatePreserved(t *testing.T) {
 	if a.conf.TemplateFile != customRel {
 		t.Errorf("conf.TemplateFile = %q, want %q", a.conf.TemplateFile, customRel)
 	}
-	if a.sup.template != customPath {
-		t.Errorf("sup.template = %q, want %q", a.sup.template, customPath)
+	if a.sup.Template != customPath {
+		t.Errorf("sup.Template = %q, want %q", a.sup.Template, customPath)
 	}
 
 	// Verify config.json kept custom template

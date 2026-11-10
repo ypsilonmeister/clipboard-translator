@@ -10,14 +10,13 @@ on:
       - 'setup.ps1'
       - 'setup.sh'
       - 'setup-macos.sh'
-      - 'server.go'
+      - 'internal/llamaserver/**'
       - 'internal/models/**'
       - 'main.go'
       - 'internal/platform/proc_*.go'
       - 'internal/platform/platform.go'
       - 'go.mod'
       - 'go.sum'
-      - 'llama_smoke_test.go'
       - 'tools/bump_llama_pin.py'
       - 'tools/print_model_pin.py'
       - '.github/workflows/llama-smoke.yml'
@@ -26,14 +25,13 @@ on:
       - 'setup.ps1'
       - 'setup.sh'
       - 'setup-macos.sh'
-      - 'server.go'
+      - 'internal/llamaserver/**'
       - 'internal/models/**'
       - 'main.go'
       - 'internal/platform/proc_*.go'
       - 'internal/platform/platform.go'
       - 'go.mod'
       - 'go.sum'
-      - 'llama_smoke_test.go'
       - 'tools/bump_llama_pin.py'
       - 'tools/print_model_pin.py'
       - '.github/workflows/llama-smoke.yml'
@@ -121,4 +119,4 @@ jobs:
           env CT_SMOKE_SERVER="$SERVER_PATH" \
               CT_SMOKE_MODEL="$MODEL_PATH" \
               CT_SMOKE_TEMPLATE="$TEMPLATE_PATH" \
-              go test -tags llamasmoke -run '^TestLlamaSmoke' -v -timeout 15m .
+              go test -tags llamasmoke -run '^TestLlamaSmoke' -v -timeout 15m ./internal/llamaserver

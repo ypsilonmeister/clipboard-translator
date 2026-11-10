@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
@@ -39,7 +40,7 @@ func TestSupervisorTiesServerToJob(t *testing.T) {
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
-	in, err := platform.ProcessInKillOnCloseJob(a.sup.cmd.Process.Pid)
+	in, err := platform.ProcessInKillOnCloseJob(a.sup.PID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,14 +58,14 @@ func TestHelperParentProcess(t *testing.T) {
 	}
 	os.Setenv("CT_TEST_FAKE_SERVER", "1") // for the child server only
 	port := freePort(t)
-	s := &supervisor{port: port, endpoint: fmt.Sprintf("http://127.0.0.1:%d", port),
-		logOut: io.Discard, startupTimeout: 30 * time.Second, contextTokens: 1}
+	s := &llamaserver.Supervisor{Port: port, Endpoint: fmt.Sprintf("http://127.0.0.1:%d", port),
+		LogOut: io.Discard, StartupTimeout: 30 * time.Second, ContextTokens: 1}
 	self, _ := os.Executable()
-	if err := s.start(self, 0, "test"); err != nil {
+	if err := s.Start(self, 0, "test"); err != nil {
 		fmt.Println("CT_ERROR=" + err.Error())
 		os.Exit(2)
 	}
-	fmt.Printf("CT_CHILD_PID=%d\n", s.cmd.Process.Pid)
+	fmt.Printf("CT_CHILD_PID=%d\n", s.PID())
 	select {}
 }
 

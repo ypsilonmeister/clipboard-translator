@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
@@ -96,13 +97,13 @@ func TestRestartServerAfterCrash(t *testing.T) {
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
-	pid := a.sup.cmd.Process.Pid
+	pid := a.sup.PID()
 	select {
 	case <-a.sup.Exited():
 		t.Fatal("server must be running")
 	default:
 	}
-	a.sup.cmd.Process.Kill()
+	a.sup.Kill()
 	select {
 	case <-a.sup.Exited():
 	case <-time.After(5 * time.Second):
@@ -112,7 +113,7 @@ func TestRestartServerAfterCrash(t *testing.T) {
 	if !a.restartServer() {
 		t.Fatalf("restartServer gave up; errors: %v", *errs)
 	}
-	if a.sup.cmd == nil || a.sup.cmd.Process.Pid == pid || !healthy(a) {
+	if !a.sup.Running() || a.sup.PID() == pid || !healthy(a) {
 		t.Fatal("a new, healthy server must be running")
 	}
 	if !strings.Contains(tray.lastNote(), "back") {
@@ -122,7 +123,7 @@ func TestRestartServerAfterCrash(t *testing.T) {
 
 func TestRestartServerGivesUp(t *testing.T) {
 	a, _, errs := newTestApp(t)
-	a.limiter = restartLimiter{max: 0, window: time.Minute}
+	a.limiter = llamaserver.RestartLimiter{Max: 0, Window: time.Minute}
 	if a.restartServer() {
 		t.Fatal("with no restarts allowed it must give up")
 	}
@@ -137,7 +138,7 @@ func TestRestartServerHonoursQuit(t *testing.T) {
 	if a.restartServer() {
 		t.Fatal("a quit during the backoff must stop the restart")
 	}
-	if a.sup.cmd != nil {
+	if a.sup.Running() {
 		t.Fatal("no server may be started after quitting")
 	}
 }
