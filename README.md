@@ -360,6 +360,28 @@ it does not grant desktop consent or test a live Wayland session. Translation qu
 the full packaged-app Wayland workflow, actual desktop tray integration and GPU drivers
 still need manual testing.
 
+## ChromeOS (experimental, Crostini)
+
+Install and set up the Linux build in the ChromeOS Linux environment first. Translation stays in the container; the browser extension supplies a host-side trigger.
+
+1. Open the app's **Settings...**, enable **ChromeOS / local translation endpoint**, and use **Copy token**. The endpoint is off by default. Its per-install token is generated locally and saved as `translate_api_token` in `config.json`; do not share it. The switch (`translate_api_enabled`) takes effect immediately and survives restarts.
+2. In ChromeOS **Settings → Developers → Linux development environment → Port forwarding**, add TCP port **18121** and turn forwarding on. Use `http://localhost:18121/translate` in the extension; `http://penguin.linux.test:18121/translate` is another permitted local address.
+3. Copy this repository's `extension/` directory into a location Chrome can select (for example, My files). Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select that directory. There is no build step.
+4. Open the extension's **Options**, enter the endpoint URL and token, click **Save**, then **Test connection**. The test translates “Hello” locally without changing the clipboard.
+5. Select English or Japanese text in Chrome, right-click, and choose **Translate with Clipboard Translator**. A notification confirms the result with a short preview. Paste with **Ctrl+V**. English translates to Japanese and Japanese to English with the default profile.
+
+The extension uses the first configured profile, including direction, newline cleanup and replace/bilingual output. It never monitors the clipboard or sends text anywhere except the configured local endpoint. Options are stored locally in Chrome, without sync. The endpoint uses the same local model, reload and chunking path as the hotkey; it returns busy while another translation runs. It does not write the Linux clipboard; the extension writes the host clipboard after success.
+
+When required Wayland portals are missing, the Linux app keeps a control window open in **manual mode** and explains that the hotkey workflow is unavailable. Copy text explicitly, focus the app's control window, choose **Open menu → Translate clipboard**, wait for completion, then paste. This action translates the current CLIPBOARD with the first profile, protects newer clipboard copies, and never automatically pastes. Keep the control window focused until completion so Wayland permits clipboard access. Portals that are available continue to use the usual workflow.
+
+**Limitation:** ChromeOS deliberately isolates input between host applications and the Linux container. A Linux hotkey cannot trigger translation while a ChromeOS host app is focused. This extension handles selected text in Chrome; host-native applications require the manual copy → translate → paste workflow. Loading the extension and both language directions on a real Chromebook still need in-Chrome acceptance testing.
+
+The optional endpoint listens on **`0.0.0.0:18121` (IPv4)** so Crostini forwarding can reach it; the inference engine and Settings page remain loopback-only. Enabling it also makes the port reachable on other container IPv4 interfaces, subject to host networking/firewall rules. Every request requires `X-Clipboard-Translator-Token`; keep forwarding limited to your machine. No CORS access is granted to web pages. Disable the switch to close the listener. To rotate a disclosed token, quit the app, remove `translate_api_token` from `config.json`, restart, and update extension options.
+
+For other local clients, POST `/translate` with JSON `{"text":"Hello","profile":"0"}` and the token header. `profile` is optional (defaults to the first profile); its ID is the configured hotkey, such as `Ctrl+Alt+E`, or a zero-based index string. Success returns `{"translation":"…"}`; missing or wrong tokens return HTTP 401. The API exposes no model downloads, settings, or external translation proxy.
+
+See [extension details](extension/README.md) for permissions and browser requirements.
+
 ## Using it
 
 The app lives in the **system tray** (notification area; on Windows 11 it may be
@@ -412,7 +434,7 @@ written to `translator.log`.
 
 ## Privacy and network use
 
-- Translation happens on your PC. The server listens on `127.0.0.1` only, so
+- Translation happens on your PC. The inference server listens on `127.0.0.1` only, so
   other computers cannot reach it. Programs on your PC, including web pages in
   your browser, can reach `127.0.0.1`, so the app also gives the server a random
   key each time it starts it, and the server refuses translation and other API
@@ -433,6 +455,7 @@ written to `translator.log`.
   that model, and the file is used only if its SHA-256 matches the pinned value.
   A download goes on after the page is closed and can be cancelled on the page;
   a cancelled or failed download keeps its partial file and continues next time.
+- The optional ChromeOS translation endpoint is off by default and accepts token-authenticated local client requests on IPv4 port 18121 when enabled; see the ChromeOS section for its bind address and forwarding scope. It makes no outbound network calls.
 - Logs record errors but not the text you translate. Translation history lives in
   memory only and is gone when the app quits.
 
