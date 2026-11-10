@@ -31,6 +31,10 @@ func portalWriteFile(path string, data []byte) error {
 }
 
 func installPortalDesktopEntry(dataHome, exe string) error {
+	return installPortalDesktopEntryForID(dataHome, exe, waylandAppID)
+}
+
+func installPortalDesktopEntryForID(dataHome, exe, id string) error {
 	if !filepath.IsAbs(dataHome) {
 		return errors.New("XDG_DATA_HOME must be an absolute path")
 	}
@@ -42,7 +46,7 @@ func installPortalDesktopEntry(dataHome, exe string) error {
 	if err = os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	path := filepath.Join(dir, waylandAppID+".desktop")
+	path := filepath.Join(dir, id+".desktop")
 	want := []byte(entry + "NoDisplay=true\n")
 	if got, err := os.ReadFile(path); err == nil && string(got) == string(want) {
 		return nil

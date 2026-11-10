@@ -87,7 +87,7 @@ func (w *gioPortalWire) Poll() (portalEvent, bool) {
 		return portalEvent{}, false
 	}
 	defer C.ct_portal_event_free(&e)
-	kinds := []string{"", "registered", "response", "closed", "failed", "activated", "deactivated", "shortcuts-changed", "method", "selection-owner", "selection-transfer", "read", "written"}
+	kinds := []string{"", "registered", "response", "closed", "failed", "activated", "deactivated", "shortcuts-changed", "method", "selection-owner", "selection-transfer", "read", "written", "capability"}
 	kind := "failed"
 	if int(e.kind) > 0 && int(e.kind) < len(kinds) {
 		kind = kinds[int(e.kind)]
@@ -125,6 +125,14 @@ func (w *gioPortalWire) Close() {
 }
 
 func pumpPortalCallbacks() { C.ct_portal_dispatch() }
+
+func (w *gioPortalWire) Probe(iface string) {
+	if w.native != nil {
+		p := C.CString(iface)
+		defer C.free(unsafe.Pointer(p))
+		C.ct_portal_probe(w.native, p)
+	}
+}
 
 func (w *gioPortalWire) BindShortcuts(session, token string, bindings []portalBinding) {
 	if w.native == nil {

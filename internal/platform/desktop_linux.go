@@ -29,8 +29,12 @@ func PlatformRuntimeError() error {
 	if err != nil {
 		return err
 	}
-	if backend != linuxBackendX11 {
-		return errors.New("Wayland is not supported. Log in to an X11/Xorg session to use Clipboard Translator")
+	linuxWayland = backend == linuxBackendWayland
+	if linuxWayland {
+		if !initializeWaylandGTK() {
+			return errors.New("could not initialize GTK 3 on the Wayland display")
+		}
+		return nil
 	}
 	if C.ct_init() == 0 {
 		return errors.New("could not initialize GTK 3 on the X11 display")
@@ -58,8 +62,14 @@ type linuxHotkey struct {
 var x11Registry = newHotkeyRegistry(maxHotkeys)
 
 func NewHotkey(spec string) (Hotkey, error) {
+	if linuxWayland && activePortalDesktop != nil {
+		return activePortalDesktop.newHotkey(spec)
+	}
 	if err := PlatformRuntimeError(); err != nil {
 		return nil, err
+	}
+	if linuxWayland {
+		return nil, errors.New("Wayland desktop was not initialized")
 	}
 	rawMods, keysym, err := parseX11Hotkey(spec)
 	if err != nil {
@@ -111,8 +121,16 @@ func (h *linuxHotkey) Close() error {
 	return nil
 }
 
-func ForegroundWindow() uintptr { return uintptr(C.ct_focus()) }
+func ForegroundWindow() uintptr {
+	if linuxWayland {
+		return 0
+	}
+	return uintptr(C.ct_focus())
+}
 func WaitModifiersReleased(max time.Duration) bool {
+	if linuxWayland {
+		return false
+	}
 	deadline := time.Now().Add(max)
 	for C.ct_modifiers() != 0 {
 		if time.Now().After(deadline) {
@@ -123,6 +141,9 @@ func WaitModifiersReleased(max time.Duration) bool {
 	return true
 }
 func SendPaste() error {
+	if linuxWayland {
+		return errors.New("automatic paste is disabled on Wayland; press Ctrl+V manually")
+	}
 	if C.ct_paste() == 0 {
 		return errors.New("XTest keyboard injection is unavailable")
 	}
@@ -140,9 +161,18 @@ func primarySelectedIn(win uintptr) bool {
 }
 
 // BeginSelectionCapture is nil on X11: PRIMARY is read at once, nothing waits.
-func BeginSelectionCapture(Clipboard, uintptr) CaptureTask { return nil }
+func BeginSelectionCapture(cb Clipboard, _ uintptr) CaptureTask {
+	if d, ok := cb.(*portalDesktop); ok && d.remote != nil {
+		return beginPortalCapture(d.remote, d.hotkeys.AllReleased)
+	}
+	return nil
+}
 
 func CaptureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
+	if linuxWayland {
+		text, err := cb.Read()
+		return text, false, err
+	}
 	text, fresh, err := captureWithPrimary(cb, win, primaryOps{
 		selectedIn:  primarySelectedIn,
 		readPrimary: func() string { return readX11Text(true) },
@@ -238,7 +268,13 @@ func linuxMenu(items []MenuItem) unsafe.Pointer {
 }
 func PumpMessages() bool {
 	C.ct_pump()
-	C.ct_hotkey_pump()
+	if linuxWayland {
+		if activePortalDesktop != nil {
+			activePortalDesktop.Step()
+		}
+	} else {
+		C.ct_hotkey_pump()
+	}
 	if t := activeLinuxTray; t != nil {
 		for id := int(C.ct_command()); id != 0; id = int(C.ct_command()) {
 			switch id {

@@ -75,19 +75,25 @@ type app struct {
 	checking bool
 	latest   update.ReleaseInfo // newest release seen by "Check for updates"
 
-	cb             platform.Clipboard
-	results        chan result
-	generation     uint64 // bumped by every new request; older results are ignored
-	cancelCurrent  context.CancelFunc
-	translating    bool
-	translateStart time.Time
-	lastTranslSec  int
-	hist           history
-	foreground     func() uintptr                                                 // foregroundWindow, replaceable in tests
-	paste          func(target uintptr) error                                     // pasteIntoForeground, replaceable in tests
-	capture        func(cb platform.Clipboard, win uintptr) (string, bool, error) // captureSelectedText, replaceable in tests
-	beginCapture   func(cb platform.Clipboard, win uintptr) platform.CaptureTask  // beginSelectionCapture; nil (or a nil task) uses capture
-	capturing      *pendingCapture                                                // a selection copy the serve loop is still waiting for
+	cb                     platform.Clipboard
+	results                chan result
+	generation             uint64 // bumped by every new request; older results are ignored
+	cancelCurrent          context.CancelFunc
+	translating            bool
+	translateStart         time.Time
+	lastTranslSec          int
+	hist                   history
+	foreground             func() uintptr                                                 // foregroundWindow, replaceable in tests
+	paste                  func(target uintptr) error                                     // pasteIntoForeground, replaceable in tests
+	capture                func(cb platform.Clipboard, win uintptr) (string, bool, error) // captureSelectedText, replaceable in tests
+	beginCapture           func(cb platform.Clipboard, win uintptr) platform.CaptureTask  // beginSelectionCapture; nil (or a nil task) uses capture
+	capturing              *pendingCapture                                                // a selection copy the serve loop is still waiting for
+	pendingRead            *pendingClipboardRead
+	pendingResult          *result
+	pendingResultDeadline  time.Time
+	pendingHistory         *string
+	pendingHistoryDeadline time.Time
+	desktopStamp           string
 
 	statusResetAt  time.Time
 	lastSkipReason config.SkipReason
@@ -373,6 +379,7 @@ func (a *app) run() {
 		return
 	}
 	defer cb.Close()
+	a.cb = cb
 	a.registerStartupHotkey()
 	defer a.closeSettings()
 	defer a.dl.Close() // closes the partial file of a running download before the process ends
@@ -487,6 +494,10 @@ func (a *app) registerStartupHotkey() {
 
 // updateReadyTip sets the idle tooltip from the hotkeys that work.
 func (a *app) updateReadyTip() {
+	if s := a.desktopStatus(); s.Wayland && !s.Ready {
+		a.readyTip = "Clipboard Translator - " + s.Message
+		return
+	}
 	if a.modelUnloaded {
 		a.readyTip = "Clipboard Translator - idle (model unloaded); next hotkey loads the model"
 		return
@@ -507,7 +518,7 @@ func (a *app) serve(cb platform.Clipboard) {
 		tray.Notify("Clipboard Translator", fmt.Sprintf("Could not register the hotkey %s (another program may be using it). Open Settings... from the tray menu and choose another hotkey there.", a.conf.Hotkey), true)
 	} else {
 		log.Printf("ready: select text and press %s (or translate existing clipboard)", a.hotkeySummary())
-		if !a.conf.QuickstartShown {
+		if !a.conf.QuickstartShown && !a.desktopStatus().Wayland {
 			a.showQuickstart() // first run only; the tray menu shows it again
 		}
 	}
@@ -554,6 +565,9 @@ func (a *app) serve(cb platform.Clipboard) {
 				return
 			}
 		case <-ticker.C:
+			platform.PumpMessages()
+			a.tickDesktop()
+			a.tickClipboard()
 			if a.quitRequested() {
 				log.Print("stop requested")
 				a.cancelTranslation()
@@ -561,8 +575,9 @@ func (a *app) serve(cb platform.Clipboard) {
 			}
 			pressed, pressedProfile, err := a.pollHotkeys()
 			if err != nil {
-				log.Printf("hotkey error: %v", err)
-				continue
+				if !a.desktopStatus().Wayland {
+					log.Printf("hotkey error: %v", err)
+				}
 			}
 			// Pressed pumps messages, so "Quit" or a menu item may have been chosen just now.
 			if a.quitRequested() {
@@ -624,21 +639,20 @@ func (a *app) serve(cb platform.Clipboard) {
 func (a *app) pollHotkeys() (pressed bool, profile int, err error) {
 	if a.hotkey != nil {
 		pressed, err = a.hotkey.Pressed()
-		if err != nil {
-			return false, 0, err
-		}
 	}
 	for _, e := range a.extras {
 		if e.hk == nil {
 			continue
 		}
 		if p, err := e.hk.Pressed(); err != nil {
-			log.Printf("hotkey error (profile %d): %v", e.profile+1, err)
+			if !a.desktopStatus().Wayland {
+				log.Printf("hotkey error (profile %d): %v", e.profile+1, err)
+			}
 		} else if p {
 			pressed, profile = true, e.profile
 		}
 	}
-	return pressed, profile, nil
+	return pressed, profile, err
 }
 
 // cancelTranslation stops the request in flight, if any.
@@ -693,6 +707,10 @@ func (a *app) shouldNotifySkip(reason config.SkipReason) bool {
 func (a *app) abortTranslation() {
 	a.cancelTranslation()
 	a.generation++
+	a.pendingRead = nil
+	a.pendingResult = nil
+	a.pendingResultDeadline = time.Time{}
+	a.pendingHistory = nil
 	a.translating = false
 	if a.pendingDuringLoad != nil {
 		*a.pendingDuringLoad = -1
@@ -728,6 +746,11 @@ func (a *app) startTranslation(index int) {
 		// The text is already on the clipboard: no Ctrl+C, no waiting for a copy,
 		// and never a fresh selection (so no auto-paste).
 		source, err := a.cb.Read()
+		if errors.Is(err, platform.ErrClipboardPending) {
+			a.pendingRead = &pendingClipboardRead{profile: profile, win: win, deadline: a.timeNow().Add(8 * time.Second)}
+			a.tray.SetStatus("Clipboard Translator - reading the clipboard...")
+			return
+		}
 		a.translateCaptured(profile, win, source, false, err)
 		return
 	}
@@ -771,7 +794,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		}
 		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
-		if errors.Is(err, platform.ErrCaptureModifiersHeld) || errors.Is(err, platform.ErrCaptureFocusChanged) {
+		if a.desktopStatus().Wayland || errors.Is(err, platform.ErrCaptureModifiersHeld) || errors.Is(err, platform.ErrCaptureFocusChanged) {
 			// Say so: translating the old clipboard text instead would be a silent wrong answer.
 			a.tray.Notify("Clipboard Translator", "Nothing was translated: "+err.Error()+". Release the keys and press the hotkey again.", true)
 		}
@@ -891,6 +914,22 @@ func (a *app) handleResult(res result) {
 		replacement = formatBilingual(res.original, res.translated)
 	}
 	applied, err := applyTranslation(a.cb, res.original, replacement)
+	if errors.Is(err, platform.ErrClipboardPending) {
+		if a.pendingResult == nil {
+			a.pendingResultDeadline = a.timeNow().Add(8 * time.Second)
+		}
+		if !a.timeNow().Before(a.pendingResultDeadline) {
+			a.pendingResult = nil
+			a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
+			a.tray.SetStatus(a.readyTip)
+			a.tray.Notify("Clipboard Translator", "Clipboard transfer timed out. The translation is available in Recent translations.", true)
+			return
+		}
+		a.pendingResult = &res
+		a.tray.SetStatus("Clipboard Translator - writing the translation to the clipboard...")
+		return
+	}
+	a.pendingResult = nil
 	if err != nil {
 		log.Printf("clipboard check/write failed: %v", err)
 		a.tray.SetStatus(a.readyTip)
@@ -915,7 +954,7 @@ func (a *app) handleResult(res result) {
 		return
 	}
 	a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
-	action := decidePaste(a.conf.AutoPaste, res.fromSelection, res.window, a.foreground())
+	action := decidePaste(a.conf.AutoPaste && !a.desktopStatus().Wayland, res.fromSelection, res.window, a.foreground())
 	switch action {
 	case pasteNow:
 		// decidePaste just confirmed the window is still res.window; that is the

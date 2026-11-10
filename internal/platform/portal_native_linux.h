@@ -5,6 +5,7 @@ typedef struct CTPortal CTPortal;
 typedef struct { int kind; char *token; char *session; uint32_t code; char *id; void *bindings; uint32_t devices, serial; int clipboard, owner; char *restore, *mime; void *data; int length; } CTPortalEvent;
 CTPortal *ct_portal_open(void);
 void ct_portal_register(CTPortal *, const char *);
+void ct_portal_probe(CTPortal *, const char *);
 void ct_portal_create_session(CTPortal *, const char *, const char *, const char *);
 typedef struct { const char *id, *description, *trigger; } CTShortcut;
 void ct_portal_bind_shortcuts(CTPortal *, const char *, const char *, CTShortcut *, int);

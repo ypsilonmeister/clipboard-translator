@@ -138,6 +138,9 @@ func (a *app) settingsState() settings.State {
 	st.Guide = a.quickstartGuide()
 	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste
+	desktop := a.desktopStatus()
+	st.Wayland = desktop.Wayland
+	st.DesktopStatus = desktop.Message
 	st.NotifyOnComplete = a.conf.NotifyOnComplete
 	st.MaxChars = a.conf.MaxChars
 	st.IdleUnloadMinutes = a.conf.IdleUnloadMinutes

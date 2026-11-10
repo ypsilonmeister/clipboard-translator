@@ -125,7 +125,7 @@ func cleanupPortalShortcutTest(t *testing.T, id string) {
 	t.Helper()
 	script := `import ast,subprocess,sys
 app=sys.argv[1]
-assert app=='io.github.ypsilonmeister.ClipboardTranslator.W2Test'
+assert app in ['io.github.ypsilonmeister.ClipboardTranslator.W2Test','io.github.ypsilonmeister.ClipboardTranslator.W4Test']
 schema='org.gnome.settings-daemon.global-shortcuts'
 raw=subprocess.check_output(['gsettings','get',schema,'applications'],text=True).strip()
 if raw.startswith('@as '): raw=raw[4:]

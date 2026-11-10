@@ -6,6 +6,7 @@
 
 static GtkStatusIcon *status_icon;
 static GtkWidget *current_menu, *control_window, *status_label;
+static char *last_status;
 static int menu_requested;
 static GQueue commands = G_QUEUE_INIT;
 
@@ -26,7 +27,9 @@ static gboolean check_tray(gpointer data) {
         gtk_window_set_title(GTK_WINDOW(control_window), "Clipboard Translator");
         gtk_container_set_border_width(GTK_CONTAINER(control_window), 16);
         GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-        status_label = gtk_label_new("Clipboard Translator");
+        status_label = gtk_label_new(last_status ? last_status : "Clipboard Translator");
+        gtk_label_set_line_wrap(GTK_LABEL(status_label),TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(status_label),70);
         GtkWidget *button = gtk_button_new_with_label("Open menu");
         gtk_box_pack_start(GTK_BOX(box), status_label, TRUE, TRUE, 0);
         gtk_box_pack_start(GTK_BOX(box), button, FALSE, FALSE, 0);
@@ -53,8 +56,10 @@ void ct_tray_close(void) {
     if (status_icon) { g_object_unref(status_icon); status_icon = NULL; }
     g_queue_clear(&commands);
     menu_requested = 0;
+    g_clear_pointer(&last_status,g_free);
 }
 void ct_status(const char *text) {
+    g_free(last_status);last_status=g_strdup(text);
     if (status_icon) gtk_status_icon_set_tooltip_text(status_icon, text);
     if (status_label) gtk_label_set_text(GTK_LABEL(status_label), text);
 }
