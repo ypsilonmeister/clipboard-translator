@@ -147,9 +147,9 @@ func copyUTF16(dst []uint16, s string) {
 	copy(dst, u)
 }
 
-// newTray creates the tray icon. On failure it logs the reason and returns a
+// NewTray creates the tray icon. On failure it logs the reason and returns a
 // no-op tray so the translator keeps working without an icon.
-func newTray(logPath string) Tray {
+func NewTray(logPath string) Tray {
 	t := &winTray{logPath: logPath, tip: "Clipboard Translator"}
 	if exe, err := os.Executable(); err == nil {
 		t.exeCommand = `"` + exe + `"`
@@ -175,6 +175,16 @@ func loadAppIcon(hInst uintptr) uintptr {
 	}
 	h, _, _ := loadIconW.Call(0, idiApplication)
 	return h
+}
+
+// AppIconIsEmbedded reports whether the icon resource linked into the
+// executable (resource_windows_amd64.syso, which belongs to package main) is
+// found, instead of the generic application icon the tray falls back to.
+func AppIconIsEmbedded() bool {
+	hInst, _, _ := getModuleHandleW.Call(0)
+	stock, _, _ := loadIconW.Call(0, idiApplication)
+	h := loadAppIcon(hInst)
+	return h != 0 && h != stock
 }
 
 func (t *winTray) init() error {
@@ -339,13 +349,13 @@ func (t *winTray) showMenu() {
 	setForegroundWindow.Call(t.hwnd)
 	cmd, _, _ := trackPopupMenu.Call(menu, tpmRightButton|tpmReturnCmd, uintptr(pt.X), uintptr(pt.Y), 0, t.hwnd, 0)
 	postMessageW.Call(t.hwnd, wmNull, 0, 0)
-	if cmd >= firstAppCommand {
+	if cmd >= FirstAppCommand {
 		t.cmds = append(t.cmds, int(cmd))
 		return
 	}
 	switch cmd {
 	case menuOpenLog:
-		_ = openTarget(t.logPath)
+		_ = OpenTarget(t.logPath)
 	case menuAutostart:
 		var err error
 		if autostartOn {
@@ -380,12 +390,12 @@ func trayWndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 	return ret
 }
 
-// pumpMessages dispatches every pending message of the calling thread (tray
+// PumpMessages dispatches every pending message of the calling thread (tray
 // window, menus) and reports whether one of the registered hotkeys fired. It
 // must be called on the thread that created the tray and registered the hotkeys.
 // Callers that only want the tray serviced (model loading, a server restart)
 // use this: a hotkey pressed meanwhile is dropped, as before.
-func pumpMessages() bool { return pump(false) }
+func PumpMessages() bool { return pump(false) }
 
 // pumpHotkeys is pumpMessages for the main loop: it also records which hotkeys
 // fired, for each windowsHotkey.Pressed to take.
@@ -412,8 +422,8 @@ func pump(record bool) bool {
 	}
 }
 
-// openTarget opens a file or URL with the program Windows associates with it.
-func openTarget(target string) error {
+// OpenTarget opens a file or URL with the program Windows associates with it.
+func OpenTarget(target string) error {
 	r, _, _ := shellExecuteW.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(target))), 0, 0, swShowNormal)
 	if r <= 32 {
 		return fmt.Errorf("ShellExecute failed with code %d", r)
@@ -421,22 +431,22 @@ func openTarget(target string) error {
 	return nil
 }
 
-// showInfo shows a plain information box.
-func showInfo(msg string) {
+// ShowInfo shows a plain information box.
+func ShowInfo(msg string) {
 	const mbIconInformation = 0x40
 	messageBoxW.Call(0, uintptr(unsafe.Pointer(u16(msg))), uintptr(unsafe.Pointer(u16("Clipboard Translator"))), mbOK|mbIconInformation)
 }
 
-// askYesNo shows a Yes/No question and reports whether the user chose Yes.
-func askYesNo(msg string) bool {
+// AskYesNo shows a Yes/No question and reports whether the user chose Yes.
+func AskYesNo(msg string) bool {
 	const mbYesNo, mbIconQuestion, idYes = 0x4, 0x20, 6
 	r, _, _ := messageBoxW.Call(0, uintptr(unsafe.Pointer(u16(msg))), uintptr(unsafe.Pointer(u16("Clipboard Translator"))), mbYesNo|mbIconQuestion)
 	return r == idYes
 }
 
-// showError reports a fatal problem to the user. The GUI build has no console,
+// ShowError reports a fatal problem to the user. The GUI build has no console,
 // so a message box is the only way to make a startup failure visible.
-func showError(msg string) {
+func ShowError(msg string) {
 	if hwnd, _, _ := getConsoleWindowProc.Call(); hwnd != 0 {
 		return // a console is attached; the log line is already visible
 	}

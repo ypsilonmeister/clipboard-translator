@@ -23,18 +23,18 @@ func TestStopLeftoverServerSparesLivingParentsChild(t *testing.T) {
 	}
 	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
 	file := filepath.Join(t.TempDir(), "llama-server-1.pid")
-	recordChild(file, cmd)
+	RecordChild(file, cmd)
 	if _, err := os.Stat(file); err != nil {
 		t.Fatalf("record not written: %v", err)
 	}
-	stopLeftoverServer(file)
+	StopLeftoverServer(file)
 	if err := syscall.Kill(cmd.Process.Pid, 0); err != nil {
 		t.Fatalf("a process with a living parent must not be killed: %v", err)
 	}
 	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("record must be removed after the check, stat: %v", err)
 	}
-	stopLeftoverServer(file) // no record: a harmless no-op
+	StopLeftoverServer(file) // no record: a harmless no-op
 }
 
 // An orphaned process (reparented to launchd, ppid == 1) matching the recorded
@@ -77,7 +77,7 @@ func TestStopLeftoverServerKillsOrphanedChild(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stopLeftoverServer(file)
+	StopLeftoverServer(file)
 
 	// The orphaned process must have been killed.
 	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {

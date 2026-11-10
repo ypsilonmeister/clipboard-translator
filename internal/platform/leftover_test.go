@@ -30,7 +30,7 @@ func TestChildRecordRoundTrip(t *testing.T) {
 }
 
 func TestChildRecordPathIncludesPort(t *testing.T) {
-	a, b := childRecordPath("dir", 18119), childRecordPath("dir", 18200)
+	a, b := ChildRecordPath("dir", 18119), ChildRecordPath("dir", 18200)
 	if a == b || !strings.Contains(a, "18119") {
 		t.Fatalf("record paths %q and %q must differ by port", a, b)
 	}
@@ -84,7 +84,7 @@ func TestCheckServerPort(t *testing.T) {
 			c.Close()
 		}
 	}()
-	err = checkServerPort(port)
+	err = CheckServerPort(port)
 	if err == nil {
 		t.Fatal("a port something listens on must be reported")
 	}
@@ -92,7 +92,7 @@ func TestCheckServerPort(t *testing.T) {
 		t.Fatalf("message must name the port and the likely leftover server: %q", msg)
 	}
 	l.Close()
-	if err := checkServerPort(freePort(t)); err != nil {
+	if err := CheckServerPort(freePort(t)); err != nil {
 		t.Fatalf("a free port must not be reported: %v", err)
 	}
 }

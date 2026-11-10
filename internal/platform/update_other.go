@@ -4,8 +4,8 @@ package platform
 
 import "errors"
 
-func recordedInstallLocation() string { return "" }
+func RecordedInstallLocation() string { return "" }
 
-func runInstaller(dir, tag string) error {
+func RunInstaller(dir, tag, url string) error {
 	return errors.New("the installer is only available on Windows")
 }

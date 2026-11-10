@@ -43,7 +43,7 @@ with `tarfile.data_filter`. Native integration tests run on a disposable Xvfb
 display by default, not on a desktop someone is working at:
 
 ```bash
-env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 CT_TEST_X11=1 xvfb-run -a go test -tags x11test -run '^TestX11' -timeout 60s .
+env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 CT_TEST_X11=1 xvfb-run -a go test -tags x11test -run '^TestX11' -timeout 60s ./internal/platform
 python3 tools/test_linux_setup.py
 ```
 
@@ -52,7 +52,7 @@ python3 tools/test_linux_setup.py
 `XDG_RUNTIME_DIR` and `TestX11Desktop` fails with "could not initialize GTK 3".
 
 `CGO_ENABLED=0` builds only the portable logic/stubs on Linux. Wayland is
-explicitly rejected at runtime. `desktop_linux.go` / `native_linux.c` own the
+explicitly rejected at runtime. `internal/platform/desktop_linux.go` / `native_linux.c` own the
 GTK event loop, XGrabKey, XTest input and X11 clipboard. `autostart_linux.go`
 manages an XDG autostart Desktop Entry. GTK supplies a control-window fallback
 if no tray host is present. X11 clipboard compare/write is best effort, not
@@ -60,8 +60,8 @@ atomic like the Windows implementation.
 
 macOS needs a native macOS runner with Xcode Command Line Tools. Build with
 `bash tools/package-macos.sh dev`; `CGO_ENABLED=0` only compiles logic/stubs.
-`desktop_darwin.go` / `native_darwin.m` own AppKit/Carbon and must stay on the
-process main thread. `CT_TEST_MACOS=1 go test -tags mactest -run '^TestMacNative' -v .`
+`internal/platform/desktop_darwin.go` / `native_darwin.m` own AppKit/Carbon and must stay on the
+process main thread. `CT_TEST_MACOS=1 go test -tags mactest -run '^TestMacNative' -v ./internal/platform`
 executes native smoke checks through TestMain on that thread (CI only, no key
 injection or Accessibility prompts). `python3 tools/test_macos_setup.py` runs
 setup fixtures on any platform. macOS data goes to Application Support, never
@@ -84,20 +84,21 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 | `internal/languages/` | The 53 model languages, `Validate`, and `DirectionFor`: the script of the text picks the direction of a language pair (URLs are skipped). Standard library only; the first package split out of `main` (Issue #104) |
 | `app.go` | `app` struct and the main loop `serve`: hotkeys (one per profile), tray commands, update results, translation results, Settings-page requests, download results. `startTranslation` / `handleResult` / `abortTranslation` |
 | `app_menu.go`, `app_idle.go` | Daily tray commands (Settings first, cancel, unload, model switch when multiple are installed, history, updates, config and license); configuration is edited in Settings; UI-thread idle timer and intentional unload/reload state |
-| `capture.go` | `captureJob`: the ordering rules of selection capture (modifiers released, focus unchanged, clipboard sequence) over per-OS pieces, so they are tested without a desktop. `serve` steps the job (`stepCapture`) every ~15 ms instead of sleeping, so a slow copy never blocks the UI thread |
+| `internal/platform/capture.go` | `captureJob`: the ordering rules of selection capture (modifiers released, focus unchanged, clipboard sequence) over per-OS pieces, so they are tested without a desktop. `serve` steps the job (`stepCapture`) every ~15 ms instead of sleeping, so a slow copy never blocks the UI thread |
 | `settings_server.go`, `app_settings.go`, `settings_web/` | The Settings page: `settings_server.go` serves it on 127.0.0.1 while it is open (token, Host/Origin checks, CSP) and never touches app state; `app_settings.go` answers its requests on the UI thread and applies hotkeys, auto-paste, notifications, `max_chars` and `idle_unload_minutes`; `settings_web/` is the embedded HTML/CSS/JS |
 | `internal/models/` (`models.go`, `modeldl.go`), `app_models.go` | `models.go` is the model catalog (pinned revision and SHA-256, kept equal to `setup.ps1`, `setup.sh` and `setup-macos.sh`; tests compare them); `modeldl.go` is the download manager (resume, SHA-256 check, cancel; owned by `app`, not by the settings server; the only code that contacts the model host); `internal/models/modeltest` is a fake model host for tests and `internal/testsupport` holds the loopback-only transport; `app_models.go` switches model and engine for the page, answers it while the server loads, and deletes unused models or partials |
 | `server.go` | `supervisor` for `llama-server` (start, stop, exit detection), `restartLimiter` (max 3 per 10 min) and backoff |
 | `setup_flow.go` | Resolves config paths, checks the model/runtime exist, offers to run `setup.ps1` (embedded in the exe with `//go:embed`) |
+| `internal/platform/` | Everything that differs per OS (tray, hotkeys, clipboard, selection capture, autostart, child-process lifetime, data directory, the native cgo files). One package; per-OS files are selected by file suffix and build tags. The app reaches it through exported names (`platform.NewHotkey`, `platform.NewTray`, ...) and keeps its test seams as fields of `app`. Its tests have their own `TestMain` (fake server, mac harness). `assets/` embeds `icon.png` for the Linux tray |
 | `internal/hotkeyspec/` | The hotkey syntax (`Ctrl+Alt+E`): one parser shared by the config check and the per-OS hotkey code; no OS dependency |
 | `config.go` / `settings.go` | `Config` + validation; order-preserving in-place `config.json` edits with a `.bak` |
-| `update.go`, `update_windows.go` | "Check for updates" (GitHub API, only on click), version compare, install-kind detection (installer / Scoop / portable) |
+| `update.go`, `internal/platform/update_windows.go` | "Check for updates" (GitHub API, only on click), version compare, install-kind detection (installer / Scoop / portable); the release-tag check and the `install.ps1` URL are in `update.go`, `update_windows.go` only runs the script it is given |
 | `history.go` | Last 10 translations (memory only) and `decidePaste` for auto-paste |
-| `tray.go` (+ `_windows`/`_other`) | `Tray` interface; Windows impl is a hidden window + `Shell_NotifyIconW` |
-| `hotkey_windows.go`, `clipboard_windows.go` | `RegisterHotKey` (one id per hotkey), simulated Ctrl+C (`captureSelectedText`), clipboard access, Ctrl+V |
-| `desktop_linux.go` + `native_linux.c`, `desktop_darwin.go` + `native_darwin.m`, `hotkey_nonwindows.go`, `clipboard_*.go`, `autostart_*.go` | Tray, hotkey, clipboard and autostart on Linux (GTK/X11/XTest) and macOS (AppKit/Carbon); the non-cgo stubs. Details under Commands |
-| `platform.go`, `proc_*.go`, `data_*.go` | Per-OS facts: server binary name, hotkey limit, hiding the console, child-process lifetime, where data lives |
-| `psscript.go` | The PowerShell command lines that run `setup.ps1` / `install.ps1` and keep the failure prompt open |
+| `internal/platform/tray.go` (+ `_windows`/`_other`) | `Tray` interface; Windows impl is a hidden window + `Shell_NotifyIconW` |
+| `internal/platform/hotkey_windows.go`, `clipboard_windows.go` | `RegisterHotKey` (one id per hotkey), simulated Ctrl+C (`CaptureSelectedText`), clipboard access, Ctrl+V |
+| `internal/platform/desktop_linux.go` + `native_linux.c`, `desktop_darwin.go` + `native_darwin.m`, `hotkey_nonwindows.go`, `clipboard_*.go`, `autostart_*.go` | Tray, hotkey, clipboard and autostart on Linux (GTK/X11/XTest) and macOS (AppKit/Carbon); the non-cgo stubs. Details under Commands |
+| `internal/platform/platform.go`, `proc_*.go`, `data_*.go`, `leftover*.go` | Per-OS facts: server binary name, hotkey limit, hiding the console, child-process lifetime, where data lives |
+| `internal/platform/psscript.go` | The PowerShell command lines that run `setup.ps1` / `install.ps1` and keep the failure prompt open |
 | `setup.ps1`, `install.ps1` | Downloads model + llama.cpp; the one-line installer. Must parse on Windows PowerShell 5.1 *and* PowerShell 7 |
 | `llama_smoke_test.go` | Real-binary smoke test (`//go:build llamasmoke`): starts `llama-server` through `supervisor` and tests translation with real model |
 | `tools/bump_llama_pin.py` | Bumps, checks, and inspects (`--show`) the pinned llama.cpp release tag and asset SHA-256 hashes across `setup.ps1`, `setup.sh` and `setup-macos.sh` |

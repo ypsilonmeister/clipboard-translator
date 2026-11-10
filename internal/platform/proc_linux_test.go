@@ -32,7 +32,7 @@ func init() {
 		}
 	}
 	cmd.Env = append(cmd.Env, "CT_TEST_FAKE_SERVER=1")
-	hideConsole(cmd)
+	HideConsole(cmd)
 	if !envHas(cmd.Env, "CT_TEST_FAKE_SERVER=1") {
 		fmt.Fprintln(os.Stderr, "hideConsole dropped cmd.Env")
 		os.Exit(2)
@@ -61,7 +61,7 @@ func envHas(env []string, kv string) bool {
 func TestHideConsoleKeepsEnvAndSetsPdeathsig(t *testing.T) {
 	cmd := exec.Command("/opt/x/llama-server")
 	cmd.Env = []string{"LLAMA_API_KEY=secret"}
-	hideConsole(cmd)
+	HideConsole(cmd)
 	if !envHas(cmd.Env, "LLAMA_API_KEY=secret") {
 		t.Fatalf("hideConsole dropped a variable set on cmd.Env: %q", cmd.Env)
 	}
@@ -73,7 +73,7 @@ func TestHideConsoleKeepsEnvAndSetsPdeathsig(t *testing.T) {
 	}
 
 	inherit := exec.Command("/opt/x/llama-server")
-	hideConsole(inherit)
+	HideConsole(inherit)
 	if len(inherit.Env) != len(os.Environ())+1 {
 		t.Fatalf("nil Env must inherit the environment: got %d entries", len(inherit.Env))
 	}

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // These tests run the functions of setup.ps1 under Windows PowerShell 5.1 (the
@@ -60,7 +62,7 @@ func powershellExe(t *testing.T) string {
 // PowerShell 7 it would point Windows PowerShell 5.1 at modules it cannot load
 // (Get-FileHash and friends go missing).
 func psEnv() []string {
-	return cleanPowerShellEnv(os.Environ())
+	return platform.CleanPowerShellEnv(os.Environ())
 }
 
 func runSetupHarness(t *testing.T, body string) {
@@ -584,7 +586,7 @@ Write-Output (Get-FileSha256 $env:CT_FILE_LARGE)
 				}
 
 				cmd := exec.Command(winPSExe, "-NoProfile", "-Command", psScript)
-				cmd.Env = append(cleanPowerShellEnv(os.Environ()),
+				cmd.Env = append(platform.CleanPowerShellEnv(os.Environ()),
 					"PSModulePath="+pwshModPath,
 					"CT_TARGET_PS1="+setupPath,
 					"CT_FILE_EMPTY="+emptyPath,

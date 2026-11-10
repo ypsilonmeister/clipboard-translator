@@ -68,7 +68,7 @@ func TestCaptureFallsBackToClipboardWhenNothingSelected(t *testing.T) {
 func TestCaptureAbortsWhenModifiersStayHeld(t *testing.T) {
 	e := &captureEnv{clip: &testClipboard{text: "stale"}, fg: 7, onWait: func(*captureEnv) bool { return false }}
 	got, fresh, err := captureWith(e.clip, 7, e.ops())
-	if !errors.Is(err, errCaptureModifiersHeld) || got != "" || fresh || e.copies != 0 {
+	if !errors.Is(err, ErrCaptureModifiersHeld) || got != "" || fresh || e.copies != 0 {
 		t.Fatalf("got=%q fresh=%v err=%v copies=%d", got, fresh, err, e.copies)
 	}
 }
@@ -78,7 +78,7 @@ func TestCaptureAbortsWhenFocusChangesDuringModifierWait(t *testing.T) {
 	e := &captureEnv{clip: &testClipboard{text: "stale"}, fg: 7, onCopy: copySelection("other window's text"),
 		onWait: func(e *captureEnv) bool { e.fg = 8; return true }}
 	got, _, err := captureWith(e.clip, 7, e.ops())
-	if !errors.Is(err, errCaptureFocusChanged) || got != "" || e.copies != 0 {
+	if !errors.Is(err, ErrCaptureFocusChanged) || got != "" || e.copies != 0 {
 		t.Fatalf("got=%q err=%v copies=%d", got, err, e.copies)
 	}
 }
@@ -347,7 +347,7 @@ func TestCaptureAbortsWhenFocusChangesDuringSettling(t *testing.T) {
 	}
 
 	got, fresh, err := captureWith(clip, 7, ops)
-	if !errors.Is(err, errCaptureFocusChanged) || got != "" || fresh {
+	if !errors.Is(err, ErrCaptureFocusChanged) || got != "" || fresh {
 		t.Fatalf("got=%q fresh=%v err=%v; want errCaptureFocusChanged and empty text", got, fresh, err)
 	}
 }
@@ -387,46 +387,8 @@ func TestCaptureAbortsWhenFocusChangesAfterFinalRead(t *testing.T) {
 	}
 
 	got, fresh, err := captureWith(clip, 7, ops)
-	if !errors.Is(err, errCaptureFocusChanged) || got != "" || fresh {
+	if !errors.Is(err, ErrCaptureFocusChanged) || got != "" || fresh {
 		t.Fatalf("got=%q fresh=%v err=%v; want errCaptureFocusChanged and empty text", got, fresh, err)
-	}
-}
-
-func TestStartTranslationReportsAbortedCapture(t *testing.T) {
-	for _, tc := range []struct {
-		err  error
-		want string
-	}{
-		{errCaptureModifiersHeld, "still held down"},
-		{errCaptureFocusChanged, "focused window changed"},
-	} {
-		a, tray, cb, _, _ := uxApp(t)
-		cb.text = "stale clipboard"
-		a.capture = func(Clipboard, uintptr) (string, bool, error) { return "", false, tc.err }
-		a.startTranslation(0)
-		if a.translating || len(a.hist.Items()) != 0 {
-			t.Fatal("an aborted capture must not start a translation")
-		}
-		if n := tray.lastNote(); !strings.Contains(n, tc.want) || !strings.Contains(n, "Nothing was translated") {
-			t.Fatalf("note = %q, want mention of %q", n, tc.want)
-		}
-		if cb.text != "stale clipboard" {
-			t.Fatalf("the clipboard must be left alone, got %q", cb.text)
-		}
-	}
-}
-
-func TestStartTranslationPassesHotkeyWindowToCapture(t *testing.T) {
-	a, _, _, _, fg := uxApp(t)
-	*fg = 42
-	var got uintptr
-	a.capture = func(_ Clipboard, win uintptr) (string, bool, error) {
-		got = win
-		return "", false, errors.New("stop here")
-	}
-	a.startTranslation(0)
-	if got != 42 {
-		t.Fatalf("capture window = %d, want the window in front at the hotkey press", got)
 	}
 }
 
@@ -459,9 +421,6 @@ func TestCaptureWithPrimaryOtherWindowKeepsTextButIsNotFresh(t *testing.T) {
 	}
 	if cb.text != "selection from window 5" || cb.writes != 1 {
 		t.Fatalf("the selection must be staged on the clipboard: text=%q writes=%d", cb.text, cb.writes)
-	}
-	if act := decidePaste(true, fresh, 10, 10); act != pasteNone {
-		t.Fatalf("a selection that is not fresh must never auto-paste, got %v", act)
 	}
 }
 

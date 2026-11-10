@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // backendNames are the llama.cpp builds setup.ps1 can install, in Settings order.
@@ -19,7 +21,7 @@ var backendNames = []string{"cpu", "cuda", "vulkan", "metal"}
 func availableBackends(dir string) []string {
 	var out []string
 	for _, b := range backendNames {
-		if err := checkFile(filepath.Join(dir, "runtime", b, serverBinaryName())); err == nil {
+		if err := checkFile(filepath.Join(dir, "runtime", b, platform.ServerBinaryName())); err == nil {
 			out = append(out, b)
 		}
 	}
@@ -42,7 +44,7 @@ func backendSettings(name string) (serverFile string, gpuLayers int) {
 	if name == "cpu" {
 		gpuLayers = 0
 	}
-	return "runtime/" + name + "/" + serverBinaryName(), gpuLayers
+	return "runtime/" + name + "/" + platform.ServerBinaryName(), gpuLayers
 }
 
 type configEntry struct {

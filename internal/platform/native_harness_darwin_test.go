@@ -12,6 +12,9 @@ import (
 )
 
 // AppKit must run on the process's main thread, including in a Go test binary.
+// testMenuCommand is any application menu ID (the app uses FirstAppCommand+5 for Cancel).
+const testMenuCommand = FirstAppCommand + 5
+
 func init() {
 	if os.Getenv("CT_TEST_MACOS") == "1" {
 		runtime.LockOSThread()
@@ -30,10 +33,10 @@ func runPlatformSmokeTests() bool {
 	return true
 }
 func macNativeSmoke() error {
-	if err := platformRuntimeError(); err != nil {
+	if err := PlatformRuntimeError(); err != nil {
 		return err
 	}
-	cb, err := newClipboard()
+	cb, err := NewClipboard()
 	if err != nil {
 		return err
 	}
@@ -60,7 +63,7 @@ func macNativeSmoke() error {
 	if changed, err := cb.ReplaceIfUnchanged(source, "Hello"); !changed || err != nil {
 		return fmt.Errorf("pasteboard replacement: %v %v", changed, err)
 	}
-	hk, err := newHotkey("Ctrl+Alt+Shift+J")
+	hk, err := NewHotkey("Ctrl+Alt+Shift+J")
 	if err != nil {
 		return err
 	}
@@ -73,17 +76,17 @@ func macNativeSmoke() error {
 	if pressed, _ := hk.Pressed(); pressed {
 		return fmt.Errorf("hotkey event fired twice")
 	}
-	tray := newTray("/tmp/clipboard-translator-macos-smoke.log")
+	tray := NewTray("/tmp/clipboard-translator-macos-smoke.log")
 	defer tray.Close()
 	tray.SetStatus("Native smoke test")
-	tray.SetMenu(func() []MenuItem { return []MenuItem{{ID: cmdCancel, Label: "Cancel"}} })
-	macTestMenu(cmdCancel)
-	pumpMessages()
-	if id, ok := tray.NextCommand(); !ok || id != cmdCancel {
+	tray.SetMenu(func() []MenuItem { return []MenuItem{{ID: testMenuCommand, Label: "Cancel"}} })
+	macTestMenu(testMenuCommand)
+	PumpMessages()
+	if id, ok := tray.NextCommand(); !ok || id != testMenuCommand {
 		return fmt.Errorf("menu command = %d %v", id, ok)
 	}
 	macTestMenu(2)
-	pumpMessages()
+	PumpMessages()
 	if !tray.QuitRequested() {
 		return fmt.Errorf("menu Quit was not processed")
 	}
@@ -96,7 +99,7 @@ func macNativeSmoke() error {
 	if err := os.WriteFile(script, []byte("echo setup-smoke\n"), 0o600); err != nil {
 		return err
 	}
-	if err := runSetup(dir); err != nil {
+	if err := RunSetup(dir); err != nil {
 		return fmt.Errorf("setup progress window: %w", err)
 	}
 	if err := os.WriteFile(script, []byte("echo cancel-smoke\nsleep 30\n"), 0o600); err != nil {
@@ -104,7 +107,7 @@ func macNativeSmoke() error {
 	}
 	macTestCancelSetupSoon()
 	begin := time.Now()
-	if err := runSetup(dir); err == nil || !strings.Contains(err.Error(), "cancelled") {
+	if err := RunSetup(dir); err == nil || !strings.Contains(err.Error(), "cancelled") {
 		return fmt.Errorf("setup cancellation: %v", err)
 	}
 	if time.Since(begin) > 5*time.Second {

@@ -1,8 +1,8 @@
 package platform
 
-// firstAppCommand is the lowest ID an app-specific menu item may use. The
+// FirstAppCommand is the lowest ID an app-specific menu item may use. The
 // built-in items (Start with Windows, Open log, Quit) use the IDs below it.
-const firstAppCommand = 100
+const FirstAppCommand = 100
 
 // MenuItem describes one entry of the app-specific part of the tray menu.
 type MenuItem struct {

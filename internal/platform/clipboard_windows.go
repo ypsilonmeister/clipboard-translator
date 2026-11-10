@@ -36,7 +36,7 @@ var (
 
 type winClipboard struct{ hwnd uintptr }
 
-func newClipboard() (Clipboard, error) {
+func NewClipboard() (Clipboard, error) {
 	// A hidden window is required: EmptyClipboard() after OpenClipboard(NULL)
 	// can leave the clipboard without an owner and make SetClipboardData fail.
 	class, _ := syscall.UTF16PtrFromString("STATIC")
@@ -125,7 +125,7 @@ func (w *winClipboard) ReplaceIfUnchanged(expected, translated string) (bool, er
 	if err != nil {
 		return false, err
 	}
-	if !sameClipboardText(current, expected) {
+	if !SameClipboardText(current, expected) {
 		return false, nil
 	}
 	if err := w.writeLocked(translated); err != nil {

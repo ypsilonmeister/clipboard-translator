@@ -11,7 +11,6 @@ package platform
 import "C"
 
 import (
-	_ "embed"
 	"errors"
 	"fmt"
 	"log"
@@ -21,10 +20,9 @@ import (
 	"strings"
 	"time"
 	"unsafe"
-)
 
-//go:embed assets/icon.png
-var linuxIcon []byte
+	"github.com/ypsilonmeister/clipboard-translator/assets"
+)
 
 func x11EnvironmentError(display, session, wayland string) error {
 	if strings.EqualFold(session, "wayland") || wayland != "" {
@@ -36,7 +34,7 @@ func x11EnvironmentError(display, session, wayland string) error {
 	return nil
 }
 
-func platformRuntimeError() error {
+func PlatformRuntimeError() error {
 	if err := x11EnvironmentError(os.Getenv("DISPLAY"), os.Getenv("XDG_SESSION_TYPE"), os.Getenv("WAYLAND_DISPLAY")); err != nil {
 		return err
 	}
@@ -65,8 +63,8 @@ type linuxHotkey struct {
 
 var x11Registry = newHotkeyRegistry(maxHotkeys)
 
-func newHotkey(spec string) (Hotkey, error) {
-	if err := platformRuntimeError(); err != nil {
+func NewHotkey(spec string) (Hotkey, error) {
+	if err := PlatformRuntimeError(); err != nil {
 		return nil, err
 	}
 	rawMods, keysym, err := parseX11Hotkey(spec)
@@ -105,7 +103,7 @@ func (h *linuxHotkey) Pressed() (bool, error) {
 	if h.closed {
 		return false, nil
 	}
-	pumpMessages()
+	PumpMessages()
 	return C.ct_hotkey_check(C.int(h.id)) != 0, nil
 }
 
@@ -119,8 +117,8 @@ func (h *linuxHotkey) Close() error {
 	return nil
 }
 
-func foregroundWindow() uintptr { return uintptr(C.ct_focus()) }
-func waitModifiersReleased(max time.Duration) bool {
+func ForegroundWindow() uintptr { return uintptr(C.ct_focus()) }
+func WaitModifiersReleased(max time.Duration) bool {
 	deadline := time.Now().Add(max)
 	for C.ct_modifiers() != 0 {
 		if time.Now().After(deadline) {
@@ -130,7 +128,7 @@ func waitModifiersReleased(max time.Duration) bool {
 	}
 	return true
 }
-func sendPaste() error {
+func SendPaste() error {
 	if C.ct_paste() == 0 {
 		return errors.New("XTest keyboard injection is unavailable")
 	}
@@ -147,10 +145,10 @@ func primarySelectedIn(win uintptr) bool {
 	return C.ct_primary_selected_in(C.ulong(win)) != 0
 }
 
-// beginSelectionCapture is nil on X11: PRIMARY is read at once, nothing waits.
-func beginSelectionCapture(Clipboard, uintptr) captureTask { return nil }
+// BeginSelectionCapture is nil on X11: PRIMARY is read at once, nothing waits.
+func BeginSelectionCapture(Clipboard, uintptr) CaptureTask { return nil }
 
-func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
+func CaptureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
 	text, fresh, err := captureWithPrimary(cb, win, primaryOps{
 		selectedIn:  primarySelectedIn,
 		readPrimary: func() string { return readX11Text(true) },
@@ -178,12 +176,12 @@ type linuxTray struct {
 
 var activeLinuxTray *linuxTray
 
-func newTray(logPath string) Tray {
+func NewTray(logPath string) Tray {
 	t := &linuxTray{logPath: logPath}
 	f, err := os.CreateTemp("", "clipboard-translator-icon-*.png")
 	if err == nil {
 		t.iconPath = f.Name()
-		_, err = f.Write(linuxIcon)
+		_, err = f.Write(assets.IconPNG)
 		if closeErr := f.Close(); err == nil {
 			err = closeErr
 		}
@@ -244,14 +242,14 @@ func linuxMenu(items []MenuItem) unsafe.Pointer {
 	}
 	return menu
 }
-func pumpMessages() bool {
+func PumpMessages() bool {
 	C.ct_pump()
 	C.ct_hotkey_pump()
 	if t := activeLinuxTray; t != nil {
 		for id := int(C.ct_command()); id != 0; id = int(C.ct_command()) {
 			switch id {
 			case 1:
-				_ = openTarget(t.logPath)
+				_ = OpenTarget(t.logPath)
 			case 2:
 				t.quit = true
 			case 3:
@@ -278,10 +276,10 @@ func dialog(msg string, question, isError bool) bool {
 	withCString(msg, func(p *C.char) { answer = C.ct_dialog(p, C.int(boolInt(question)), C.int(boolInt(isError))) != 0 })
 	return answer
 }
-func showError(msg string)     { dialog(msg, false, true) }
-func showInfo(msg string)      { dialog(msg, false, false) }
-func askYesNo(msg string) bool { return dialog(msg, true, false) }
-func openTarget(target string) error {
+func ShowError(msg string)     { dialog(msg, false, true) }
+func ShowInfo(msg string)      { dialog(msg, false, false) }
+func AskYesNo(msg string) bool { return dialog(msg, true, false) }
+func OpenTarget(target string) error {
 	if !strings.Contains(target, "://") {
 		target, _ = filepath.Abs(target)
 	}

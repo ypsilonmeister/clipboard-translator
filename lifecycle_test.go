@@ -6,11 +6,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 func TestStartupHotkeyConflictFallsBackToNoHotkey(t *testing.T) {
 	a, _, errs := newTestApp(t)
-	a.newHotkey = func(spec string) (Hotkey, error) {
+	a.newHotkey = func(spec string) (platform.Hotkey, error) {
 		if spec == "Ctrl+Alt+E" {
 			return nil, errors.New("already registered")
 		}
@@ -58,7 +60,7 @@ func TestStartupHotkeyConflictFallsBackToNoHotkey(t *testing.T) {
 // breakPreviousEngine makes the app's current server paths unusable, as if the
 // runtime it was using had been deleted or damaged.
 func breakPreviousEngine(a *app) {
-	missing := filepath.Join(a.dir, "runtime", "gone", serverBinaryName())
+	missing := filepath.Join(a.dir, "runtime", "gone", platform.ServerBinaryName())
 	a.paths.server, a.paths.fallback = missing, missing
 }
 
@@ -125,7 +127,7 @@ func TestServeRecoversOrQuitsAfterFailedSwitch(t *testing.T) {
 func TestRetryingTheConfiguredHotkeyOnceFree(t *testing.T) {
 	a, _, _ := newTestApp(t)
 	taken := true
-	a.newHotkey = func(spec string) (Hotkey, error) {
+	a.newHotkey = func(spec string) (platform.Hotkey, error) {
 		if taken {
 			return nil, errors.New("already registered")
 		}

@@ -10,25 +10,28 @@ import (
 	"time"
 )
 
+// testMenuCommand is any application menu ID (the app uses FirstAppCommand+5 for Cancel).
+const testMenuCommand = FirstAppCommand + 5
+
 func TestX11Desktop(t *testing.T) {
 	if os.Getenv("CT_TEST_X11") != "1" {
 		t.Skip("run only on an isolated Xvfb display with CT_TEST_X11=1")
 	}
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	if err := platformRuntimeError(); err != nil {
+	if err := PlatformRuntimeError(); err != nil {
 		t.Fatal(err)
 	}
 	x11TestCreate()
 	defer x11TestDestroy()
-	cb, err := newClipboard()
+	cb, err := NewClipboard()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cb.Close()
 	const source = "こんにちは, world 😀"
 	x11TestSelect(source)
-	got, fromSelection, err := captureSelectedText(cb, foregroundWindow())
+	got, fromSelection, err := CaptureSelectedText(cb, ForegroundWindow())
 	if err != nil || got != source || !fromSelection {
 		t.Fatalf("capture = %q %v %v", got, fromSelection, err)
 	}
@@ -41,15 +44,20 @@ func TestX11Desktop(t *testing.T) {
 	if got, err := cb.Read(); err != nil || got != "Hello" {
 		t.Fatalf("clipboard = %q %v", got, err)
 	}
-	if foregroundWindow() == 0 {
+	if ForegroundWindow() == 0 {
 		t.Fatal("test window has no focus")
 	}
-	if err := pasteIntoForeground(foregroundWindow()); err != nil {
+	// The app pastes with pasteWithFocus (app.go); this is the same two
+	// platform calls without the window check, which has its own unit test.
+	if !WaitModifiersReleased(time.Second) {
+		t.Fatal("modifier keys are still held down")
+	}
+	if err := SendPaste(); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(time.Second)
 	for x11TestText() != "Hello" && time.Now().Before(deadline) {
-		pumpMessages()
+		PumpMessages()
 		time.Sleep(10 * time.Millisecond)
 	}
 	if got := x11TestText(); got != "Hello" {
@@ -64,14 +72,14 @@ func TestX11Desktop(t *testing.T) {
 	x11TestCreateB()
 	defer x11TestDestroyB()
 	x11TestFocusB()
-	winB := foregroundWindow()
+	winB := ForegroundWindow()
 	if winB == 0 {
 		t.Fatal("Window B has no focus")
 	}
 	if err := cb.Write("unrelated clipboard text"); err != nil {
 		t.Fatal(err)
 	}
-	gotStale, freshStale, err := captureSelectedText(cb, winB)
+	gotStale, freshStale, err := CaptureSelectedText(cb, winB)
 	if err != nil {
 		t.Fatalf("capture in Window B failed: %v", err)
 	}
@@ -83,22 +91,16 @@ func TestX11Desktop(t *testing.T) {
 	if gotStale != "Stale Window A selection" {
 		t.Fatalf("expected the PRIMARY text, got %q", gotStale)
 	}
-	if act := decidePaste(true, freshStale, winB, foregroundWindow()); act != pasteNone {
-		t.Fatalf("decidePaste on stale selection must be pasteNone, got %v", act)
-	}
 
 	// But selecting text in Window B itself must be detected as a fresh selection in Window B.
 	const bSource = "Window B text"
 	x11TestSelectB(bSource)
-	gotB, freshB, err := captureSelectedText(cb, foregroundWindow())
+	gotB, freshB, err := CaptureSelectedText(cb, ForegroundWindow())
 	if err != nil || gotB != bSource || !freshB {
 		t.Fatalf("same-window capture in Window B failed: got=%q fresh=%v err=%v", gotB, freshB, err)
 	}
-	if act := decidePaste(true, freshB, winB, foregroundWindow()); act != pasteNow {
-		t.Fatalf("decidePaste for fresh selection in Window B must be pasteNow, got %v", act)
-	}
 
-	hk, err := newHotkey("Ctrl+Alt+E")
+	hk, err := NewHotkey("Ctrl+Alt+E")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +135,7 @@ func TestX11Desktop(t *testing.T) {
 			conflictDesk = false
 		}
 	})
-	if unexpected, err := newHotkey("Ctrl+Alt+E"); err == nil {
+	if unexpected, err := NewHotkey("Ctrl+Alt+E"); err == nil {
 		unexpected.Close()
 		x11TestConflict(false)
 		conflictDesk = false
@@ -141,22 +143,22 @@ func TestX11Desktop(t *testing.T) {
 	}
 	x11TestConflict(false)
 	conflictDesk = false
-	hk, err = newHotkey("Ctrl+Alt+E")
+	hk, err = NewHotkey("Ctrl+Alt+E")
 	if err != nil {
 		t.Fatalf("binding must recover after a conflict: %v", err)
 	}
 	t.Cleanup(func() { hk.Close() })
 
-	tray := newTray("/tmp/test-translator.log")
+	tray := NewTray("/tmp/test-translator.log")
 	defer tray.Close()
-	tray.SetMenu(func() []MenuItem { return []MenuItem{{ID: cmdCancel, Label: "Cancel"}} })
-	x11TestMenuClick(cmdCancel)
-	pumpMessages()
-	if id, ok := tray.NextCommand(); !ok || id != cmdCancel {
+	tray.SetMenu(func() []MenuItem { return []MenuItem{{ID: testMenuCommand, Label: "Cancel"}} })
+	x11TestMenuClick(testMenuCommand)
+	PumpMessages()
+	if id, ok := tray.NextCommand(); !ok || id != testMenuCommand {
 		t.Fatalf("menu command = %d %v", id, ok)
 	}
 	x11TestMenuClick(2)
-	pumpMessages()
+	PumpMessages()
 	if !tray.QuitRequested() {
 		t.Fatal("Quit must work while startup is pumping messages")
 	}
@@ -233,25 +235,25 @@ func TestX11MultipleHotkeys(t *testing.T) {
 	}
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	if err := platformRuntimeError(); err != nil {
+	if err := PlatformRuntimeError(); err != nil {
 		t.Fatal(err)
 	}
 
 	// 1. Register two hotkeys
-	hk1, err := newHotkey("Ctrl+Alt+E")
+	hk1, err := NewHotkey("Ctrl+Alt+E")
 	if err != nil {
 		t.Fatalf("newHotkey(Ctrl+Alt+E): %v", err)
 	}
 	t.Cleanup(func() { hk1.Close() })
 
-	hk2, err := newHotkey("Ctrl+Alt+K")
+	hk2, err := NewHotkey("Ctrl+Alt+K")
 	if err != nil {
 		t.Fatalf("newHotkey(Ctrl+Alt+K): %v", err)
 	}
 	t.Cleanup(func() { hk2.Close() })
 
 	// 2. Duplicate registration is refused (detect by keycode + normalized modifiers)
-	if dup, err := newHotkey("alt+control+e"); err == nil {
+	if dup, err := NewHotkey("alt+control+e"); err == nil {
 		dup.Close()
 		t.Fatal("duplicate registration 'alt+control+e' must be refused")
 	} else if !strings.Contains(err.Error(), "already registered") {
@@ -346,7 +348,7 @@ func TestX11MultipleHotkeys(t *testing.T) {
 	waitPressed(t, hk2, false, "hk2 consumed")
 
 	// 8. Re-registering after Close() works
-	hk1New, err := newHotkey("Ctrl+Alt+E")
+	hk1New, err := NewHotkey("Ctrl+Alt+E")
 	if err != nil {
 		t.Fatalf("re-registering Ctrl+Alt+E after Close failed: %v", err)
 	}
@@ -365,7 +367,7 @@ func TestX11MultipleHotkeys(t *testing.T) {
 			conflictD = false
 		}
 	})
-	hk3, err := newHotkey("Ctrl+Alt+D")
+	hk3, err := NewHotkey("Ctrl+Alt+D")
 	if err == nil {
 		hk3.Close()
 		x11TestConflictKey('d', 12, false)
@@ -386,7 +388,7 @@ func TestX11MultipleHotkeys(t *testing.T) {
 	// Release conflict and re-try
 	x11TestConflictKey('d', 12, false)
 	conflictD = false
-	hk3, err = newHotkey("Ctrl+Alt+D")
+	hk3, err = NewHotkey("Ctrl+Alt+D")
 	if err != nil {
 		t.Fatalf("Ctrl+Alt+D should succeed after conflict released: %v", err)
 	}
@@ -403,7 +405,7 @@ func TestX11HotkeyRobustness(t *testing.T) {
 	}
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	if err := platformRuntimeError(); err != nil {
+	if err := PlatformRuntimeError(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -450,7 +452,7 @@ func TestX11HotkeyRobustness(t *testing.T) {
 		// 5. Verify handler restoration after real grab:
 		x11TestInstallForwardHandler()
 		x11TestSetForwardedError(0)
-		hk, err := newHotkey("Ctrl+Alt+E")
+		hk, err := NewHotkey("Ctrl+Alt+E")
 		if err != nil {
 			t.Fatalf("newHotkey failed: %v", err)
 		}
@@ -535,13 +537,13 @@ func TestX11HotkeyRobustness(t *testing.T) {
 
 	// Subtest 3: Closing one hotkey drains queue and preserves pending events of other hotkeys (Item 4)
 	t.Run("UngrabDrainsQueueAndPreservesOthers", func(t *testing.T) {
-		hk1, err := newHotkey("Ctrl+Alt+E")
+		hk1, err := NewHotkey("Ctrl+Alt+E")
 		if err != nil {
 			t.Fatalf("newHotkey hk1: %v", err)
 		}
 		t.Cleanup(func() { hk1.Close() })
 
-		hk2, err := newHotkey("Ctrl+Alt+K")
+		hk2, err := NewHotkey("Ctrl+Alt+K")
 		if err != nil {
 			t.Fatalf("newHotkey hk2: %v", err)
 		}
@@ -573,7 +575,7 @@ func TestX11HotkeyRobustness(t *testing.T) {
 		waitPressed(t, hk2, true, "hk2 event must be preserved when hk1 is closed")
 
 		// Re-register hk1 on Ctrl+Alt+E: it must NOT fire from the old stale event!
-		hk1New, err := newHotkey("Ctrl+Alt+E")
+		hk1New, err := NewHotkey("Ctrl+Alt+E")
 		if err != nil {
 			t.Fatalf("newHotkey hk1New: %v", err)
 		}
@@ -618,7 +620,7 @@ func TestX11HotkeyRobustness(t *testing.T) {
 
 	// Subtest 5: Missed KeyRelease self-heal (Item 3)
 	t.Run("MissedKeyReleaseSelfHeal", func(t *testing.T) {
-		hk, err := newHotkey("Ctrl+Alt+E")
+		hk, err := NewHotkey("Ctrl+Alt+E")
 		if err != nil {
 			t.Fatalf("newHotkey: %v", err)
 		}
@@ -639,7 +641,7 @@ func TestX11HotkeyRobustness(t *testing.T) {
 
 	// Subtest 6: Autorepeat fallback when detectable autorepeat is false (Item 6)
 	t.Run("AutorepeatFallbackWhenDetectableUnsupported", func(t *testing.T) {
-		hk, err := newHotkey("Ctrl+Alt+E")
+		hk, err := NewHotkey("Ctrl+Alt+E")
 		if err != nil {
 			t.Fatalf("newHotkey: %v", err)
 		}
@@ -682,7 +684,7 @@ func TestX11HotkeyRobustness(t *testing.T) {
 			}
 		})
 
-		_, err := newHotkey("Ctrl+Alt+E")
+		_, err := NewHotkey("Ctrl+Alt+E")
 		if err == nil {
 			t.Fatal("expected conflict error")
 		}
@@ -701,13 +703,13 @@ func TestX11HotkeyRobustness(t *testing.T) {
 		conflictActive = false
 
 		// 2. Duplicate error
-		hk1, err := newHotkey("Ctrl+Alt+E")
+		hk1, err := NewHotkey("Ctrl+Alt+E")
 		if err != nil {
 			t.Fatalf("newHotkey hk1: %v", err)
 		}
 		t.Cleanup(func() { hk1.Close() })
 
-		_, errDup := newHotkey("Ctrl+Alt+E")
+		_, errDup := NewHotkey("Ctrl+Alt+E")
 		if errDup == nil {
 			t.Fatal("expected duplicate error")
 		}
@@ -722,7 +724,7 @@ func TestX11HotkeyRobustness(t *testing.T) {
 		hks = append(hks, hk1)
 		specs := []string{"Ctrl+Alt+1", "Ctrl+Alt+2", "Ctrl+Alt+3", "Ctrl+Alt+4", "Ctrl+Alt+5", "Ctrl+Alt+6", "Ctrl+Alt+7"}
 		for _, sp := range specs {
-			h, err := newHotkey(sp)
+			h, err := NewHotkey(sp)
 			if err != nil {
 				t.Fatalf("failed to register hotkey %s: %v", sp, err)
 			}
@@ -735,7 +737,7 @@ func TestX11HotkeyRobustness(t *testing.T) {
 		})
 
 		// 9th registration attempt must fail with table full error
-		_, errFull := newHotkey("Ctrl+Alt+8")
+		_, errFull := NewHotkey("Ctrl+Alt+8")
 		if errFull == nil {
 			t.Fatal("expected table full error")
 		}

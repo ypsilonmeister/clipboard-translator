@@ -120,7 +120,7 @@ func parseHotkey(s string) (uint32, uintptr, error) {
 	}
 	return mods | modNoRepeat, vk, nil
 }
-func newHotkey(spec string) (Hotkey, error) {
+func NewHotkey(spec string) (Hotkey, error) {
 	mods, vk, err := parseHotkey(spec)
 	if err != nil {
 		return nil, err
@@ -195,17 +195,17 @@ const vkV = 0x56
 
 var getForegroundWindow = user32.NewProc("GetForegroundWindow")
 
-// foregroundWindow returns the window that currently has the keyboard focus
+// ForegroundWindow returns the window that currently has the keyboard focus
 // (0 when there is none).
-func foregroundWindow() uintptr {
+func ForegroundWindow() uintptr {
 	h, _, _ := getForegroundWindow.Call()
 	return h
 }
 
-// waitModifiersReleased waits until Ctrl, Alt, Shift and Win are all up, so a
+// WaitModifiersReleased waits until Ctrl, Alt, Shift and Win are all up, so a
 // synthetic Ctrl+V is not turned into Ctrl+Alt+V by keys still held from the
 // hotkey. It reports whether they were released within max.
-func waitModifiersReleased(max time.Duration) bool {
+func WaitModifiersReleased(max time.Duration) bool {
 	deadline := time.Now().Add(max)
 	for modifierPressed() {
 		if time.Now().After(deadline) {
@@ -216,8 +216,8 @@ func waitModifiersReleased(max time.Duration) bool {
 	return true
 }
 
-// sendPaste types Ctrl+V into the focused window.
-func sendPaste() error {
+// SendPaste types Ctrl+V into the focused window.
+func SendPaste() error {
 	inputs := []keyboardInputRecord{
 		{Type: keyboardInput, VK: vkControl},
 		{Type: keyboardInput, VK: vkV},
@@ -240,14 +240,14 @@ func sendPaste() error {
 // after the key press.
 const windowsCopyTimeout = 2 * time.Second
 
-// beginSelectionCapture starts copying the selected content of window win, the
+// BeginSelectionCapture starts copying the selected content of window win, the
 // window that was in front when the hotkey was pressed. If Ctrl+C does not
 // change the clipboard, the previous clipboard text is used (fromSelection is
 // then false). The app steps the job from its message loop, so the wait for a
 // slow copy does not freeze the tray. See captureJob for the ordering rules.
-func beginSelectionCapture(cb Clipboard, win uintptr) captureTask {
+func BeginSelectionCapture(cb Clipboard, win uintptr) CaptureTask {
 	return newCaptureJob(cb, win, captureOps{
-		foreground:      foregroundWindow,
+		foreground:      ForegroundWindow,
 		modifiersUp:     func() bool { return !modifierPressed() }, // keep Ctrl+Alt+E from contaminating the simulated Ctrl+C
 		sequence:        clipboardSequence,
 		sendCopy:        sendCopy,
@@ -257,7 +257,7 @@ func beginSelectionCapture(cb Clipboard, win uintptr) captureTask {
 	})
 }
 
-// captureSelectedText is beginSelectionCapture run to the end in one call.
-func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
-	return runCapture(beginSelectionCapture(cb, win))
+// CaptureSelectedText is beginSelectionCapture run to the end in one call.
+func CaptureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
+	return runCapture(BeginSelectionCapture(cb, win))
 }

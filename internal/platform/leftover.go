@@ -27,10 +27,10 @@ type childRecord struct {
 	Path string `json:"path"` // the executable the app started
 }
 
-// childRecordPath is the record file for the server on port. It includes the
+// ChildRecordPath is the record file for the server on port. It includes the
 // port so copies of the app configured for different ports, which share the
 // macOS data folder, do not overwrite each other's record.
-func childRecordPath(dir string, port int) string {
+func ChildRecordPath(dir string, port int) string {
 	return filepath.Join(dir, fmt.Sprintf("llama-server-%d.pid", port))
 }
 
@@ -76,10 +76,10 @@ func isLeftoverServer(rec childRecord, psLine string, self int) bool {
 	return path.IsAbs(comm) && path.Clean(comm) == path.Clean(rec.Path)
 }
 
-// checkServerPort returns an error the user can act on when something already
+// CheckServerPort returns an error the user can act on when something already
 // answers on the server's port, which is usually a llama-server left over from
 // an earlier run.
-func checkServerPort(port int) error {
+func CheckServerPort(port int) error {
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 250*time.Millisecond)
 	if err != nil {
 		return nil

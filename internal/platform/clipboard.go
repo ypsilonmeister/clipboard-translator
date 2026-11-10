@@ -24,10 +24,10 @@ func normalizeClipboardText(s string) string {
 	return strings.TrimRight(s, " \t\n")
 }
 
-// sameClipboardText reports whether current and expected match after normalising
+// SameClipboardText reports whether current and expected match after normalising
 // CRLF/CR to LF and trimming trailing spaces, tabs and line breaks.
 // Leading and inner whitespace must still match exactly.
-func sameClipboardText(current, expected string) bool {
+func SameClipboardText(current, expected string) bool {
 	if current == expected {
 		return true
 	}
@@ -51,9 +51,9 @@ func (d clipboardDiff) String() string {
 		d.ExpectedRunes, d.CurrentRunes, d.FirstDiff, d.WhitespaceOnly, d.OneIsPrefix, d.Elapsed.Round(time.Millisecond))
 }
 
-// classifyClipboardDiff compares expected and current clipboard text rune-by-rune
+// ClassifyClipboardDiff compares expected and current clipboard text rune-by-rune
 // without logging any clipboard content.
-func classifyClipboardDiff(expected, current string, elapsed time.Duration) clipboardDiff {
+func ClassifyClipboardDiff(expected, current string, elapsed time.Duration) clipboardDiff {
 	expRunes := []rune(expected)
 	curRunes := []rune(current)
 	minLen := len(expRunes)
@@ -73,7 +73,7 @@ func classifyClipboardDiff(expected, current string, elapsed time.Duration) clip
 	}
 
 	oneIsPrefix := (firstDiff == -1) || (firstDiff == minLen)
-	wsOnly := sameClipboardText(current, expected)
+	wsOnly := SameClipboardText(current, expected)
 
 	return clipboardDiff{
 		ExpectedRunes:  len(expRunes),

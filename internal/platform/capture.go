@@ -8,8 +8,8 @@ import (
 // Why a selection could not be captured. startTranslation tells the user so
 // instead of silently translating whatever happens to be on the clipboard.
 var (
-	errCaptureModifiersHeld = errors.New("the hotkey's modifier keys were still held down")
-	errCaptureFocusChanged  = errors.New("the focused window changed before the selection could be copied")
+	ErrCaptureModifiersHeld = errors.New("the hotkey's modifier keys were still held down")
+	ErrCaptureFocusChanged  = errors.New("the focused window changed before the selection could be copied")
 )
 
 // captureOps are the OS pieces of selection capture, so the ordering rules in
@@ -26,12 +26,12 @@ type captureOps struct {
 	sleep           func(time.Duration) // only captureWith sleeps; the app polls instead
 }
 
-// captureTask is a selection capture in progress. The UI thread calls step
-// until it reports done, waiting about wait() in between while it keeps pumping
+// CaptureTask is a selection capture in progress. The UI thread calls step
+// until it reports done, waiting about Wait() in between while it keeps pumping
 // messages, so a slow copy never freezes the tray or the other hotkeys.
-type captureTask interface {
-	step() (done bool, text string, fromSelection bool, err error)
-	wait() time.Duration
+type CaptureTask interface {
+	Step() (done bool, text string, fromSelection bool, err error)
+	Wait() time.Duration
 }
 
 // captureJob copies the selection of window win and reports the clipboard text
@@ -76,11 +76,11 @@ func (j *captureJob) focusLost() bool {
 
 // step does whatever can be done now. It never sleeps itself (opening a
 // clipboard another program holds may retry briefly, as every Read does).
-func (j *captureJob) step() (done bool, text string, fromSelection bool, err error) {
+func (j *captureJob) Step() (done bool, text string, fromSelection bool, err error) {
 	if !j.copying {
 		if !j.ops.modifiersUp() {
 			if !j.ops.now().Before(j.modDeadline) {
-				return true, "", false, errCaptureModifiersHeld
+				return true, "", false, ErrCaptureModifiersHeld
 			}
 			return false, "", false, nil
 		}
@@ -90,7 +90,7 @@ func (j *captureJob) step() (done bool, text string, fromSelection bool, err err
 		}
 		j.before = j.ops.sequence()
 		if j.focusLost() {
-			return true, "", false, errCaptureFocusChanged
+			return true, "", false, ErrCaptureFocusChanged
 		}
 		if err := j.ops.sendCopy(); err != nil {
 			return true, old, false, nil // cannot inject keys: fall back to the existing clipboard text
@@ -100,7 +100,7 @@ func (j *captureJob) step() (done bool, text string, fromSelection bool, err err
 		// Fall through: a copy that is already done is picked up without a wait.
 	}
 	if j.focusLost() {
-		return true, "", false, errCaptureFocusChanged
+		return true, "", false, ErrCaptureFocusChanged
 	}
 	now := j.ops.now()
 	seq := j.ops.sequence()
@@ -120,7 +120,7 @@ func (j *captureJob) step() (done bool, text string, fromSelection bool, err err
 			return true, "", false, err
 		}
 		if j.focusLost() {
-			return true, "", false, errCaptureFocusChanged
+			return true, "", false, ErrCaptureFocusChanged
 		}
 		return true, picked, true, nil
 	}
@@ -130,7 +130,7 @@ func (j *captureJob) step() (done bool, text string, fromSelection bool, err err
 // wait is how long until the next step can tell something new: the poll step,
 // shortened so that the copy deadline and the end of the settle time are hit
 // exactly.
-func (j *captureJob) wait() time.Duration {
+func (j *captureJob) Wait() time.Duration {
 	d := capturePollStep
 	if !j.copying {
 		return d
@@ -151,22 +151,22 @@ func (j *captureJob) wait() time.Duration {
 func captureWith(cb Clipboard, win uintptr, ops captureOps) (text string, fromSelection bool, err error) {
 	j := newCaptureJob(cb, win, ops)
 	for {
-		done, text, fresh, err := j.step()
+		done, text, fresh, err := j.Step()
 		if done {
 			return text, fresh, err
 		}
-		j.ops.sleep(j.wait())
+		j.ops.sleep(j.Wait())
 	}
 }
 
 // runCapture runs a capture task to the end on a real clock.
-func runCapture(t captureTask) (string, bool, error) {
+func runCapture(t CaptureTask) (string, bool, error) {
 	for {
-		done, text, fresh, err := t.step()
+		done, text, fresh, err := t.Step()
 		if done {
 			return text, fresh, err
 		}
-		time.Sleep(t.wait())
+		time.Sleep(t.Wait())
 	}
 }
 

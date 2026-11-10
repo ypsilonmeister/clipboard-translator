@@ -7,7 +7,7 @@ import "testing"
 // Round-trips text through the real Windows clipboard, including non-BMP
 // characters, and puts the user's previous text back afterwards.
 func TestWindowsClipboardRoundTrip(t *testing.T) {
-	cb, err := newClipboard()
+	cb, err := NewClipboard()
 	if err != nil {
 		t.Skipf("clipboard unavailable: %v", err)
 	}

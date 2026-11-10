@@ -7,7 +7,7 @@ import (
 
 // App bundles may be read-only or translocated by Gatekeeper. Keep downloaded
 // runtimes, settings and logs outside the signed bundle.
-func writableAppDir(string) (string, error) {
+func WritableAppDir(string) (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err

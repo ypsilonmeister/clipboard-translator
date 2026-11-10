@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func hideConsole(cmd *exec.Cmd) {
+func HideConsole(cmd *exec.Cmd) {
 	dir := filepath.Dir(cmd.Path)
 	libs := dir + ":" + filepath.Join(dir, "lib")
 	if old := os.Getenv("DYLD_LIBRARY_PATH"); old != "" {
@@ -27,15 +27,15 @@ func hideConsole(cmd *exec.Cmd) {
 	cmd.Env = append(env, "DYLD_LIBRARY_PATH="+libs)
 }
 
-// bindToParentLifetime is only implemented on Windows (Job Object). macOS has
+// BindToParentLifetime is only implemented on Windows (Job Object). macOS has
 // no parent-death signal, so the server is recorded instead (recordChild) and
 // a leftover one is stopped at the next start (stopLeftoverServer).
-func bindToParentLifetime(cmd *exec.Cmd) {}
+func BindToParentLifetime(cmd *exec.Cmd) {}
 
-// recordChild notes the started server in file, so that the next start can stop
+// RecordChild notes the started server in file, so that the next start can stop
 // it if this app dies without stopping it. Best effort: failure only costs that
 // cleanup, so it is logged.
-func recordChild(file string, cmd *exec.Cmd) {
+func RecordChild(file string, cmd *exec.Cmd) {
 	if file == "" {
 		return
 	}
@@ -48,8 +48,8 @@ func recordChild(file string, cmd *exec.Cmd) {
 	}
 }
 
-// forgetChild removes the record once the server has been stopped.
-func forgetChild(file string) {
+// ForgetChild removes the record once the server has been stopped.
+func ForgetChild(file string) {
 	if file == "" {
 		return
 	}
@@ -58,16 +58,16 @@ func forgetChild(file string) {
 	}
 }
 
-// stopLeftoverServer stops the llama-server recorded in file if an earlier run
+// StopLeftoverServer stops the llama-server recorded in file if an earlier run
 // of the app died without stopping it. It must only run once this process holds
 // the single-instance lock. A process is only killed when isLeftoverServer
 // confirms it is still that executable, orphaned, so a reused PID is left alone.
-func stopLeftoverServer(file string) {
+func StopLeftoverServer(file string) {
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return // normally no record: the last run stopped its server
 	}
-	defer forgetChild(file)
+	defer ForgetChild(file)
 	rec, err := parseChildRecord(data)
 	if err != nil {
 		log.Printf("ignoring %s: %v", file, err)
@@ -94,7 +94,7 @@ func stopLeftoverServer(file string) {
 	}
 }
 
-func runSetup(dir string) error {
+func RunSetup(dir string) error {
 	cmd := exec.Command("/bin/bash", "setup.sh", "--backend", "metal")
 	cmd.Dir = dir
 	// Finder launches have no terminal. Persist progress/errors beside server.log.
@@ -122,7 +122,7 @@ func runSetup(dir string) error {
 			}
 			return err
 		case <-ticker.C:
-			pumpMessages()
+			PumpMessages()
 			if setupCancelled() {
 				// Terminate the dedicated process group, including the downloader.
 				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)

@@ -31,11 +31,7 @@ func TestSetupPowerShellShape(t *testing.T) {
 }
 
 func TestInstallerPowerShellShape(t *testing.T) {
-	url, err := installScriptURL("v0.7.0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ps := installerPowerShell(url)
+	ps := installerPowerShell("https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/v0.7.0/install.ps1")
 	for _, want := range []string{
 		"irm https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/v0.7.0/install.ps1 | iex",
 		"$ErrorActionPreference = 'Stop'",
@@ -84,7 +80,7 @@ func TestCleanPowerShellEnv(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			origLen := len(tc.base)
-			got := cleanPowerShellEnv(tc.base)
+			got := CleanPowerShellEnv(tc.base)
 			if len(tc.base) != origLen {
 				t.Fatal("cleanPowerShellEnv modified the input slice")
 			}

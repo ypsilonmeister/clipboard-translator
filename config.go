@@ -12,6 +12,7 @@ import (
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/hotkeyspec"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 type Config struct {
@@ -189,8 +190,8 @@ func defaultConfig() Config {
 		Languages:          append([]string(nil), languages.Default...),
 		ModelFile:          "models/plamo-3-translate-2b-Q4_K_M.gguf",
 		TemplateFile:       "models/chat_template.2b.jinja",
-		ServerFile:         "runtime/cpu/" + serverBinaryName(),
-		FallbackServerFile: "runtime/cpu/" + serverBinaryName(),
+		ServerFile:         "runtime/cpu/" + platform.ServerBinaryName(),
+		FallbackServerFile: "runtime/cpu/" + platform.ServerBinaryName(),
 	}
 }
 

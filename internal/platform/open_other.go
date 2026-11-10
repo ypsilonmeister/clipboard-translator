@@ -6,6 +6,6 @@ import (
 	"errors"
 )
 
-func startFallbackEditor(path string) error {
+func StartFallbackEditor(path string) error {
 	return errors.New("no fallback editor")
 }

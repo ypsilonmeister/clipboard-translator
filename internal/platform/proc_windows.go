@@ -18,10 +18,10 @@ const (
 	createNewConsole = 0x00000010
 )
 
-// hideConsole stops a console program (llama-server.exe) from opening its own
+// HideConsole stops a console program (llama-server.exe) from opening its own
 // console window when started by this GUI/tray process. Its output is already
 // redirected to server.log, so nothing is lost.
-func hideConsole(cmd *exec.Cmd) {
+func HideConsole(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 }
 
@@ -93,13 +93,13 @@ func assignPidToJob(job syscall.Handle, pid int) error {
 	return nil
 }
 
-// bindToParentLifetime makes the started child die with this process. Normal
+// BindToParentLifetime makes the started child die with this process. Normal
 // shutdown stops the server itself, but a crash or a kill from Task Manager
 // would otherwise leave llama-server running, holding the port and gigabytes of
 // memory, so the next launch could not start. The job handle is deliberately
 // never closed: it lives (and its processes with it) until this process exits.
 // Best effort: failure only costs that protection, so it is logged.
-func bindToParentLifetime(cmd *exec.Cmd) {
+func BindToParentLifetime(cmd *exec.Cmd) {
 	jobOnce.Do(func() { jobHandle, jobErr = newKillOnCloseJob() })
 	if jobErr != nil {
 		log.Printf("child cleanup on exit unavailable: %v", jobErr)
@@ -117,13 +117,34 @@ func setupCommand(dir string) *exec.Cmd {
 	ps := setupPowerShell(filepath.Join(dir, "setup.ps1"))
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
 	cmd.Dir = dir
-	cmd.Env = cleanPowerShellEnv(os.Environ())
+	cmd.Env = CleanPowerShellEnv(os.Environ())
 	return cmd
 }
 
-// runSetup runs setup.ps1 in its own visible console window and waits for it.
-func runSetup(dir string) error {
+// RunSetup runs setup.ps1 in its own visible console window and waits for it.
+func RunSetup(dir string) error {
 	cmd := setupCommand(dir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: createNewConsole}
 	return cmd.Run()
+}
+
+var isProcessInJob = kernel32.NewProc("IsProcessInJob")
+
+// ProcessInKillOnCloseJob reports whether process pid was assigned to the job
+// object that ends the llama-server children with this process. It exists for
+// the tests of the code that starts the server.
+func ProcessInKillOnCloseJob(pid int) (bool, error) {
+	if jobErr != nil {
+		return false, fmt.Errorf("job object unavailable: %w", jobErr)
+	}
+	ph, err := syscall.OpenProcess(0x1000, false, uint32(pid)) // PROCESS_QUERY_LIMITED_INFORMATION
+	if err != nil {
+		return false, err
+	}
+	defer syscall.CloseHandle(ph)
+	var in int32
+	if r, _, err := isProcessInJob.Call(uintptr(ph), uintptr(jobHandle), uintptr(unsafe.Pointer(&in))); r == 0 {
+		return false, fmt.Errorf("IsProcessInJob: %w", err)
+	}
+	return in != 0, nil
 }

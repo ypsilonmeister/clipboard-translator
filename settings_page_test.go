@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // settingsFixture is an app whose settings requests are answered by a goroutine
@@ -32,7 +33,7 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 	a, _, _ := newTestApp(t)
 	f := &settingsFixture{a: a, taken: map[string]bool{}, stopped: make(chan struct{})}
 	a.hotkeyLimit = 8
-	a.newHotkey = func(spec string) (Hotkey, error) {
+	a.newHotkey = func(spec string) (platform.Hotkey, error) {
 		f.reg.Add(1)
 		if f.taken[strings.ToUpper(spec)] {
 			return nil, errors.New("already registered")
@@ -412,7 +413,7 @@ func TestSettingsLimitIsReportedNotRefused(t *testing.T) {
 func TestSettingsRequestTimedOutIsNeverApplied(t *testing.T) {
 	a, _, _ := newTestApp(t)
 	a.hotkeyLimit = 8
-	a.newHotkey = func(spec string) (Hotkey, error) { return fakeHotkey{spec}, nil }
+	a.newHotkey = func(spec string) (platform.Hotkey, error) { return fakeHotkey{spec}, nil }
 	a.registerStartupHotkey()
 
 	// The loop is busy: the request times out and the page is told so.
@@ -465,7 +466,7 @@ func TestSettingsServerClosesWhenIdleOrToldTo(t *testing.T) {
 
 func TestSettingsMenuItemOpensThePageAndReusesIt(t *testing.T) {
 	f := newSettingsFixture(t)
-	var item *MenuItem
+	var item *platform.MenuItem
 	for _, it := range f.a.buildMenu() {
 		if it.Label == "Settings..." {
 			it := it
@@ -1029,7 +1030,7 @@ func TestPureHotkeyRetryDoesNotTouchConfigOrRevisions(t *testing.T) {
 	}
 
 	var regCount int
-	f.a.newHotkey = func(spec string) (Hotkey, error) {
+	f.a.newHotkey = func(spec string) (platform.Hotkey, error) {
 		regCount++
 		return fakeHotkey{spec}, nil
 	}
@@ -1077,7 +1078,7 @@ func TestPureHotkeyRetryDoesNotTouchConfigOrRevisions(t *testing.T) {
 
 	// Retry on already-working registrations must do nothing
 	regCount = 0
-	f.a.newHotkey = func(spec string) (Hotkey, error) {
+	f.a.newHotkey = func(spec string) (platform.Hotkey, error) {
 		regCount++
 		t.Error("newHotkey must not be called when registrations are already active")
 		return nil, errors.New("must not be called")

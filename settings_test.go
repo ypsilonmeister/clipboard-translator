@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 func TestSettingsCustomHotkeysRoundTrip(t *testing.T) {
@@ -27,20 +29,20 @@ func TestBackendHelpers(t *testing.T) {
 	if got := currentBackend("tools/llama-server.exe"); got != "" {
 		t.Errorf("custom location must give no backend, got %q", got)
 	}
-	if f, n := backendSettings("cpu"); f != "runtime/cpu/"+serverBinaryName() || n != 0 {
+	if f, n := backendSettings("cpu"); f != "runtime/cpu/"+platform.ServerBinaryName() || n != 0 {
 		t.Errorf("cpu settings = %q, %d", f, n)
 	}
-	if f, n := backendSettings("cuda"); f != "runtime/cuda/"+serverBinaryName() || n != 99 {
+	if f, n := backendSettings("cuda"); f != "runtime/cuda/"+platform.ServerBinaryName() || n != 99 {
 		t.Errorf("cuda settings = %q, %d", f, n)
 	}
 	dir := t.TempDir()
 	for _, b := range []string{"cpu", "vulkan"} {
 		p := filepath.Join(dir, "runtime", b)
 		os.MkdirAll(p, 0o755)
-		os.WriteFile(filepath.Join(p, serverBinaryName()), []byte("x"), 0o644)
+		os.WriteFile(filepath.Join(p, platform.ServerBinaryName()), []byte("x"), 0o644)
 	}
 	// A directory at the binary path must not be treated as an available backend.
-	cudaDir := filepath.Join(dir, "runtime", "cuda", serverBinaryName())
+	cudaDir := filepath.Join(dir, "runtime", "cuda", platform.ServerBinaryName())
 	os.MkdirAll(cudaDir, 0o755)
 	if got := availableBackends(dir); !reflect.DeepEqual(got, []string{"cpu", "vulkan"}) {
 		t.Errorf("availableBackends = %v", got)

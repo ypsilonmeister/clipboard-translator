@@ -6,12 +6,12 @@ import (
 	"runtime"
 )
 
-// vcRuntimeAvailable reports whether the Visual C++ runtime that llama.cpp's
+// VCRuntimeAvailable reports whether the Visual C++ runtime that llama.cpp's
 // Windows builds import (vcruntime140_1.dll, added after the first VC++ 2015
 // redistributables) can be loaded by the llama-server in serverDir: Windows
 // looks next to the exe first, then in System32. It is true on other systems.
 // It is a variable so tests do not depend on the machine they run on.
-var vcRuntimeAvailable = func(serverDir string) bool {
+var VCRuntimeAvailable = func(serverDir string) bool {
 	if runtime.GOOS != "windows" {
 		return true
 	}
@@ -27,14 +27,14 @@ var vcRuntimeAvailable = func(serverDir string) bool {
 	return false
 }
 
-func serverBinaryName() string {
+func ServerBinaryName() string {
 	if runtime.GOOS == "windows" {
 		return "llama-server.exe"
 	}
 	return "llama-server"
 }
 
-func setupScriptName() string {
+func SetupScriptName() string {
 	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
 		return "setup.sh"
 	}
@@ -46,26 +46,26 @@ const maxHotkeys = 8
 // maxWindowsHotkeys is the size of the Windows hotkey id pool (hotkey_windows.go).
 const maxWindowsHotkeys = maxHotkeys
 
-// hotkeyLimit is how many hotkeys one run can register. Windows and Linux keep
+// HotkeyLimit is how many hotkeys one run can register. Windows and Linux keep
 // up to maxHotkeys (one per profile); macOS holds a single grab.
-func hotkeyLimit() int {
+func HotkeyLimit() int {
 	if runtime.GOOS == "windows" || runtime.GOOS == "linux" {
 		return maxHotkeys
 	}
 	return 1
 }
 
-func pasteShortcut() string {
+func PasteShortcut() string {
 	if runtime.GOOS == "darwin" {
 		return "Cmd+V"
 	}
 	return "Ctrl+V"
 }
 
-// completionNotification returns the generic title and body for the
+// CompletionNotification returns the generic title and body for the
 // completion notification. It deliberately omits the source text,
 // translation, and language names so sensitive text is not leaked on
 // a shared screen.
-func completionNotification() (string, string) {
-	return "Translation ready", "Translation ready in the clipboard. Press " + pasteShortcut() + " to paste."
+func CompletionNotification() (string, string) {
+	return "Translation ready", "Translation ready in the clipboard. Press " + PasteShortcut() + " to paste."
 }

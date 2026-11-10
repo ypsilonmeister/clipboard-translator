@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"strings"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // The quick start guide: select text -> hotkey -> paste. It is built from the
@@ -30,7 +32,7 @@ func (a *app) guideSteps() []string {
 	steps := []string{
 		"Select the text you want to translate, in any program.",
 		"Press " + sum + ".",
-		"Paste with " + pasteShortcut() + " when the tray says the translation is ready.",
+		"Paste with " + platform.PasteShortcut() + " when the tray says the translation is ready.",
 	}
 	if len(a.conf.Profiles) == 1 {
 		steps[1] += " It translates " + a.conf.Profiles[0].label() + "."

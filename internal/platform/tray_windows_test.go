@@ -23,7 +23,7 @@ func TestCopyUTF16Truncates(t *testing.T) {
 	}
 }
 
-// pumpMessages must report only our own WM_HOTKEY, consume it exactly once, and
+// PumpMessages must report only our own WM_HOTKEY, consume it exactly once, and
 // leave other thread messages harmless.
 func TestPumpMessagesHotkey(t *testing.T) {
 	runtime.LockOSThread()
@@ -37,21 +37,21 @@ func TestPumpMessagesHotkey(t *testing.T) {
 		}
 	}
 
-	pumpMessages() // start from an empty queue
-	if pumpMessages() {
+	PumpMessages() // start from an empty queue
+	if PumpMessages() {
 		t.Fatal("empty queue must not report a hotkey")
 	}
 	post(wmHotkey, hotkeyID+maxWindowsHotkeys) // not one of our ids
 	post(wmApp+5, 0)                           // unrelated thread message
-	if pumpMessages() {
+	if PumpMessages() {
 		t.Fatal("foreign hotkey id / unrelated message must not report a hotkey")
 	}
 	post(wmApp+5, 0)
 	post(wmHotkey, hotkeyID)
-	if !pumpMessages() {
+	if !PumpMessages() {
 		t.Fatal("WM_HOTKEY with our id must be reported")
 	}
-	if pumpMessages() {
+	if PumpMessages() {
 		t.Fatal("hotkey must be consumed exactly once")
 	}
 }
@@ -69,10 +69,10 @@ func TestWindowsHotkeysEachSeeTheirOwnPress(t *testing.T) {
 			t.Fatalf("PostThreadMessage: %v", err)
 		}
 	}
-	pumpMessages()
+	PumpMessages()
 	// Unlikely combinations, to avoid clashing with other programs.
-	a, errA := newHotkey("Ctrl+Alt+Shift+F")
-	b, errB := newHotkey("Ctrl+Alt+Shift+G")
+	a, errA := NewHotkey("Ctrl+Alt+Shift+F")
+	b, errB := NewHotkey("Ctrl+Alt+Shift+G")
 	if errA != nil || errB != nil {
 		t.Skipf("could not register test hotkeys: %v / %v", errA, errB)
 	}
@@ -92,7 +92,7 @@ func TestWindowsHotkeysEachSeeTheirOwnPress(t *testing.T) {
 	}
 	// A press seen by a plain pumpMessages (model loading) is dropped.
 	post(ha.id)
-	pumpMessages()
+	PumpMessages()
 	if p, _ := ha.Pressed(); p {
 		t.Fatal("a press while only the tray was serviced must be dropped")
 	}
@@ -100,7 +100,7 @@ func TestWindowsHotkeysEachSeeTheirOwnPress(t *testing.T) {
 	id := ha.id
 	ha.Close()
 	ha.Close()
-	c, err := newHotkey("Ctrl+Alt+Shift+H")
+	c, err := NewHotkey("Ctrl+Alt+Shift+H")
 	if err != nil {
 		t.Skipf("could not register test hotkey: %v", err)
 	}
@@ -111,42 +111,11 @@ func TestWindowsHotkeysEachSeeTheirOwnPress(t *testing.T) {
 	hb.Close()
 }
 
-// The icon embedded via resource_windows_amd64.syso must be found; otherwise the
-// tray would silently fall back to the generic application icon.
-func TestAppIconIsEmbedded(t *testing.T) {
-	hInst, _, _ := getModuleHandleW.Call(0)
-	stock, _, _ := loadIconW.Call(0, idiApplication)
-	h := loadAppIcon(hInst)
-	if h == 0 {
-		t.Fatal("no icon could be loaded")
-	}
-	if h == stock {
-		t.Fatal("got the stock icon: the embedded icon resource is missing (run go run ./tools/mksyso)")
-	}
-}
-
-// The embedded manifest must make the process per-monitor-v2 DPI aware;
-// otherwise Windows bitmap-stretches the tray icon and menu on scaled displays.
-func TestProcessIsPerMonitorDPIAware(t *testing.T) {
-	getCtx := user32.NewProc("GetThreadDpiAwarenessContext")
-	equal := user32.NewProc("AreDpiAwarenessContextsEqual")
-	if getCtx.Find() != nil || equal.Find() != nil {
-		t.Skip("DPI awareness context APIs need Windows 10 1607 or later")
-	}
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	ctx, _, _ := getCtx.Call()
-	const perMonitorV2 = ^uintptr(3) // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = (HANDLE)-4
-	if ok, _, _ := equal.Call(ctx, perMonitorV2); ok == 0 {
-		t.Fatalf("DPI awareness context %#x is not per-monitor v2: manifest missing (run go run ./tools/mksyso)", ctx)
-	}
-}
-
 // Creates a real tray icon in the interactive session and removes it again.
 func TestTrayLifecycle(t *testing.T) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	tr := newTray(t.TempDir() + `\translator.log`)
+	tr := NewTray(t.TempDir() + `\translator.log`)
 	wt, ok := tr.(*winTray)
 	if !ok {
 		t.Skip("tray unavailable in this session (no interactive desktop?)")
@@ -156,7 +125,7 @@ func TestTrayLifecycle(t *testing.T) {
 		t.Fatal("tray window not created")
 	}
 	tr.SetStatus("test status")
-	pumpMessages()
+	PumpMessages()
 	if tr.QuitRequested() {
 		t.Fatal("QuitRequested must be false before the user picks Quit")
 	}

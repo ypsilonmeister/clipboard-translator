@@ -22,7 +22,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/hotkeyspec"
 )
 
-func platformRuntimeError() error {
+func PlatformRuntimeError() error {
 	if C.ct_mac_init() == 0 {
 		return errors.New("AppKit must be initialized on the main OS thread in a macOS desktop session")
 	}
@@ -95,7 +95,7 @@ func parseMacHotkey(spec string) (uint32, int, byte, error) {
 	}
 	return mods, vk, charCode, nil
 }
-func newHotkey(spec string) (Hotkey, error) {
+func NewHotkey(spec string) (Hotkey, error) {
 	mods, vk, charCode, err := parseMacHotkey(spec)
 	if err != nil {
 		return nil, err
@@ -105,12 +105,12 @@ func newHotkey(spec string) (Hotkey, error) {
 	}
 	return &macHotkey{}, nil
 }
-func (*macHotkey) Pressed() (bool, error) { return pumpMessages(), nil }
+func (*macHotkey) Pressed() (bool, error) { return PumpMessages(), nil }
 func (*macHotkey) Close() error           { C.ct_mac_ungrab(); return nil }
-func foregroundWindow() uintptr           { return uintptr(C.ct_mac_focus()) }
+func ForegroundWindow() uintptr           { return uintptr(C.ct_mac_focus()) }
 func clipboardSequence() uint32           { return uint32(C.ct_mac_sequence()) }
 func accessibilityGranted() bool          { return C.ct_mac_accessible() != 0 }
-func waitModifiersReleased(max time.Duration) bool {
+func WaitModifiersReleased(max time.Duration) bool {
 	deadline := time.Now().Add(max)
 	for C.ct_mac_modifiers() != 0 {
 		if time.Now().After(deadline) {
@@ -120,7 +120,7 @@ func waitModifiersReleased(max time.Duration) bool {
 	}
 	return true
 }
-func sendPaste() error {
+func SendPaste() error {
 	if C.ct_mac_send(1) == 0 {
 		return errors.New("Cmd+V could not be sent; grant Accessibility access to Clipboard Translator in System Settings")
 	}
@@ -133,16 +133,16 @@ func sendCopy() error {
 	return nil
 }
 
-// beginSelectionCapture starts copying the selection of window win (see
+// BeginSelectionCapture starts copying the selection of window win (see
 // captureJob for the ordering rules); the app steps it from its run loop.
 // Without Accessibility access no keys can be sent, so it returns nil and
-// captureSelectedText translates the existing clipboard text instead.
-func beginSelectionCapture(cb Clipboard, win uintptr) captureTask {
+// CaptureSelectedText translates the existing clipboard text instead.
+func BeginSelectionCapture(cb Clipboard, win uintptr) CaptureTask {
 	if !accessibilityGranted() {
 		return nil
 	}
 	return newCaptureJob(cb, win, captureOps{
-		foreground:      foregroundWindow,
+		foreground:      ForegroundWindow,
 		modifiersUp:     func() bool { return C.ct_mac_modifiers() == 0 },
 		sequence:        clipboardSequence,
 		sendCopy:        sendCopy,
@@ -152,8 +152,8 @@ func beginSelectionCapture(cb Clipboard, win uintptr) captureTask {
 	})
 }
 
-func captureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
-	if task := beginSelectionCapture(cb, win); task != nil {
+func CaptureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
+	if task := BeginSelectionCapture(cb, win); task != nil {
 		return runCapture(task)
 	}
 	text, err := cb.Read()
@@ -169,7 +169,7 @@ type macTray struct {
 
 var activeMacTray *macTray
 
-func newTray(logPath string) Tray {
+func NewTray(logPath string) Tray {
 	t := &macTray{logPath: logPath}
 	C.ct_mac_tray_create()
 	activeMacTray = t
@@ -208,7 +208,7 @@ func macMenu(items []MenuItem) unsafe.Pointer {
 	}
 	return menu
 }
-func pumpMessages() bool {
+func PumpMessages() bool {
 	C.ct_mac_pump()
 	if t := activeMacTray; t != nil {
 		if C.ct_mac_wants_menu() != 0 {
@@ -226,7 +226,7 @@ func pumpMessages() bool {
 		for id := int(C.ct_mac_command()); id != 0; id = int(C.ct_mac_command()) {
 			switch id {
 			case 1:
-				_ = openTarget(t.logPath)
+				_ = OpenTarget(t.logPath)
 			case 2:
 				t.quit = true
 			case 3:
@@ -234,7 +234,7 @@ func pumpMessages() bool {
 					t.Notify("Startup setting failed", err.Error(), true)
 				}
 			case 4:
-				_ = openTarget("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+				_ = OpenTarget("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
 			default:
 				t.commands = append(t.commands, id)
 			}
@@ -247,10 +247,10 @@ func dialog(msg string, question, isError bool) bool {
 	withCString(msg, func(p *C.char) { result = C.ct_mac_dialog(p, C.int(boolInt(question)), C.int(boolInt(isError))) != 0 })
 	return result
 }
-func showError(msg string)     { dialog(msg, false, true) }
-func showInfo(msg string)      { dialog(msg, false, false) }
-func askYesNo(msg string) bool { return dialog(msg, true, false) }
-func openTarget(target string) error {
+func ShowError(msg string)     { dialog(msg, false, true) }
+func ShowInfo(msg string)      { dialog(msg, false, false) }
+func AskYesNo(msg string) bool { return dialog(msg, true, false) }
+func OpenTarget(target string) error {
 	var ok bool
 	withCString(target, func(p *C.char) { ok = C.ct_mac_open(p) != 0 })
 	if !ok {

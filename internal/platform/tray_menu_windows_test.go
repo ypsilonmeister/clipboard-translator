@@ -96,10 +96,9 @@ func TestTrayNextCommand(t *testing.T) {
 }
 
 // Read back the native popup without displaying it or interacting with the desktop.
-func TestPopupSettingsFirstWithNoActiveHotkeys(t *testing.T) {
-	a, _, _ := newTestApp(t)
-	a.hotkey = noHotkey{}
-	menu := buildPopup(a.buildMenu())
+// (That the app puts an enabled Settings item first is TestMenuSettingsFirstWithNoActiveHotkeys.)
+func TestPopupFirstItemStaysEnabled(t *testing.T) {
+	menu := buildPopup([]MenuItem{{ID: FirstAppCommand + 8, Label: "Settings..."}, {ID: FirstAppCommand + 5, Label: "Cancel", Disabled: true}})
 	if menu == 0 {
 		t.Fatal("no menu")
 	}

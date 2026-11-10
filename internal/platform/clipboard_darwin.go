@@ -9,7 +9,7 @@ import (
 
 type macClipboard struct{}
 
-func newClipboard() (Clipboard, error) { return &macClipboard{}, nil }
+func NewClipboard() (Clipboard, error) { return &macClipboard{}, nil }
 func (m *macClipboard) Read() (string, error) {
 	out, err := exec.Command("/usr/bin/pbpaste").Output()
 	return string(out), err
@@ -27,7 +27,7 @@ func (c *macClipboard) ReplaceIfUnchanged(expected, translated string) (bool, er
 	if err != nil {
 		return false, err
 	}
-	if !sameClipboardText(current, expected) {
+	if !SameClipboardText(current, expected) {
 		return false, nil
 	}
 	return true, c.Write(translated)

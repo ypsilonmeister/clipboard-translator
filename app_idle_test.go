@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"github.com/ypsilonmeister/clipboard-translator/internal/testsupport"
 )
 
@@ -62,7 +63,7 @@ func TestUnloadModelAndReloadTranslation(t *testing.T) {
 	}
 	a.handleCommand(cmdUnloadModel) // idempotent
 	cb.text = "こんにちは"
-	a.capture = func(Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
 	a.startTranslation(0)
 	if !a.sup.Running() || a.modelUnloaded || !a.translating {
 		t.Fatal("hotkey did not reload and translate")
@@ -289,7 +290,7 @@ func TestUnloadReloadFailureStaysUnloaded(t *testing.T) {
 	a.paths.server = filepath.Join(a.dir, "missing-server")
 	a.paths.fallback = a.paths.server
 	cb.text = "こんにちは"
-	a.capture = func(Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
 	var failure string
 	a.showErr = func(msg string) { failure = msg }
 	a.startTranslation(0)
@@ -335,7 +336,7 @@ func TestReloadSupersededBySecondHotkeyDuringLoad(t *testing.T) {
 	a.unloadModel()
 
 	currentText := "こんにちは"
-	a.capture = func(Clipboard, uintptr) (string, bool, error) {
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) {
 		cb.text = currentText
 		return currentText, true, nil
 	}
@@ -390,7 +391,7 @@ func TestReloadSecondHotkeyAfterLoadBehavesAsBefore(t *testing.T) {
 	a.unloadModel()
 
 	currentText := "こんにちは"
-	a.capture = func(Clipboard, uintptr) (string, bool, error) {
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) {
 		cb.text = currentText
 		return currentText, true, nil
 	}
@@ -438,7 +439,7 @@ func TestReloadCancelDuringLoad(t *testing.T) {
 	a.unloadModel()
 
 	cb.text = "こんにちは"
-	a.capture = func(Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
 
 	cancelled := false
 	origUI := a.sup.ui
@@ -483,7 +484,7 @@ func TestReloadQuitDuringLoad(t *testing.T) {
 	a.unloadModel()
 
 	cb.text = "こんにちは"
-	a.capture = func(Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
 
 	origUI := a.sup.ui
 	a.sup.ui = func(label string, elapsed time.Duration) bool {
@@ -542,7 +543,7 @@ func TestSettingsEngineSwitchDuringDelayedStart(t *testing.T) {
 			}
 			if reload {
 				cb.text = "こんにちは"
-				a.capture = func(Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
+				a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
 				a.startTranslation(0)
 			} else if err := a.startServer(); err != nil {
 				t.Fatal(err)
@@ -669,7 +670,7 @@ func TestServerWorkResetAfterFailedStartFallbackAndErrQuit(t *testing.T) {
 
 	// 2. CPU fallback
 	a2, _, _ := newTestApp(t)
-	a2.conf.ServerFile = filepath.Join("runtime", "vulkan", serverBinaryName())
+	a2.conf.ServerFile = filepath.Join("runtime", "vulkan", platform.ServerBinaryName())
 	a2.paths.server = filepath.Join(a2.dir, a2.conf.ServerFile)
 	if err := a2.startServer(); err != nil {
 		t.Fatalf("startServer fallback: %v", err)

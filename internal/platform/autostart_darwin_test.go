@@ -45,7 +45,7 @@ func TestMacLaunchAgent(t *testing.T) {
 func TestMacWritableDataFolder(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	dir, err := writableAppDir("/Applications/Clipboard Translator.app/Contents/MacOS")
+	dir, err := WritableAppDir("/Applications/Clipboard Translator.app/Contents/MacOS")
 	want := filepath.Join(home, "Library", "Application Support", "ClipboardTranslator")
 	if err != nil || dir != want {
 		t.Fatalf("%q %v", dir, err)
@@ -53,7 +53,7 @@ func TestMacWritableDataFolder(t *testing.T) {
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		t.Fatalf("data folder: %v", err)
 	}
-	if pasteShortcut() != "Cmd+V" {
+	if PasteShortcut() != "Cmd+V" {
 		t.Fatal("macOS paste shortcut must be Cmd+V")
 	}
 }

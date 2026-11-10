@@ -1,3 +1,3 @@
 package platform
 
-func platformRuntimeError() error { return nil }
+func PlatformRuntimeError() error { return nil }

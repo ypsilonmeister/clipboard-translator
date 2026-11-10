@@ -52,7 +52,7 @@ func TestSameClipboardText(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sameClipboardText(tc.current, tc.expected)
+			got := SameClipboardText(tc.current, tc.expected)
 			if got != tc.wantMatch {
 				t.Fatalf("sameClipboardText(%q, %q) = %v, want %v", tc.current, tc.expected, got, tc.wantMatch)
 			}
@@ -197,7 +197,7 @@ func TestClassifyClipboardDiff(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			diff := classifyClipboardDiff(tc.expected, tc.current, tc.elapsed)
+			diff := ClassifyClipboardDiff(tc.expected, tc.current, tc.elapsed)
 			if diff.ExpectedRunes != tc.wantExpLen {
 				t.Errorf("ExpectedRunes = %d, want %d", diff.ExpectedRunes, tc.wantExpLen)
 			}

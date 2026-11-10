@@ -7,10 +7,10 @@ import (
 	"syscall"
 )
 
-// hideConsole prepares the llama-server command before it is started: it adds
+// HideConsole prepares the llama-server command before it is started: it adds
 // the bundled libraries to the search path and makes the server die with the
 // app (see dieWithParent).
-func hideConsole(cmd *exec.Cmd) {
+func HideConsole(cmd *exec.Cmd) {
 	// Official archives ship shared libraries beside the server (or in lib/).
 	dir := filepath.Dir(cmd.Path)
 	libs := dir + ":" + filepath.Join(dir, "lib")
@@ -42,11 +42,11 @@ func dieWithParent(cmd *exec.Cmd) {
 	cmd.SysProcAttr.Pdeathsig = syscall.SIGKILL
 }
 
-// bindToParentLifetime is only needed on Windows (job objects); on Linux the
+// BindToParentLifetime is only needed on Windows (job objects); on Linux the
 // same is done by dieWithParent before the child starts.
-func bindToParentLifetime(cmd *exec.Cmd) {}
+func BindToParentLifetime(cmd *exec.Cmd) {}
 
-func runSetup(dir string) error {
+func RunSetup(dir string) error {
 	cmd := exec.Command("bash", "setup.sh", "--backend", "cpu")
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr

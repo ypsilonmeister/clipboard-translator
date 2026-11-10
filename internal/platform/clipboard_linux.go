@@ -14,7 +14,7 @@ import (
 
 type linuxClipboard struct{}
 
-func newClipboard() (Clipboard, error) {
+func NewClipboard() (Clipboard, error) {
 	if C.ct_init() == 0 {
 		return nil, errors.New("X11 clipboard is unavailable")
 	}
@@ -38,7 +38,7 @@ func (*linuxClipboard) Close() error { return nil }
 // before claiming CLIPBOARD; another X11 client can still race this operation.
 func (c *linuxClipboard) ReplaceIfUnchanged(expected, translated string) (bool, error) {
 	current, err := c.Read()
-	if err != nil || !sameClipboardText(current, expected) {
+	if err != nil || !SameClipboardText(current, expected) {
 		return false, err
 	}
 	if err := c.Write(translated); err != nil {

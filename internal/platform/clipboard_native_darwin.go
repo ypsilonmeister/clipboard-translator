@@ -15,7 +15,7 @@ import (
 
 type macClipboard struct{}
 
-func newClipboard() (Clipboard, error) { return &macClipboard{}, nil }
+func NewClipboard() (Clipboard, error) { return &macClipboard{}, nil }
 func (*macClipboard) Read() (string, error) {
 	p := C.ct_mac_read()
 	if p == nil {
@@ -47,7 +47,7 @@ func (c *macClipboard) ReplaceIfUnchanged(expected, translated string) (bool, er
 	if err != nil {
 		return false, err
 	}
-	if !sameClipboardText(current, expected) {
+	if !SameClipboardText(current, expected) {
 		return false, nil
 	}
 	result := 0
