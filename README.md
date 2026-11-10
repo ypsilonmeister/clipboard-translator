@@ -210,11 +210,12 @@ menu commands without injecting input or granting Accessibility access. Actual i
 selection/paste, non-US keyboard use, Gatekeeper behavior and Metal performance need
 manual testing. Cross-compilation with `CGO_ENABLED=0` only verifies portable logic/stubs.
 
-## Linux (X11, experimental)
+## Linux (X11 / Wayland, experimental)
 
 ### Install steps
 
-1. Log in to an **X11 (Xorg) session**: `echo $XDG_SESSION_TYPE` must print `x11`.
+1. Check your session with `echo "$XDG_SESSION_TYPE"`: use X11 (Xorg), or a Wayland
+   desktop with the portals described under *Wayland workflow* below.
 2. Install the dependencies (Ubuntu 24.04, below), then download
    `clipboard-translator-linux-amd64-<version>.tar.gz` and its `.sha256` file from Releases
    (x86_64 only). Check it, extract it into a dedicated folder in your home directory and run it:
@@ -265,22 +266,81 @@ CPU and Vulkan runtime files retain their upstream layout and shared-library lin
 The runtime archive's system requirements also apply; older distributions may need a
 locally built compatible llama.cpp runtime at `runtime/cpu/llama-server`.
 
-Select text and press the hotkey. Linux reads the X11 **PRIMARY** selection directly,
+### X11 workflow
+
+Select text and press the hotkey. X11 reads the **PRIMARY** selection directly,
 without simulating Ctrl+C, and stages it on CLIPBOARD before translation. Only a selection
 made while the window of the hotkey press had the focus is eligible for auto-paste; if PRIMARY
 was last changed in another window, or that cannot be told, the text is still translated but
 never auto-pasted. If PRIMARY has no text, the existing CLIPBOARD text is used.
 X11 has no atomic clipboard compare-and-set: the app compares text before writing, but unlike
 Windows it cannot eliminate races with other clients.
-Clipboard content may disappear on exit unless a clipboard manager retains it.
 
-GTK 3 supplies the tray icon/menu. If the desktop has no compatible tray host, a small
-control window keeps the menu and Quit available. Optional notifications use `notify-send`.
 Auto-paste is off by default and uses XTest Ctrl+V; it checks the focused X11 window
 again after modifiers are released. Changes to a selection within the same window cannot
 be detected reliably, so use manual paste when that matters.
-**Start at login** manages only `~/.config/autostart/clipboard-translator.desktop`
-(or the directory specified by `XDG_CONFIG_HOME`). Move the app before enabling it,
+
+### Wayland workflow
+
+The initial target is GNOME 48+ with GlobalShortcuts, RemoteDesktop keyboard and
+Clipboard portals. GNOME 50.1 on the designated Ubuntu 26.04 VM has been measured;
+GNOME 48/49, KDE and wlroots remain unverified. A version number alone does not
+establish compatibility: the app checks the required portal capabilities at startup.
+
+1. Start the app from the unlocked graphical session. Allow the shortcut dialog and
+   choose the keys you want; then allow keyboard/clipboard access. The portal's
+   **RemoteDesktop** name refers here to local keyboard simulation and clipboard
+   access, not a network connection or screen sharing. The app requests keyboard
+   access, not pointer control or screen capture.
+2. In Settings or Quick start, check the **actual shortcut** chosen by the desktop.
+   `config.json` keeps your requested keys; they may differ from the active binding.
+3. Select text, press the actual shortcut and release its modifiers. Stay in the same
+   application while the selection is being copied. Wayland uses simulated Ctrl+C;
+   it cannot identify the focused window or reliably query physical modifier state.
+   Long key holds, focus changes and applications that intercept Ctrl+C can prevent
+   capture or copy different text. If that happens, copy the desired text yourself
+   and use a profile with `input: "clipboard"`, which sends no Ctrl+C.
+4. When the translation is ready, paste it yourself with Ctrl+V. **Automatic paste
+   stays disabled on Wayland**, including when `auto_paste` is saved as `true`.
+   The saved preference is retained for other desktop sessions. Clipboard-input
+   profiles still need the keyboard/clipboard consent because clipboard access is
+   provided through the RemoteDesktop session.
+
+The app compares clipboard text before claiming it, to preserve newer copies, but
+Wayland compare/write is best effort, as on X11. It is not an atomic operation.
+Keep the app running until you paste; clipboard contents may disappear on exit unless
+a clipboard manager retains them.
+
+If permission is refused, revoked or interrupted, the app stays open and shows the
+reason in its control window and Settings. Use **Open menu > Retry Wayland permissions**
+in the control window (or the same item in the tray menu) when enabled. If GNOME is
+locked, unlock it before retrying. Missing-portal errors require a desktop with the
+listed capabilities or an Xorg session; repeated consent attempts cannot add those
+capabilities. A restart can reuse saved consent when the desktop permits it; a new
+dialog may still be required after revocation or a failed restore.
+
+The application entry is written to
+`~/.local/share/applications/io.github.ypsilonmeister.ClipboardTranslator.desktop`
+(under `XDG_DATA_HOME` when set). A private `wayland/restore-token` beside the
+Linux app's `config.json` stores reusable input permission, separately from shared
+configuration. Its directory is mode 0700 and its file mode 0600. Do not share this
+folder with bug reports; the token and clipboard text are not logged. Desktop shortcut
+bindings are stored by the compositor. Moving the executable updates its application
+entry on the next launch; update Start at login separately as described below.
+
+For acceptance testing and the distinction between verified portal operations and the
+remaining packaged-app checks, see the [Wayland manual test sheet](https://github.com/ypsilonmeister/clipboard-translator/blob/main/docs/wayland-manual-test.md).
+
+### Desktop controls, startup and builds
+
+GTK 3 supplies the tray icon/menu. If the desktop has no compatible tray host, a small
+control window keeps the menu and Quit available. Optional notifications use `notify-send`.
+Keep the fallback control window open; closing it quits the app.
+**Start at login** writes `~/.config/autostart/clipboard-translator.desktop` on X11,
+or `~/.config/autostart/io.github.ypsilonmeister.ClipboardTranslator.desktop` on Wayland
+(under `XDG_CONFIG_HOME` when set). It recognizes either owned entry across session
+changes and removes only entries matching this executable when disabled.
+Move the app before enabling it,
 or toggle the setting after moving it. Quit from the menu or send SIGTERM; a `STOP`
 file beside the executable also stops the app. Updating a Linux build currently means
 quitting and replacing the executable/setup script; retain `config.json`, `models`, and
@@ -296,8 +356,10 @@ bash tools/package-linux.sh dev
 
 `CGO_ENABLED=0` builds keep the logic testable but cannot run the Linux desktop app.
 CI tests native input, PRIMARY/CLIPBOARD, paste, and menu commands in an isolated Xvfb
-display; translation quality, actual desktop tray integration, and GPU drivers still
-need testing on real Linux hardware.
+display. CI also runs fake-portal tests and compiles the opt-in Wayland fixtures;
+it does not grant desktop consent or test a live Wayland session. Translation quality,
+the full packaged-app Wayland workflow, actual desktop tray integration and GPU drivers
+still need manual testing.
 
 ## Using it
 
@@ -340,7 +402,7 @@ Right-click the tray icon:
 | Tray | Settings, cancel translation, unload model, translation model (when two or more are installed, to quickly switch between a fast and an accurate model), recent translations, updates, open config.json, start at login, license, quit (plus logs and version information) |
 | Settings | Hotkeys, languages, and output format (replace / bilingual) and text source (selection / clipboard) per profile; auto-paste, notifications, model and engine selection, text limits, idle unload |
 
-Auto-paste is off by default. When enabled, it pastes only for a fresh selection while the same window is still in front; otherwise the translation waits in the clipboard.
+Auto-paste is off by default. On supported desktops, when enabled, it pastes only for a fresh selection while the same window is still in front; otherwise the translation waits in the clipboard. It is always disabled on Wayland.
 If hotkey registration fails, open **Settings...**, the first tray entry, choose another hotkey and click **Save**.
 For advanced keys, use **Open config.json** and restart after editing.
 
@@ -384,11 +446,11 @@ file is kept as `config.json.bak`.
 | Key | Meaning |
 | --- | --- |
 | `hotkey` | Modifier(s) + one key: a letter A-Z, a digit 0-9, or a function key F1-F12, e.g. `Ctrl+Alt+E` or `Ctrl+F5` (on macOS `Cmd` / `Command` and `Option` also work) |
-| `auto_paste` | `true` types Ctrl+V after translating (default `false`) |
+| `auto_paste` | `true` types Ctrl+V after translating on supported desktops (default `false`; always disabled on Wayland) |
 | `quickstart_shown` | `true` once the first-run quick start has been shown (set by the app; set it to `false` to see the balloon again; default `false`) |
 | `notify_on_complete` | `true` shows a tray notification that the translation is ready in the clipboard (without showing text) when not auto-pasted (default `false`) |
 | `languages` | Two language codes translated in both directions, e.g. `["ja", "en"]` (default), `["en", "ko"]`, `["ja", "zh-hans"]`. Codes are the model's: `ja en ko zh-hans zh-hant ru th ar de fr es ...` (53 in all, see the [model card](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)). The direction is read from the script of the text, so the two languages must use different scripts (en ↔ de is refused for now). Japanese ↔ English is the main use; other languages are best effort. |
-| `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "bilingual"}]`. A profile has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each), and an optional `output` format: `"replace"` (default; key absent = replace) puts only the translation on the clipboard; `"bilingual"` puts the original text, a newline, and then the translation (`<source>\n<translated>`, with trailing CR/LF characters trimmed from the source before adding the newline). Translation history keeps Source and Translated separately; "Recent translations" lets you copy the original, the translation, or both. An optional `input` says where the text comes from: `"selection"` (default) copies the current selection first (Ctrl+C, waiting up to 2 s on Windows for a slow page); `"clipboard"` translates what is already on the clipboard, sends no Ctrl+C, waits for nothing and never auto-pastes, which suits a page that copies slowly (copy yourself, then press the hotkey). Takes the place of `hotkey` and `languages`; Settings edits each profile. Up to 8 hotkeys on Windows and Linux; on macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
+| `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "bilingual"}]`. A profile has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each), and an optional `output` format: `"replace"` (default; key absent = replace) puts only the translation on the clipboard; `"bilingual"` puts the original text, a newline, and then the translation (`<source>\n<translated>`, with trailing CR/LF characters trimmed from the source before adding the newline). Translation history keeps Source and Translated separately; "Recent translations" lets you copy the original, the translation, or both. An optional `input` says where the text comes from: `"selection"` (default) copies the current selection first (Ctrl+C, waiting up to 2 s on Windows for a slow page); `"clipboard"` translates what is already on the clipboard, sends no Ctrl+C, skips the selection-copy wait and never auto-pastes (Wayland clipboard transfer is still asynchronous), which suits a page that copies slowly (copy yourself, then press the hotkey). Takes the place of `hotkey` and `languages`; Settings edits each profile. Up to 8 hotkeys on Windows and Linux; on macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
 | `port` | Local llama-server port, 1024-65534 (the app also uses `port + 1` as an instance lock) |
 | `max_chars` | Longer text is skipped |
 | `idle_unload_minutes` | Unload the model after this many idle minutes (0..1440; default `0` = never). Also editable on the Settings page. |

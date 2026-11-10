@@ -56,7 +56,8 @@ GlobalShortcuts, RemoteDesktop keyboard and Clipboard portals (initial target GN
 `internal/platform/native_linux.c` owns the backend-neutral GTK UI/event loop;
 `native_x11_linux.c` owns XGrabKey, XTest input and the X11 clipboard.
 `desktop_linux.go` connects them to Go; `backend_linux.go` selects the session backend. `autostart_linux.go`
-manages an XDG autostart Desktop Entry. The opt-in Wayland foundation is in
+manages XDG autostart entries, recognizing owned X11 and Wayland launchers across sessions.
+The Wayland implementation is in
 `portal_linux.go` (lifecycle), `portal_gio_linux.go` / `portal_native_linux.c` (GDBus),
 `portal_shortcuts_linux.go` (profile binding/activation), `portal_remote_linux.go` /
 `portal_clipboard_linux.go` / `portal_capture_linux.go` (asynchronous authorization,
@@ -65,7 +66,10 @@ FD clipboard and selection capture), and `portal_state_linux.go`
 API to `portal_runtime_linux.go`, which owns capability checks, startup and retry.
 `internal/app/app_desktop.go` retries pending clipboard operations on UI ticks and
 refreshes consent/shortcut status. Wayland always disables automatic paste.
-See `docs/wayland-implementation.md` for the opt-in VM test and boundaries.
+See `docs/wayland-implementation.md` for architecture/stage boundaries and
+`docs/wayland-manual-test.md` for opt-in VM commands, the evidence ledger and the
+packaged-app acceptance checklist. Fake portal tests and fixture compilation run in CI;
+live consent, translation/paste and desktop restart checks require a designated test desktop.
 GTK supplies a control-window fallback
 if no tray host is present. X11 clipboard compare/write is best effort, not
 atomic like the Windows implementation.
