@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 // Issue #60: a settings page save that changes neither hotkeys nor languages
@@ -62,7 +64,7 @@ func TestSettingsLanguagesSurviveRestartAfterSettingsOnlySave(t *testing.T) {
 	a := settingsOnlySave(t, func(f *settingsForm) { f.AutoPaste = !f.AutoPaste })
 	changeSettingsLanguages(t, a, []string{"ja", "ko"})
 	c := checkReloaded(t, a)
-	if !samePair(c.Profiles[0].Languages, []string{"ja", "ko"}) || !samePair(c.Languages, []string{"ja", "ko"}) {
+	if !languages.SamePair(c.Profiles[0].Languages, []string{"ja", "ko"}) || !languages.SamePair(c.Languages, []string{"ja", "ko"}) {
 		t.Fatalf("Settings change lost after reload: memory=%v disk=%v explicit=%v", a.conf.Languages, c.Profiles[0].Languages, a.conf.explicitProfiles)
 	}
 	if !c.AutoPaste {

@@ -12,12 +12,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 func TestLoadConfigProfiles(t *testing.T) {
 	// No "profiles": one profile from hotkey and languages.
 	c, err := loadConfig(writeConfig(t, `{"hotkey": "Ctrl+Shift+Y", "languages": ["en", "ko"]}`))
-	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Hotkey != "Ctrl+Shift+Y" || !samePair(c.Profiles[0].Languages, []string{"en", "ko"}) || c.explicitProfiles {
+	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Hotkey != "Ctrl+Shift+Y" || !languages.SamePair(c.Profiles[0].Languages, []string{"en", "ko"}) || c.explicitProfiles {
 		t.Fatalf("derived profile: %+v, %v", c, err)
 	}
 
@@ -28,7 +30,7 @@ func TestLoadConfigProfiles(t *testing.T) {
 	if err != nil || len(c.Profiles) != 2 || !c.explicitProfiles {
 		t.Fatalf("explicit profiles: %+v, %v", c, err)
 	}
-	if c.Hotkey != "Ctrl+Alt+E" || !samePair(c.Languages, []string{"ja", "en"}) {
+	if c.Hotkey != "Ctrl+Alt+E" || !languages.SamePair(c.Languages, []string{"ja", "en"}) {
 		t.Errorf("profile 0 must be mirrored in hotkey/languages: %q %v", c.Hotkey, c.Languages)
 	}
 	if c.Profiles[1].Target != "ko" {
@@ -89,7 +91,7 @@ func TestTranslateOmitsSourceLangForTargetOnly(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": "안녕"}}}})
 	}))
 	defer srv.Close()
-	if _, err := translate(context.Background(), srv.URL, "", "Hello", translationDirection{Target: "ko"}, 64); err != nil {
+	if _, err := translate(context.Background(), srv.URL, "", "Hello", languages.Direction{Target: "ko"}, 64); err != nil {
 		t.Fatal(err)
 	}
 	if _, has := kwargs["source_lang"]; has {
@@ -390,7 +392,7 @@ func TestSettingsChangesSaveProfilesWhenTheFileHasThem(t *testing.T) {
 	if err := json.Unmarshal(b, &out); err != nil || len(out.Profiles) != 2 {
 		t.Fatalf("profiles not saved: %s %v", b, err)
 	}
-	if out.Profiles[0].Hotkey != "Ctrl+Shift+Y" || !samePair(out.Profiles[0].Languages, []string{"en", "ru"}) {
+	if out.Profiles[0].Hotkey != "Ctrl+Shift+Y" || !languages.SamePair(out.Profiles[0].Languages, []string{"en", "ru"}) {
 		t.Errorf("profile 0 not updated: %+v", out.Profiles[0])
 	}
 	if out.Profiles[1].Target != "ko" || out.Profiles[1].Hotkey != "Ctrl+Alt+K" {

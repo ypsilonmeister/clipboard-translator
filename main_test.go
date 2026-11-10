@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 func TestDetectDirection(t *testing.T) {
@@ -23,12 +25,12 @@ func TestDetectDirection(t *testing.T) {
 		{"", "", "", false},
 	}
 	for _, tc := range cases {
-		got, ok := directionFor(defaultLanguages, tc.input)
+		got, ok := languages.DirectionFor(languages.Default, tc.input)
 		if ok != tc.ok || got.Source != tc.source || got.Target != tc.target {
 			t.Errorf("%q: got %+v, %v", tc.input, got, ok)
 		}
 	}
-	if _, ok := (Profile{Languages: defaultLanguages}).direction("日本語をたくさん", 2); ok {
+	if _, ok := (Profile{Languages: languages.Default}).direction("日本語をたくさん", 2); ok {
 		t.Fatal("max chars ignored")
 	}
 }
@@ -55,7 +57,7 @@ func TestTranslatePayloadBothWays(t *testing.T) {
 				json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": tc.answer}}}})
 			}))
 			defer srv.Close()
-			got, err := translate(context.Background(), srv.URL, "", tc.source, translationDirection{tc.sourceLang, tc.targetLang}, 128)
+			got, err := translate(context.Background(), srv.URL, "", tc.source, languages.Direction{Source: tc.sourceLang, Target: tc.targetLang}, 128)
 			if err != nil || got != tc.answer {
 				t.Fatalf("got=%q err=%v", got, err)
 			}
@@ -82,7 +84,7 @@ func TestTranslateFinishReason(t *testing.T) {
 				json.NewEncoder(w).Encode(map[string]any{"choices": []any{tc.choice}})
 			}))
 			defer srv.Close()
-			got, err := translate(context.Background(), srv.URL, "", "こんにちは", translationDirection{"ja", "en"}, 1)
+			got, err := translate(context.Background(), srv.URL, "", "こんにちは", languages.Direction{Source: "ja", Target: "en"}, 1)
 			if tc.truncated {
 				if !errors.Is(err, errTruncated) || got != "" {
 					t.Fatalf("got=%q err=%v, want errTruncated", got, err)

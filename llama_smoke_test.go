@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 	"unicode"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 var reAscii3 = regexp.MustCompile(`[a-zA-Z]{3,}`)
@@ -92,7 +94,7 @@ func TestLlamaSmoke(t *testing.T) {
 
 	// 1. Japanese to English
 	jaInput := "明日の会議は10時からに変更になりました。"
-	ja2en, err := translate(ctx, sup.endpoint, sup.apiKey, jaInput, translationDirection{Source: "ja", Target: "en"}, 256)
+	ja2en, err := translate(ctx, sup.endpoint, sup.apiKey, jaInput, languages.Direction{Source: "ja", Target: "en"}, 256)
 	if errors.Is(err, errTruncated) {
 		t.Fatalf("ja->en translation was truncated")
 	} else if err != nil {
@@ -111,7 +113,7 @@ func TestLlamaSmoke(t *testing.T) {
 
 	// 2. English to Japanese
 	enInput := "Could you take a look at the pull request when you get a chance?"
-	en2ja, err := translate(ctx, sup.endpoint, sup.apiKey, enInput, translationDirection{Source: "en", Target: "ja"}, 256)
+	en2ja, err := translate(ctx, sup.endpoint, sup.apiKey, enInput, languages.Direction{Source: "en", Target: "ja"}, 256)
 	if errors.Is(err, errTruncated) {
 		t.Fatalf("en->ja translation was truncated")
 	} else if err != nil {
@@ -127,7 +129,7 @@ func TestLlamaSmoke(t *testing.T) {
 
 	// 3. Target-only request (no source_lang)
 	targetOnlyInput := "Could you take a look at the pull request when you get a chance?"
-	targetOnly, err := translate(ctx, sup.endpoint, sup.apiKey, targetOnlyInput, translationDirection{Target: "ja"}, 256)
+	targetOnly, err := translate(ctx, sup.endpoint, sup.apiKey, targetOnlyInput, languages.Direction{Target: "ja"}, 256)
 	if errors.Is(err, errTruncated) {
 		t.Fatalf("target-only translation was truncated")
 	} else if err != nil {
@@ -144,7 +146,7 @@ func TestLlamaSmoke(t *testing.T) {
 	// 4. Server rejects request without API key (HTTP 401)
 	ctxKey, cancelKey := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelKey()
-	_, errNoKey := translate(ctxKey, sup.endpoint, "", "Hello", translationDirection{Source: "en", Target: "ja"}, 64)
+	_, errNoKey := translate(ctxKey, sup.endpoint, "", "Hello", languages.Direction{Source: "en", Target: "ja"}, 64)
 	if errNoKey == nil {
 		t.Error("expected HTTP 401 error without API key, got nil")
 	} else if !strings.Contains(errNoKey.Error(), "401") {

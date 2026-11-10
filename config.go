@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 type Config struct {
@@ -113,7 +115,7 @@ func (c *Config) resolveProfiles(explicit bool) error {
 		if err := validateHotkey(c.Hotkey); err != nil {
 			return err
 		}
-		langs, err := validateLanguages(c.Languages)
+		langs, err := languages.Validate(c.Languages)
 		if err != nil {
 			return err
 		}
@@ -142,15 +144,15 @@ func (c *Config) resolveProfiles(explicit bool) error {
 			return fmt.Errorf("%s: use either \"languages\" or \"target\", not both", where)
 		case p.Target != "":
 			t := strings.ToLower(strings.TrimSpace(p.Target))
-			if _, ok := languages[t]; !ok {
-				return fmt.Errorf("%s: target %q is not a supported language code; supported: %s", where, p.Target, strings.Join(languageCodes(), ", "))
+			if !languages.Known(t) {
+				return fmt.Errorf("%s: target %q is not a supported language code; supported: %s", where, p.Target, strings.Join(languages.Codes(), ", "))
 			}
 			p.Target = t
 		default:
 			if p.Languages == nil {
 				return fmt.Errorf("%s: set \"languages\" (a pair) or \"target\"", where)
 			}
-			langs, err := validateLanguages(p.Languages)
+			langs, err := languages.Validate(p.Languages)
 			if err != nil {
 				return fmt.Errorf("%s: %w", where, err)
 			}
@@ -183,7 +185,7 @@ func defaultConfig() Config {
 	return Config{
 		Hotkey: "Ctrl+Alt+E", Port: 18119, PollMS: 50, MaxChars: 4000, MaxTokens: 2048, ContextTokens: 4096,
 		GPULayers: 0, TranslationTimeoutSec: 180, StartupTimeoutSec: 120,
-		Languages:          append([]string(nil), defaultLanguages...),
+		Languages:          append([]string(nil), languages.Default...),
 		ModelFile:          "models/plamo-3-translate-2b-Q4_K_M.gguf",
 		TemplateFile:       "models/chat_template.2b.jinja",
 		ServerFile:         "runtime/cpu/" + serverBinaryName(),

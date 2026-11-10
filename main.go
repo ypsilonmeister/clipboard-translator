@@ -17,22 +17,20 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 type result struct {
 	original, translated string
 	generation           uint64
 	err                  error
-	direction            translationDirection
+	direction            languages.Direction
 	window               uintptr // foreground window when the hotkey was pressed
 	fromSelection        bool    // the text was a fresh selection, not the old clipboard
 	output               string
 	capturedAt           time.Time
 }
-
-// translationDirection is what to ask the model for. Source is empty for a
-// target-only profile: the model then detects the source language itself.
-type translationDirection struct{ Source, Target string }
 
 type skipReason int
 
@@ -62,26 +60,26 @@ func (r skipReason) String() string {
 }
 
 // check classifies why s cannot be translated by p, or returns skipNone and
-// the translationDirection.
-func (p Profile) check(s string, maxChars int) (skipReason, translationDirection) {
+// the languages.Direction.
+func (p Profile) check(s string, maxChars int) (skipReason, languages.Direction) {
 	if strings.TrimSpace(s) == "" {
-		return skipEmpty, translationDirection{}
+		return skipEmpty, languages.Direction{}
 	}
 	if utf8.RuneCountInString(s) > maxChars {
-		return skipTooLong, translationDirection{}
+		return skipTooLong, languages.Direction{}
 	}
-	if isURL(strings.TrimSpace(s)) {
-		return skipURL, translationDirection{}
+	if languages.IsURL(strings.TrimSpace(s)) {
+		return skipURL, languages.Direction{}
 	}
 	if p.Target != "" {
 		if strings.IndexFunc(s, unicode.IsLetter) < 0 {
-			return skipNoTranslatableText, translationDirection{}
+			return skipNoTranslatableText, languages.Direction{}
 		}
-		return skipNone, translationDirection{Target: p.Target}
+		return skipNone, languages.Direction{Target: p.Target}
 	}
-	dir, ok := directionFor(p.Languages, s)
+	dir, ok := languages.DirectionFor(p.Languages, s)
 	if !ok {
-		return skipNoTranslatableText, translationDirection{}
+		return skipNoTranslatableText, languages.Direction{}
 	}
 	return skipNone, dir
 }
@@ -93,8 +91,8 @@ func (p Profile) skipReason(s string, maxChars int) skipReason {
 }
 
 // direction is a profile's direction for s, or false for empty, too long,
-// URL-only or undetectable text (see directionFor in languages.go for pairs).
-func (p Profile) direction(s string, maxChars int) (translationDirection, bool) {
+// URL-only or undetectable text (see languages.DirectionFor for pairs).
+func (p Profile) direction(s string, maxChars int) (languages.Direction, bool) {
 	reason, dir := p.check(s, maxChars)
 	return dir, reason == skipNone
 }
@@ -140,9 +138,9 @@ func skipStatus(reason skipReason, label string) string {
 // label says what the profile does, for the tooltip and notifications.
 func (p Profile) label() string {
 	if p.Target != "" {
-		return "to " + languageName(p.Target)
+		return "to " + languages.Name(p.Target)
 	}
-	return pairLabel(p.Languages)
+	return languages.PairLabel(p.Languages)
 }
 
 func appDir() (string, error) {
@@ -207,7 +205,7 @@ var errTruncated = errors.New("translation cut off at the token limit (finish_re
 
 // translate asks the server at endpoint for a translation. apiKey is the
 // server's per-start key (supervisor.apiKey); it is sent when not empty.
-func translate(ctx context.Context, endpoint, apiKey, source string, direction translationDirection, maxTokens int) (string, error) {
+func translate(ctx context.Context, endpoint, apiKey, source string, direction languages.Direction, maxTokens int) (string, error) {
 	kwargs := map[string]string{"target_lang": direction.Target}
 	// The template accepts a missing source_lang (the model detects it) but
 	// rejects an empty one, so leave the key out for a target-only profile.
