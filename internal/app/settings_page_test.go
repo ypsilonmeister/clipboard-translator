@@ -253,6 +253,10 @@ func TestSettingsPageKeepsStaleSaveGuards(t *testing.T) {
 	if !strings.Contains(js, "dirtyFields.profiles || (state && state.no_active_hotkey)") {
 		t.Error("toPayload must send profiles when state.no_active_hotkey is set")
 	}
+	// Save response must preserve edits made while the save was in flight (Issue #136).
+	if !strings.Contains(js, "hasNewEdits") {
+		t.Error("save must check for new edits made while save was in flight")
+	}
 	if nodePath, err := exec.LookPath("node"); err == nil {
 		cmd := exec.Command(nodePath, "-e", `
 const fs = require('fs');
@@ -264,6 +268,200 @@ if (fn(false, false) !== false) throw new Error('isSaveNeeded(false, false) must
 if (fn(true, false) !== true) throw new Error('isSaveNeeded(true, false) must be true');
 if (fn(false, true) !== true) throw new Error('isSaveNeeded(false, true) must be true');
 if (fn(true, true) !== true) throw new Error('isSaveNeeded(true, true) must be true');
+
+// Verify that edits made during save (including numeric fields and re-edits of the same field)
+// are preserved and can be saved immediately without false conflict (Issue #136).
+const vm = require('vm');
+const elements = {};
+function getEl(id) {
+  if (!elements[id]) {
+    elements[id] = { id, disabled: false, checked: false, value: '4000', addEventListener: (event, fn) => { elements[id]['on' + event] = fn; }, append: () => {}, setAttribute: () => {}, classList: { add: () => {}, remove: () => {} }, querySelector: () => null, replaceChildren: () => {} };
+  }
+  return elements[id];
+}
+let fetchResolver;
+let lastSaveBody;
+const sandbox = {
+  window: { addEventListener: () => {} },
+  document: {
+    addEventListener: () => {},
+    getElementById: getEl,
+    querySelectorAll: () => [],
+    createElement: (tag) => ({ tag, append: () => {}, setAttribute: () => {}, addEventListener: () => {}, classList: { add: () => {}, remove: () => {} } }),
+    createTextNode: (t) => ({ text: t }),
+    body: { replaceChildren: () => {} },
+  },
+  location: { search: '' },
+  URLSearchParams: URLSearchParams,
+  fetch: (path, opt) => {
+    if (path === '/api/state') {
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ state: { profiles: [{ ctrl: true, alt: true, key: 'E', output: 'replace', input: 'selection', languages: ['ja', 'en'] }], models: [], engines: [], language_options: [{ code: 'ja', name: 'Japanese' }, { code: 'en', name: 'English' }], revision: 1, auto_paste: false, max_chars: 4000, idle_unload_minutes: 0 } }) });
+    }
+    if (path === '/api/save') {
+      lastSaveBody = JSON.parse(opt.body);
+      return new Promise((resolve) => { fetchResolver = resolve; });
+    }
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+  },
+  setTimeout: () => 1,
+  clearTimeout: () => {},
+  setInterval: () => 1,
+  clearInterval: () => {},
+  Date: Date,
+  console: console,
+};
+vm.createContext(sandbox);
+vm.runInContext(js, sandbox);
+
+(async () => {
+  const tick = () => new Promise((r) => setImmediate(r));
+  await tick();
+  await tick();
+
+  const maxCharsEl = getEl('max-chars');
+  const idleUnloadEl = getEl('idle-unload-minutes');
+  const autoPasteEl = getEl('auto-paste');
+  const saveBtn = getEl('save');
+  const statusEl = getEl('status');
+
+  // 1. Change max_chars (5000), idle_unload_minutes (10), and auto_paste (true), then click Save.
+  maxCharsEl.value = '5000';
+  maxCharsEl.oninput();
+  idleUnloadEl.value = '10';
+  idleUnloadEl.oninput();
+  autoPasteEl.checked = true;
+  autoPasteEl.onchange({ target: { checked: true } });
+
+  const save1 = saveBtn.onclick();
+  if (lastSaveBody.base_revision !== 1 || lastSaveBody.max_chars !== 5000 || lastSaveBody.idle_unload_minutes !== 10 || lastSaveBody.auto_paste !== true) {
+    throw new Error('Unexpected first save payload: ' + JSON.stringify(lastSaveBody));
+  }
+
+  // 2. While save1 is in flight, re-edit the same fields: max_chars -> 6000, idle_unload_minutes -> 20, auto_paste -> false.
+  maxCharsEl.value = '6000';
+  maxCharsEl.oninput();
+  idleUnloadEl.value = '20';
+  idleUnloadEl.oninput();
+  autoPasteEl.checked = false;
+  autoPasteEl.onchange({ target: { checked: false } });
+
+  // 3. Complete save1 with server revision 2 (reflecting the values sent in save1).
+  fetchResolver({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({
+      state: {
+        profiles: [{ ctrl: true, alt: true, key: 'E', output: 'replace', input: 'selection', languages: ['ja', 'en'] }],
+        models: [],
+        engines: [],
+        language_options: [{ code: 'ja', name: 'Japanese' }, { code: 'en', name: 'English' }],
+        revision: 2,
+        auto_paste: true,
+        max_chars: 5000,
+        idle_unload_minutes: 10,
+      }
+    })
+  });
+  await save1;
+
+  if (statusEl.textContent !== 'Unsaved changes') {
+    throw new Error('Expected Unsaved changes after mid-save edits, got: ' + statusEl.textContent);
+  }
+  if (maxCharsEl.value !== '6000' || idleUnloadEl.value !== '20' || autoPasteEl.checked !== false) {
+    throw new Error('Mid-save edits were overwritten: maxChars=' + maxCharsEl.value + ' idle=' + idleUnloadEl.value + ' autoPaste=' + autoPasteEl.checked);
+  }
+
+  // 4. Immediately click Save again: must send base_revision 2 (not stale revision 1) and the new values.
+  const save2 = saveBtn.onclick();
+  if (lastSaveBody.base_revision !== 2) {
+    throw new Error('Follow-up save used stale base_revision: ' + lastSaveBody.base_revision + ' (expected 2)');
+  }
+  if (lastSaveBody.max_chars !== 6000 || lastSaveBody.idle_unload_minutes !== 20 || lastSaveBody.auto_paste !== false) {
+    throw new Error('Follow-up save payload wrong: ' + JSON.stringify(lastSaveBody));
+  }
+
+  fetchResolver({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({
+      state: {
+        profiles: [{ ctrl: true, alt: true, key: 'E', output: 'replace', input: 'selection', languages: ['ja', 'en'] }],
+        models: [],
+        engines: [],
+        language_options: [{ code: 'ja', name: 'Japanese' }, { code: 'en', name: 'English' }],
+        revision: 3,
+        auto_paste: false,
+        max_chars: 6000,
+        idle_unload_minutes: 20,
+      }
+    })
+  });
+  await save2;
+
+  if (statusEl.textContent !== 'Saved') {
+    throw new Error('Expected Saved after second save completed without new edits, got: ' + statusEl.textContent);
+  }
+
+  // 5. Also verify editing a DIFFERENT field (notify_on_complete) while saving max_chars:
+  maxCharsEl.value = '7000';
+  maxCharsEl.oninput();
+  const save3 = saveBtn.onclick();
+  if (lastSaveBody.base_revision !== 3 || lastSaveBody.max_chars !== 7000) {
+    throw new Error('Third save payload wrong: ' + JSON.stringify(lastSaveBody));
+  }
+
+  const notifyEl = getEl('notify-on-complete');
+  notifyEl.checked = true;
+  notifyEl.onchange({ target: { checked: true } });
+
+  fetchResolver({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({
+      state: {
+        profiles: [{ ctrl: true, alt: true, key: 'E', output: 'replace', input: 'selection', languages: ['ja', 'en'] }],
+        models: [],
+        engines: [],
+        language_options: [{ code: 'ja', name: 'Japanese' }, { code: 'en', name: 'English' }],
+        revision: 4,
+        auto_paste: false,
+        notify_on_complete: false,
+        max_chars: 7000,
+        idle_unload_minutes: 20,
+      }
+    })
+  });
+  await save3;
+
+  if (statusEl.textContent !== 'Unsaved changes' || notifyEl.checked !== true) {
+    throw new Error('Expected Unsaved changes and notifyEl.checked=true after save3, got: ' + statusEl.textContent);
+  }
+  const save4 = saveBtn.onclick();
+  if (!lastSaveBody.changed || lastSaveBody.changed.length !== 1 || lastSaveBody.changed[0] !== 'notify_on_complete' || lastSaveBody.notify_on_complete !== true) {
+    throw new Error('Fourth save payload wrong: ' + JSON.stringify(lastSaveBody));
+  }
+  fetchResolver({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({
+      state: {
+        profiles: [{ ctrl: true, alt: true, key: 'E', output: 'replace', input: 'selection', languages: ['ja', 'en'] }],
+        models: [],
+        engines: [],
+        language_options: [{ code: 'ja', name: 'Japanese' }, { code: 'en', name: 'English' }],
+        revision: 5,
+        auto_paste: false,
+        notify_on_complete: true,
+        max_chars: 7000,
+        idle_unload_minutes: 20,
+      }
+    })
+  });
+  await save4;
+  if (statusEl.textContent !== 'Saved') {
+    throw new Error('Expected Saved after save4, got: ' + statusEl.textContent);
+  }
+})().catch((e) => { console.error(e); process.exit(1); });
 `)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Errorf("node test of isSaveNeeded failed: %v: %s", err, string(out))
@@ -1245,5 +1443,31 @@ func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 	}
 	if !strings.Contains(r.Error, "settings were changed") {
 		t.Fatalf("unexpected error message: %q", r.Error)
+	}
+}
+
+// TestTranslationMaxTokensConfigRace tests that starting a translation concurrently
+// with saving changed hotkey profiles does not race on a.conf.MaxTokens (Issue #135).
+func TestTranslationMaxTokensConfigRace(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+	defer a.sup.Stop()
+
+	keys := []string{"E", "K"}
+	for i := 0; i < 20; i++ {
+		a.translateCaptured(a.conf.Profiles[0], 0, "hello", false, nil)
+		p, err := settings.FormFromProfile(a.conf.Profiles[0], "windows")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Key = keys[i%len(keys)]
+		a.applySettings(settings.Form{Changed: []string{"profiles"}, Profiles: []settings.ProfileForm{p}})
+		a.abortTranslation()
+		select {
+		case <-a.results:
+		default:
+		}
 	}
 }
