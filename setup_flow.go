@@ -2,14 +2,13 @@ package main
 
 import (
 	_ "embed"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
-	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
@@ -51,105 +50,23 @@ var embeddedMacSetup []byte
 // left alone.
 func ensureSetupScript(dir string) error {
 	script := filepath.Join(dir, platform.SetupScriptName())
-	if err := checkFile(script); err == nil {
+	if err := config.CheckFile(script); err == nil {
 		return nil
 	}
 	return os.WriteFile(script, setupContents(), 0o644)
-}
-
-// appPaths holds the absolute paths the config points at.
-type appPaths struct{ model, template, server, fallback string }
-
-func resolvePaths(dir string, c Config) (appPaths, error) {
-	var p appPaths
-	var err error
-	// The key name tells the user which line of config.json to fix.
-	resolve := func(key, value string) (string, error) {
-		full, err := pathWithin(dir, value)
-		if err != nil {
-			return "", fmt.Errorf("config.json %q: %w", key, err)
-		}
-		return full, nil
-	}
-	if p.model, err = resolve("model_file", c.ModelFile); err != nil {
-		return p, err
-	}
-	if p.template, err = resolve("template_file", c.TemplateFile); err != nil {
-		return p, err
-	}
-	if !models.IsCustomTemplate(c.TemplateFile) {
-		if m, ok := models.ForFile(c.ModelFile); ok {
-			if tplPath, ok := m.InstalledTemplatePath(dir); ok {
-				p.template = tplPath
-			}
-		}
-	}
-	if p.server, err = resolve("server_file", c.ServerFile); err != nil {
-		return p, err
-	}
-	if p.fallback, err = resolve("fallback_server_file", c.FallbackServerFile); err != nil {
-		return p, err
-	}
-	return p, nil
-}
-
-// checkFile reports why path cannot be used as a required file: it does not
-// exist, or it is a folder (or another non-regular entry) instead of a file.
-func checkFile(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a file (it is a folder or special entry)", path)
-	}
-	return nil
-}
-
-// missing lists the files the app cannot start without that do not exist or
-// are not regular files.
-func (p appPaths) missing() []string {
-	var out []string
-	for _, f := range []string{p.model, p.template, p.server} {
-		if checkFile(f) != nil {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
-func (p appPaths) missingFor(c Config, dir string) []string {
-	var out []string
-	if checkFile(p.model) != nil {
-		out = append(out, p.model)
-	}
-	if models.IsCustomTemplate(c.TemplateFile) {
-		if checkFile(p.template) != nil {
-			out = append(out, p.template)
-		}
-	} else {
-		m, known := models.ForFile(c.ModelFile)
-		if !known || !m.TemplateInstalled(dir) {
-			out = append(out, p.template)
-		}
-	}
-	if checkFile(p.server) != nil {
-		out = append(out, p.server)
-	}
-	return out
 }
 
 // ensureInstalled makes sure the model and llama-server exist. When they do
 // not, it offers to run setup.ps1 (the one next to the exe, or the copy carried
 // inside the exe) in a visible window instead of just failing. It returns the config again
 // because setup.ps1 rewrites config.json, and false when the user declined.
-func ensureInstalled(dir string, conf Config) (Config, bool) {
+func ensureInstalled(dir string, conf config.Config) (config.Config, bool) {
 	for attempt := 0; ; attempt++ {
-		p, err := resolvePaths(dir, conf)
+		p, err := config.ResolvePaths(dir, conf)
 		if err != nil {
 			fatal(err)
 		}
-		missing := p.missingFor(conf, dir)
+		missing := p.MissingFor(conf, dir)
 		if len(missing) == 0 {
 			return conf, true
 		}
@@ -171,7 +88,7 @@ func ensureInstalled(dir string, conf Config) (Config, bool) {
 		if err := platform.RunSetup(dir); err != nil {
 			fatal("Setup failed: ", err, "\nRun ", platform.SetupScriptName(), " to see the details.")
 		}
-		if conf, err = loadConfig(dir); err != nil {
+		if conf, err = config.Load(dir); err != nil {
 			fatal("config: ", err)
 		}
 	}

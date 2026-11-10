@@ -6,15 +6,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 )
 
 func TestLoadConfigLanguages(t *testing.T) {
-	c, err := loadConfig(writeConfig(t, `{}`))
+	c, err := config.Load(writeConfig(t, `{}`))
 	if err != nil || !languages.SamePair(c.Languages, []string{"ja", "en"}) {
 		t.Fatalf("default languages: %v, %v", c.Languages, err)
 	}
-	c, err = loadConfig(writeConfig(t, `{"languages": ["EN", "ko"]}`))
+	c, err = config.Load(writeConfig(t, `{"languages": ["EN", "ko"]}`))
 	if err != nil || c.Languages[0] != "en" || c.Languages[1] != "ko" {
 		t.Fatalf("explicit languages: %v, %v", c.Languages, err)
 	}

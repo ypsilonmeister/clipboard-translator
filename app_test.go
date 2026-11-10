@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
@@ -60,12 +61,12 @@ func newTestApp(t *testing.T) (*app, *fakeTray, *[]string) {
 	os.WriteFile(filepath.Join(dir, "models", "m.gguf"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(dir, "models", "t.jinja"), []byte("x"), 0o644)
 
-	conf := defaultConfig()
+	conf := config.Default()
 	conf.Port = freePort(t)
 	conf.ModelFile, conf.TemplateFile = "models/m.gguf", "models/t.jinja"
 	conf.StartupTimeoutSec = 20
 	os.WriteFile(filepath.Join(dir, "config.json"), []byte(fmt.Sprintf(`{"hotkey": "Ctrl+Alt+E", "port": %d}`, conf.Port)), 0o644)
-	paths, err := resolvePaths(dir, conf)
+	paths, err := config.ResolvePaths(dir, conf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,11 +151,11 @@ func TestSwitchBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.switchBackend("cuda")
-	if currentBackend(a.conf.ServerFile) != "cuda" || a.conf.GPULayers != 99 || !healthy(a) {
+	if config.CurrentBackend(a.conf.ServerFile) != "cuda" || a.conf.GPULayers != 99 || !healthy(a) {
 		t.Fatalf("switch to cuda failed: server_file=%q gpu=%d healthy=%v notes=%v",
 			a.conf.ServerFile, a.conf.GPULayers, healthy(a), tray.notes)
 	}
-	c, err := loadConfig(a.dir)
+	c, err := config.Load(a.dir)
 	if err != nil || c.ServerFile != "runtime/cuda/"+platform.ServerBinaryName() || c.GPULayers != 99 {
 		t.Fatalf("the choice must be saved: %+v, %v", c, err)
 	}
@@ -162,10 +163,10 @@ func TestSwitchBackend(t *testing.T) {
 	// A build that cannot start must leave the previous one running and the
 	// settings unchanged.
 	a.switchBackend("vulkan")
-	if currentBackend(a.conf.ServerFile) != "cuda" || !healthy(a) {
+	if config.CurrentBackend(a.conf.ServerFile) != "cuda" || !healthy(a) {
 		t.Fatalf("a failed switch must keep cuda: server_file=%q healthy=%v", a.conf.ServerFile, healthy(a))
 	}
-	if c, _ := loadConfig(a.dir); c.ServerFile != "runtime/cuda/"+platform.ServerBinaryName() {
+	if c, _ := config.Load(a.dir); c.ServerFile != "runtime/cuda/"+platform.ServerBinaryName() {
 		t.Fatalf("a failed switch must not be saved, config has %q", c.ServerFile)
 	}
 	if !strings.Contains(tray.lastNote(), "keeping the previous engine") {
@@ -181,7 +182,7 @@ func TestChangeHotkey(t *testing.T) {
 	if a.conf.Hotkey != "Ctrl+Shift+Y" || !strings.Contains(a.readyTip, "Ctrl+Shift+Y") {
 		t.Fatalf("hotkey not applied: %q / %q", a.conf.Hotkey, a.readyTip)
 	}
-	if c, _ := loadConfig(a.dir); c.Hotkey != "Ctrl+Shift+Y" {
+	if c, _ := config.Load(a.dir); c.Hotkey != "Ctrl+Shift+Y" {
 		t.Fatalf("hotkey not saved: %q", c.Hotkey)
 	}
 
@@ -199,7 +200,7 @@ func TestChangeHotkey(t *testing.T) {
 	if hk, ok := a.hotkey.(fakeHotkey); !ok || hk.spec != "Ctrl+Shift+Y" {
 		t.Fatalf("the previous hotkey must be registered again, got %#v", a.hotkey)
 	}
-	if c, _ := loadConfig(a.dir); c.Hotkey != "Ctrl+Shift+Y" {
+	if c, _ := config.Load(a.dir); c.Hotkey != "Ctrl+Shift+Y" {
 		t.Fatalf("a failed change must not be saved, config has %q", c.Hotkey)
 	}
 	if err == nil || !strings.Contains(err.Error(), "previous settings were kept") {
@@ -320,7 +321,7 @@ func TestBuildMenuExactLabels(t *testing.T) {
 						a.closeHotkeys()
 						a.hotkey = noHotkey{}
 					case "target profile":
-						a.conf.Profiles[0] = Profile{Hotkey: "Ctrl+Alt+E", Target: "ko"}
+						a.conf.Profiles[0] = config.Profile{Hotkey: "Ctrl+Alt+E", Target: "ko"}
 					case "checking":
 						a.checking = true
 					case "update":

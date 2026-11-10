@@ -19,7 +19,7 @@ func writeConfig(t *testing.T, content string) string {
 
 func TestLoadConfigPortRange(t *testing.T) {
 	for _, port := range []string{"1024", "18119", "65534"} {
-		if _, err := loadConfig(writeConfig(t, `{"port": `+port+`}`)); err != nil {
+		if _, err := Load(writeConfig(t, `{"port": `+port+`}`)); err != nil {
 			t.Errorf("port %s must be accepted: %v", port, err)
 		}
 	}
@@ -34,7 +34,7 @@ func TestLoadConfigPortRange(t *testing.T) {
 
 func loadConfig2(t *testing.T, content string) error {
 	t.Helper()
-	_, err := loadConfig(writeConfig(t, content))
+	_, err := Load(writeConfig(t, content))
 	return err
 }
 
@@ -66,7 +66,7 @@ func TestLoadConfigHotkeyValidation(t *testing.T) {
 
 func TestLoadConfigAcceptsUTF8BOM(t *testing.T) {
 	dir := writeConfig(t, "\xEF\xBB\xBF"+`{"hotkey":"Ctrl+Alt+T","port":18200}`)
-	c, err := loadConfig(dir)
+	c, err := Load(dir)
 	if err != nil {
 		t.Fatalf("a BOM-prefixed config.json must load: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestUpdateConfigFileAcceptsUTF8BOM(t *testing.T) {
 }
 `
 	dir := writeConfig(t, original)
-	if err := updateConfigFile(dir, map[string]any{"hotkey": "Ctrl+Alt+J"}); err != nil {
+	if err := UpdateFile(dir, map[string]any{"hotkey": "Ctrl+Alt+J"}); err != nil {
 		t.Fatalf("a BOM-prefixed config.json must be updatable: %v", err)
 	}
 	b, _ := os.ReadFile(filepath.Join(dir, "config.json"))
@@ -99,7 +99,7 @@ func TestUpdateConfigFileAcceptsUTF8BOM(t *testing.T) {
 	if bak, _ := os.ReadFile(filepath.Join(dir, "config.json.bak")); string(bak) != original {
 		t.Fatalf("config.json.bak must hold the previous bytes untouched, got %q", bak)
 	}
-	if c, err := loadConfig(dir); err != nil || c.Hotkey != "Ctrl+Alt+J" {
+	if c, err := Load(dir); err != nil || c.Hotkey != "Ctrl+Alt+J" {
 		t.Fatalf("loadConfig after update: %+v, %v", c, err)
 	}
 }
@@ -133,14 +133,14 @@ func TestParseConfigEntries(t *testing.T) {
 
 func TestUpdateConfigFileRefusesTrailingDataAndDedups(t *testing.T) {
 	bad := writeConfig(t, `{"hotkey": "Ctrl+Alt+E"} garbage`)
-	if err := updateConfigFile(bad, map[string]any{"hotkey": "Ctrl+Alt+J"}); err == nil {
+	if err := UpdateFile(bad, map[string]any{"hotkey": "Ctrl+Alt+J"}); err == nil {
 		t.Fatal("trailing data must be refused")
 	}
 	if b, _ := os.ReadFile(filepath.Join(bad, "config.json")); string(b) != `{"hotkey": "Ctrl+Alt+E"} garbage` {
 		t.Fatal("a refused update must leave the file untouched")
 	}
 	dup := writeConfig(t, `{"port": 18119, "hotkey": "Ctrl+Alt+E", "port": 18200}`)
-	if err := updateConfigFile(dup, map[string]any{"auto_paste": true}); err != nil {
+	if err := UpdateFile(dup, map[string]any{"auto_paste": true}); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(dup, "config.json"))
@@ -165,7 +165,7 @@ func TestPathWithin(t *testing.T) {
 		if want == "" {
 			want = filepath.Join(base, "models", "m.gguf")
 		}
-		got, err := pathWithin(base, in)
+		got, err := PathWithin(base, in)
 		if err != nil || got != want {
 			t.Errorf("pathWithin(%q) = %q, %v; want %q", in, got, err, want)
 		}
@@ -180,7 +180,7 @@ func TestPathWithin(t *testing.T) {
 		bad = append(bad, `..\x`, `C:foo`, `c:models\m.gguf`, `C:\abs.gguf`, `C:`, `D:\`)
 	}
 	for _, in := range bad {
-		if got, err := pathWithin(base, in); err == nil {
+		if got, err := PathWithin(base, in); err == nil {
 			t.Errorf("pathWithin(%q) = %q, want an error", in, got)
 		}
 	}
@@ -188,9 +188,9 @@ func TestPathWithin(t *testing.T) {
 
 func TestResolvePathsNamesTheBadKey(t *testing.T) {
 	dir := t.TempDir()
-	conf := defaultConfig()
+	conf := Default()
 	conf.TemplateFile = ""
-	_, err := resolvePaths(dir, conf)
+	_, err := ResolvePaths(dir, conf)
 	if err == nil || !strings.Contains(err.Error(), "template_file") {
 		t.Fatalf("resolvePaths must say which key is wrong, got %v", err)
 	}
@@ -199,9 +199,9 @@ func TestResolvePathsNamesTheBadKey(t *testing.T) {
 		"server_file":          func(c *Config) { c.ServerFile = "" },
 		"fallback_server_file": func(c *Config) { c.FallbackServerFile = "models/.." },
 	} {
-		c := defaultConfig()
+		c := Default()
 		set(&c)
-		if _, err := resolvePaths(dir, c); err == nil || !strings.Contains(err.Error(), key) {
+		if _, err := ResolvePaths(dir, c); err == nil || !strings.Contains(err.Error(), key) {
 			t.Errorf("%s: got %v", key, err)
 		}
 	}
@@ -209,33 +209,33 @@ func TestResolvePathsNamesTheBadKey(t *testing.T) {
 
 func TestMissingTreatsDirectoriesAsMissing(t *testing.T) {
 	dir := t.TempDir()
-	conf := defaultConfig()
-	p, err := resolvePaths(dir, conf)
+	conf := Default()
+	p, err := ResolvePaths(dir, conf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A folder where a file is expected must not count as installed.
-	for _, f := range []string{p.model, p.template, p.server} {
+	for _, f := range []string{p.Model, p.Template, p.Server} {
 		if err := os.MkdirAll(f, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := p.missing(); len(got) != 3 {
+	if got := p.Missing(); len(got) != 3 {
 		t.Fatalf("folders in place of files: missing = %v, want all 3", got)
 	}
-	if err := checkFile(p.model); err == nil || !strings.Contains(err.Error(), "not a file") {
+	if err := CheckFile(p.Model); err == nil || !strings.Contains(err.Error(), "not a file") {
 		t.Fatalf("checkFile on a folder = %v", err)
 	}
-	if err := checkFile(filepath.Join(dir, "nope")); !os.IsNotExist(err) {
+	if err := CheckFile(filepath.Join(dir, "nope")); !os.IsNotExist(err) {
 		t.Fatalf("checkFile on a missing path = %v", err)
 	}
-	for _, f := range []string{p.model, p.template, p.server} {
+	for _, f := range []string{p.Model, p.Template, p.Server} {
 		os.Remove(f)
 		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := p.missing(); len(got) != 0 {
+	if got := p.Missing(); len(got) != 0 {
 		t.Fatalf("regular files: missing = %v", got)
 	}
 }
@@ -251,45 +251,32 @@ func TestHotkeyDuplicateDetection(t *testing.T) {
 		{"Win+Alt+0", "alt+win+0"},
 	}
 	for _, tc := range cases {
-		c := defaultConfig()
+		c := Default()
 		c.Profiles = []Profile{
 			{Hotkey: tc.a, Languages: []string{"ja", "en"}},
 			{Hotkey: tc.b, Target: "ko"},
 		}
-		if err := c.resolveProfiles(true); err == nil || !strings.Contains(err.Error(), "same key combination") {
+		if err := c.ResolveProfiles(true); err == nil || !strings.Contains(err.Error(), "same key combination") {
 			t.Errorf("expected duplicate error for %q and %q, got %v", tc.a, tc.b, err)
-		}
-
-		// Settings validates the same duplicates before touching registrations.
-		form := settingsForm{MaxChars: 4000}
-		for _, p := range c.Profiles {
-			f, err := formFromProfile(p, "windows")
-			if err != nil {
-				t.Fatal(err)
-			}
-			form.Profiles = append(form.Profiles, f)
-		}
-		if _, err := form.toConfig(defaultConfig()); err == nil || !strings.Contains(err.Error(), "same key combination") {
-			t.Errorf("Settings must reject %q and %q: %v", tc.a, tc.b, err)
 		}
 	}
 }
 
 func TestProfileOutputConfig(t *testing.T) {
 	// Legacy config without profiles defaults to replace.
-	c, err := loadConfig(writeConfig(t, `{"hotkey": "Ctrl+Alt+E"}`))
+	c, err := Load(writeConfig(t, `{"hotkey": "Ctrl+Alt+E"}`))
 	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Output != OutputReplace {
 		t.Fatalf("legacy config output: %+v, %v", c.Profiles, err)
 	}
 
 	// Profile with output omitted defaults to replace.
-	c, err = loadConfig(writeConfig(t, `{"profiles": [{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}]}`))
+	c, err = Load(writeConfig(t, `{"profiles": [{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}]}`))
 	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Output != OutputReplace {
 		t.Fatalf("omitted output: %+v, %v", c.Profiles, err)
 	}
 
 	// Explicit replace and bilingual modes with case/whitespace normalization.
-	c, err = loadConfig(writeConfig(t, `{"profiles": [
+	c, err = Load(writeConfig(t, `{"profiles": [
 		{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"], "output": " Replace "},
 		{"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "BILINGUAL"}
 	]}`))
@@ -317,12 +304,12 @@ func TestProfileOutputConfig(t *testing.T) {
 
 func TestProfileInputConfig(t *testing.T) {
 	// Legacy config without profiles defaults to selection.
-	c, err := loadConfig(writeConfig(t, `{"hotkey": "Ctrl+Alt+E"}`))
+	c, err := Load(writeConfig(t, `{"hotkey": "Ctrl+Alt+E"}`))
 	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Input != InputSelection {
 		t.Fatalf("legacy config input: %+v, %v", c.Profiles, err)
 	}
 	// Omitted input defaults to selection; case and spaces are ignored.
-	c, err = loadConfig(writeConfig(t, `{"profiles": [
+	c, err = Load(writeConfig(t, `{"profiles": [
 		{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]},
 		{"hotkey": "Ctrl+Alt+K", "target": "ko", "input": " Clipboard "},
 		{"hotkey": "Ctrl+Alt+D", "target": "de", "input": "SELECTION"}
@@ -331,7 +318,7 @@ func TestProfileInputConfig(t *testing.T) {
 		t.Fatalf("explicit input modes: %+v, %v", c.Profiles, err)
 	}
 	for i, want := range []string{InputSelection, InputClipboard, InputSelection} {
-		if c.Profiles[i].Input != want || c.Profiles[i].inputMode() != want {
+		if c.Profiles[i].Input != want || c.Profiles[i].InputMode() != want {
 			t.Errorf("profile %d input = %q, want %q", i, c.Profiles[i].Input, want)
 		}
 	}
@@ -363,7 +350,7 @@ func TestUpdateConfigFilePreservesUnknownKeysWithProfileOutput(t *testing.T) {
 	newProfiles := []Profile{
 		{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Output: OutputBilingual},
 	}
-	if err := updateConfigFile(dir, map[string]any{"profiles": newProfiles}); err != nil {
+	if err := UpdateFile(dir, map[string]any{"profiles": newProfiles}); err != nil {
 		t.Fatalf("updateConfigFile: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "config.json"))
@@ -377,7 +364,7 @@ func TestUpdateConfigFilePreservesUnknownKeysWithProfileOutput(t *testing.T) {
 	if !strings.Contains(content, `"output":"bilingual"`) {
 		t.Fatalf("bilingual output not saved: %s", content)
 	}
-	loaded, err := loadConfig(dir)
+	loaded, err := Load(dir)
 	if err != nil || len(loaded.Profiles) != 1 || loaded.Profiles[0].Output != OutputBilingual {
 		t.Fatalf("loaded config: %+v, %v", loaded, err)
 	}

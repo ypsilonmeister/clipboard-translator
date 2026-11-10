@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
@@ -294,7 +295,7 @@ func TestSettingsStateAndSave(t *testing.T) {
 		t.Errorf("profiles not saved:\n%s", raw)
 	}
 	// What was saved loads again as the same settings.
-	c, err := loadConfig(f.a.dir)
+	c, err := config.Load(f.a.dir)
 	if err != nil || len(c.Profiles) != 2 || c.Profiles[1].Target != "ko" || !c.AutoPaste {
 		t.Fatalf("saved config does not load back: %+v %v", c, err)
 	}
@@ -492,7 +493,7 @@ func TestSettingsMenuItemOpensThePageAndReusesIt(t *testing.T) {
 
 func TestProfileFormRoundTrip(t *testing.T) {
 	for _, hk := range []string{"Ctrl+Alt+E", "Ctrl+Shift+Y", "Alt+K", "Ctrl+Alt+Shift+Win+Q", "Ctrl+7", "Alt+F5", "Ctrl+Shift+F12"} {
-		f, err := formFromProfile(Profile{Hotkey: hk, Languages: []string{"ja", "en"}}, "windows")
+		f, err := formFromProfile(config.Profile{Hotkey: hk, Languages: []string{"ja", "en"}}, "windows")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -507,7 +508,7 @@ func TestProfileFormRoundTrip(t *testing.T) {
 		{"Ctrl+7", "7"},
 		{"Ctrl+Alt+F5", "F5"},
 	} {
-		p := Profile{Hotkey: tc.hotkey, Languages: []string{"ja", "en"}}
+		p := config.Profile{Hotkey: tc.hotkey, Languages: []string{"ja", "en"}}
 		form, err := formFromProfile(p, "windows")
 		if err != nil {
 			t.Fatalf("formFromProfile(%q): %v", tc.hotkey, err)
@@ -516,7 +517,7 @@ func TestProfileFormRoundTrip(t *testing.T) {
 			t.Errorf("formFromProfile(%q).Key = %q, want %q", tc.hotkey, form.Key, tc.wantKey)
 		}
 		sf := settingsForm{MaxChars: 4000, Profiles: []profileForm{form}}
-		cfg, err := sf.toConfig(defaultConfig())
+		cfg, err := sf.toConfig(config.Default())
 		if err != nil {
 			t.Fatalf("toConfig for %q: %v", tc.hotkey, err)
 		}
@@ -524,16 +525,16 @@ func TestProfileFormRoundTrip(t *testing.T) {
 			t.Errorf("toConfig hotkey = %q, want %q", cfg.Profiles[0].Hotkey, tc.hotkey)
 		}
 	}
-	f, _ := formFromProfile(Profile{Hotkey: "cmd+option+e", Target: "ko"}, "darwin")
+	f, _ := formFromProfile(config.Profile{Hotkey: "cmd+option+e", Target: "ko"}, "darwin")
 	if !f.Win || !f.Alt || f.Key != "E" || f.Target != "ko" || f.hotkeyString() != "Alt+Win+E" {
 		t.Errorf("macOS names: %+v %q", f, f.hotkeyString())
 	}
-	if _, err := formFromProfile(Profile{Hotkey: "nonsense"}, "windows"); err == nil {
+	if _, err := formFromProfile(config.Profile{Hotkey: "nonsense"}, "windows"); err == nil {
 		t.Error("an invalid hotkey must be an error")
 	}
 	// toConfig does not modify its base.
-	base := defaultConfig()
-	base.normalizeProfiles()
+	base := config.Default()
+	base.NormalizeProfiles()
 	if _, err := validForm().toConfig(base); err != nil || len(base.Profiles) != 1 {
 		t.Errorf("toConfig changed the base or failed: %v %+v", err, base.Profiles)
 	}
@@ -578,7 +579,7 @@ func TestSettingsLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 		t.Fatalf("max_chars not saved: %d", f.a.conf.MaxChars)
 	}
 
-	c, err := loadConfig(f.a.dir)
+	c, err := config.Load(f.a.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +638,7 @@ func TestSettingsHotkeyChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 		t.Fatalf("max_chars not saved: %d", f.a.conf.MaxChars)
 	}
 
-	c, err := loadConfig(f.a.dir)
+	c, err := config.Load(f.a.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,7 +684,7 @@ func TestSettingsAutoPasteChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 		t.Fatalf("max_chars not saved: %d", f.a.conf.MaxChars)
 	}
 
-	c, err := loadConfig(f.a.dir)
+	c, err := config.Load(f.a.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -729,7 +730,7 @@ func TestSettingsNotifyOnCompleteChangeFollowedByUnrelatedSettingsSave(t *testin
 		t.Fatalf("max_chars not saved: %d", f.a.conf.MaxChars)
 	}
 
-	c, err := loadConfig(f.a.dir)
+	c, err := config.Load(f.a.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -893,8 +894,8 @@ func saveSettingsField(t *testing.T, a *app, field string, value bool) {
 func TestSettingsAllHotkeysInactive(t *testing.T) {
 	f := newSettingsFixture(t)
 	f.a.closeHotkeys()
-	f.a.conf.Profiles = []Profile{{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}}, {Hotkey: "Ctrl+Alt+K", Target: "ko"}}
-	f.a.conf.normalizeProfiles()
+	f.a.conf.Profiles = []config.Profile{{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}}, {Hotkey: "Ctrl+Alt+K", Target: "ko"}}
+	f.a.conf.NormalizeProfiles()
 	f.taken["CTRL+ALT+E"], f.taken["CTRL+ALT+K"] = true, true
 	f.a.registerStartupHotkey()
 	if f.a.anyHotkeyActive() {
@@ -1101,7 +1102,7 @@ func TestSettingsProfileInputSaveAndState(t *testing.T) {
 
 	_, body := s.do(t, "GET", "/api/state", nil, nil)
 	st := decodeAPI(t, body).State
-	if st == nil || len(st.Profiles) != 1 || st.Profiles[0].Input != InputSelection {
+	if st == nil || len(st.Profiles) != 1 || st.Profiles[0].Input != config.InputSelection {
 		t.Fatalf("initial state input: %+v", st)
 	}
 
@@ -1110,7 +1111,7 @@ func TestSettingsProfileInputSaveAndState(t *testing.T) {
 		MaxChars:     4000,
 		Changed:      []string{"profiles"},
 		Profiles: []profileForm{
-			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Input: InputClipboard},
+			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Input: config.InputClipboard},
 		},
 	}
 	resp, body := s.do(t, "POST", "/api/save", saveForm, nil)
@@ -1118,7 +1119,7 @@ func TestSettingsProfileInputSaveAndState(t *testing.T) {
 	if resp.StatusCode != 200 || r.Error != "" || r.State == nil {
 		t.Fatalf("save clipboard input: %d %s", resp.StatusCode, body)
 	}
-	if r.State.Profiles[0].Input != InputClipboard || f.a.conf.Profiles[0].Input != InputClipboard {
+	if r.State.Profiles[0].Input != config.InputClipboard || f.a.conf.Profiles[0].Input != config.InputClipboard {
 		t.Fatalf("input not applied: state %q, conf %q", r.State.Profiles[0].Input, f.a.conf.Profiles[0].Input)
 	}
 	raw, err := os.ReadFile(filepath.Join(f.a.dir, "config.json"))
@@ -1137,7 +1138,7 @@ func TestSettingsProfileInputSaveAndState(t *testing.T) {
 	if resp.StatusCode == 200 || !strings.Contains(decodeAPI(t, body).Error, "input") {
 		t.Fatalf("an unknown input must be rejected: %d %s", resp.StatusCode, body)
 	}
-	if f.a.conf.Profiles[0].Input != InputClipboard {
+	if f.a.conf.Profiles[0].Input != config.InputClipboard {
 		t.Fatal("a rejected save changed the input mode")
 	}
 
@@ -1160,7 +1161,7 @@ func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 	// Initial state: profile 0 output is replace.
 	_, body := s.do(t, "GET", "/api/state", nil, nil)
 	st := decodeAPI(t, body).State
-	if st == nil || len(st.Profiles) != 1 || st.Profiles[0].Output != OutputReplace {
+	if st == nil || len(st.Profiles) != 1 || st.Profiles[0].Output != config.OutputReplace {
 		t.Fatalf("initial state output = %q, want replace", st.Profiles[0].Output)
 	}
 
@@ -1170,7 +1171,7 @@ func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 		MaxChars:     4000,
 		Changed:      []string{"profiles"},
 		Profiles: []profileForm{
-			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Output: OutputBilingual},
+			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Output: config.OutputBilingual},
 		},
 	}
 	resp, body := s.do(t, "POST", "/api/save", saveForm, nil)
@@ -1178,10 +1179,10 @@ func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 	if resp.StatusCode != 200 || r.Error != "" || r.State == nil {
 		t.Fatalf("save bilingual output: %d %s", resp.StatusCode, body)
 	}
-	if r.State.Profiles[0].Output != OutputBilingual {
+	if r.State.Profiles[0].Output != config.OutputBilingual {
 		t.Fatalf("state profile 0 output = %q, want bilingual", r.State.Profiles[0].Output)
 	}
-	if f.a.conf.Profiles[0].Output != OutputBilingual {
+	if f.a.conf.Profiles[0].Output != config.OutputBilingual {
 		t.Fatalf("conf profile 0 output = %q, want bilingual", f.a.conf.Profiles[0].Output)
 	}
 
@@ -1213,7 +1214,7 @@ func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 		BaseRevision: saveForm.BaseRevision, // older than f.a.profilesRev
 		Changed:      []string{"profiles"},
 		Profiles: []profileForm{
-			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Output: OutputReplace},
+			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Output: config.OutputReplace},
 		},
 	}
 	resp, body = s.do(t, "POST", "/api/save", staleForm, nil)

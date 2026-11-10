@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
@@ -213,7 +214,7 @@ func TestSettingsTogglesAreSaved(t *testing.T) {
 			for _, enabled := range []bool{true, false} {
 				saveSettingsField(t, a, field, enabled)
 				st := a.settingsState()
-				c, err := loadConfig(a.dir)
+				c, err := config.Load(a.dir)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -406,39 +407,39 @@ func TestHistoryMenuCopiesAndClears(t *testing.T) {
 }
 
 func TestSkipReasonClassification(t *testing.T) {
-	pairProfile := Profile{Languages: []string{"ja", "en"}}
-	targetProfile := Profile{Target: "ko"}
+	pairProfile := config.Profile{Languages: []string{"ja", "en"}}
+	targetProfile := config.Profile{Target: "ko"}
 
 	cases := []struct {
 		name     string
-		p        Profile
+		p        config.Profile
 		input    string
 		maxChars int
-		want     skipReason
+		want     config.SkipReason
 	}{
-		{"empty string", pairProfile, "", 100, skipEmpty},
-		{"whitespace only", pairProfile, "   \n\t  ", 100, skipEmpty},
-		{"too long pair", pairProfile, "こんにちは", 2, skipTooLong},
-		{"too long target", targetProfile, strings.Repeat("a", 101), 100, skipTooLong},
-		{"url https", pairProfile, "https://example.com/test", 100, skipURL},
-		{"url http", targetProfile, "http://example.com", 100, skipURL},
-		{"digits and symbols only for pair", pairProfile, "12345 !?", 100, skipNoTranslatableText},
-		{"digits and symbols only for target", targetProfile, "12345 !?", 100, skipNoTranslatableText},
-		{"unsupported script for pair", pairProfile, "Привет мир", 100, skipNoTranslatableText},
-		{"valid ja in pair", pairProfile, "こんにちは", 100, skipNone},
-		{"valid en in pair", pairProfile, "Hello world", 100, skipNone},
-		{"valid text for target", targetProfile, "Guten Tag", 100, skipNone},
+		{"empty string", pairProfile, "", 100, config.SkipEmpty},
+		{"whitespace only", pairProfile, "   \n\t  ", 100, config.SkipEmpty},
+		{"too long pair", pairProfile, "こんにちは", 2, config.SkipTooLong},
+		{"too long target", targetProfile, strings.Repeat("a", 101), 100, config.SkipTooLong},
+		{"url https", pairProfile, "https://example.com/test", 100, config.SkipURL},
+		{"url http", targetProfile, "http://example.com", 100, config.SkipURL},
+		{"digits and symbols only for pair", pairProfile, "12345 !?", 100, config.SkipNoTranslatableText},
+		{"digits and symbols only for target", targetProfile, "12345 !?", 100, config.SkipNoTranslatableText},
+		{"unsupported script for pair", pairProfile, "Привет мир", 100, config.SkipNoTranslatableText},
+		{"valid ja in pair", pairProfile, "こんにちは", 100, config.SkipNone},
+		{"valid en in pair", pairProfile, "Hello world", 100, config.SkipNone},
+		{"valid text for target", targetProfile, "Guten Tag", 100, config.SkipNone},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.p.skipReason(tc.input, tc.maxChars)
+			got := tc.p.SkipReason(tc.input, tc.maxChars)
 			if got != tc.want {
 				t.Fatalf("skipReason(%q) = %v, want %v", tc.input, got, tc.want)
 			}
-			_, ok := tc.p.direction(tc.input, tc.maxChars)
-			if ok != (tc.want == skipNone) {
-				t.Fatalf("direction ok=%v, want %v", ok, tc.want == skipNone)
+			_, ok := tc.p.Direction(tc.input, tc.maxChars)
+			if ok != (tc.want == config.SkipNone) {
+				t.Fatalf("direction ok=%v, want %v", ok, tc.want == config.SkipNone)
 			}
 		})
 	}
@@ -446,49 +447,49 @@ func TestSkipReasonClassification(t *testing.T) {
 
 func TestSkipMessageText(t *testing.T) {
 	for _, tc := range []struct {
-		reason skipReason
+		reason config.SkipReason
 		count  int
 		limit  int
 		label  string
 		want   string
 	}{
 		{
-			reason: skipEmpty,
+			reason: config.SkipEmpty,
 			count:  0,
 			limit:  4000,
 			label:  "Japanese ↔ English",
 			want:   "Nothing to translate: no text was selected or copied.",
 		},
 		{
-			reason: skipTooLong,
+			reason: config.SkipTooLong,
 			count:  4213,
 			limit:  4000,
 			label:  "Japanese ↔ English",
 			want:   "Nothing was translated: the selection is 4213 characters, over the 4000-character limit. Select less text or raise the limit in Settings (Longest text).",
 		},
 		{
-			reason: skipURL,
+			reason: config.SkipURL,
 			count:  25,
 			limit:  4000,
 			label:  "Japanese ↔ English",
 			want:   "Nothing was translated: the selection is just a URL.",
 		},
 		{
-			reason: skipNoTranslatableText,
+			reason: config.SkipNoTranslatableText,
 			count:  10,
 			limit:  4000,
 			label:  "Japanese ↔ English",
 			want:   "Nothing was translated: this hotkey translates Japanese ↔ English.",
 		},
 		{
-			reason: skipNoTranslatableText,
+			reason: config.SkipNoTranslatableText,
 			count:  10,
 			limit:  4000,
 			label:  "to Korean",
 			want:   "Nothing was translated: this hotkey translates to Korean.",
 		},
 	} {
-		msg := skipMessage(tc.reason, tc.count, tc.limit, tc.label)
+		msg := config.SkipMessage(tc.reason, tc.count, tc.limit, tc.label)
 		if msg != tc.want {
 			t.Errorf("skipMessage(%v) = %q, want %q", tc.reason, msg, tc.want)
 		}
@@ -704,14 +705,14 @@ func TestOutcomeMessagesDoNotLeakText(t *testing.T) {
 	translated := "SuperSecretTranslatedText67890"
 
 	messages := []string{
-		skipMessage(skipEmpty, 0, 4000, "Japanese ↔ English"),
-		skipMessage(skipTooLong, 5000, 4000, "Japanese ↔ English"),
-		skipMessage(skipURL, 20, 4000, "Japanese ↔ English"),
-		skipMessage(skipNoTranslatableText, 10, 4000, "Japanese ↔ English"),
-		skipStatus(skipEmpty, "Japanese ↔ English"),
-		skipStatus(skipTooLong, "Japanese ↔ English"),
-		skipStatus(skipURL, "Japanese ↔ English"),
-		skipStatus(skipNoTranslatableText, "Japanese ↔ English"),
+		config.SkipMessage(config.SkipEmpty, 0, 4000, "Japanese ↔ English"),
+		config.SkipMessage(config.SkipTooLong, 5000, 4000, "Japanese ↔ English"),
+		config.SkipMessage(config.SkipURL, 20, 4000, "Japanese ↔ English"),
+		config.SkipMessage(config.SkipNoTranslatableText, 10, 4000, "Japanese ↔ English"),
+		config.SkipStatus(config.SkipEmpty, "Japanese ↔ English"),
+		config.SkipStatus(config.SkipTooLong, "Japanese ↔ English"),
+		config.SkipStatus(config.SkipURL, "Japanese ↔ English"),
+		config.SkipStatus(config.SkipNoTranslatableText, "Japanese ↔ English"),
 		"Clipboard Translator - translation cancelled",
 		"Clipboard Translator - translation is the same as the source; the clipboard still holds the source",
 		"The clipboard changed while translating, so the result was dropped and the new clipboard text was kept.",
@@ -783,7 +784,7 @@ func TestStartTranslationSupersedingDoesNotShowCancelled(t *testing.T) {
 		statusDuringCapture = tray.status
 		return "second text to translate", true, nil
 	}
-	a.conf.Profiles = []Profile{{Languages: []string{"ja", "en"}}}
+	a.conf.Profiles = []config.Profile{{Languages: []string{"ja", "en"}}}
 	a.startTranslation(0)
 
 	if statusDuringCapture == "Clipboard Translator - translation cancelled" {
@@ -836,7 +837,7 @@ func TestCaptureFailureDisarmsTransientTimer(t *testing.T) {
 	a.capture = func(cb platform.Clipboard, win uintptr) (string, bool, error) {
 		return "", false, errors.New("cannot capture focus changed")
 	}
-	a.conf.Profiles = []Profile{{Languages: []string{"ja", "en"}}}
+	a.conf.Profiles = []config.Profile{{Languages: []string{"ja", "en"}}}
 	a.startTranslation(0)
 
 	if tray.status != a.readyTip {
@@ -872,7 +873,7 @@ func TestHandleResultBilingualOutput(t *testing.T) {
 		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
-		output:        OutputBilingual,
+		output:        config.OutputBilingual,
 	})
 
 	wantClipboard := "Hello world\nこんにちは世界"
@@ -923,7 +924,7 @@ func TestHandleResultBilingualReplaceIfUnchanged(t *testing.T) {
 		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
-		output:        OutputBilingual,
+		output:        config.OutputBilingual,
 	})
 
 	if cb.text != "user copied new text" {
@@ -1025,7 +1026,7 @@ func TestHandleResultBilingualTranslationUnchanged(t *testing.T) {
 		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
-		output:        OutputBilingual,
+		output:        config.OutputBilingual,
 	})
 
 	if cb.text != original {
@@ -1050,7 +1051,7 @@ func TestHandleResultBilingualTargetOnly(t *testing.T) {
 		direction:     languages.Direction{Target: "ko"},
 		window:        100,
 		fromSelection: true,
-		output:        OutputBilingual,
+		output:        config.OutputBilingual,
 	})
 
 	want := "Good morning\n좋은 아침"
@@ -1072,7 +1073,7 @@ func TestHandleResultMultipleProfilesDifferentModes(t *testing.T) {
 		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
-		output:        OutputReplace,
+		output:        config.OutputReplace,
 	})
 	if cb.text != "こんにちは" {
 		t.Fatalf("replace mode clipboard = %q, want %q", cb.text, "こんにちは")
@@ -1088,7 +1089,7 @@ func TestHandleResultMultipleProfilesDifferentModes(t *testing.T) {
 		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
-		output:        OutputBilingual,
+		output:        config.OutputBilingual,
 	})
 	wantBilingual := "Good night\nおやすみ"
 	if cb.text != wantBilingual {
@@ -1112,7 +1113,7 @@ func TestHandleResultBilingualAutoPaste(t *testing.T) {
 		direction:     languages.Direction{Source: "en", Target: "ja"},
 		window:        100,
 		fromSelection: true,
-		output:        OutputBilingual,
+		output:        config.OutputBilingual,
 	})
 
 	wantClipboard := "Select and translate\n選択して翻訳"

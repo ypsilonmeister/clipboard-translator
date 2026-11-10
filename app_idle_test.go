@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"github.com/ypsilonmeister/clipboard-translator/internal/testsupport"
@@ -190,7 +191,7 @@ func TestIdleUnloadConfigValidation(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(fmt.Sprintf(`{"idle_unload_minutes":%d}`, minutes)), 0600); err != nil {
 				t.Fatal(err)
 			}
-			c, err := loadConfig(dir)
+			c, err := config.Load(dir)
 			invalid := minutes < 0 || minutes > 1440
 			if (err != nil) != invalid {
 				t.Fatalf("config minutes=%d err=%v", minutes, err)
@@ -198,8 +199,8 @@ func TestIdleUnloadConfigValidation(t *testing.T) {
 			if !invalid && c.IdleUnloadMinutes != minutes {
 				t.Fatal("config value lost")
 			}
-			base := defaultConfig()
-			base.normalizeProfiles()
+			base := config.Default()
+			base.NormalizeProfiles()
 			_, err = (settingsForm{IdleUnloadMinutes: minutes, Changed: []string{"idle_unload_minutes"}}).toConfig(base)
 			if (err != nil) != invalid {
 				t.Fatalf("settings minutes=%d err=%v", minutes, err)
@@ -249,7 +250,7 @@ func TestIdleUnloadSettingsRoundTripAndConflicts(t *testing.T) {
 	if resp.StatusCode != 200 || decodeAPI(t, body).State.IdleUnloadMinutes != 10 {
 		t.Fatalf("resave: %d %s", resp.StatusCode, body)
 	}
-	c, err := loadConfig(f.a.dir)
+	c, err := config.Load(f.a.dir)
 	if err != nil || c.IdleUnloadMinutes != 10 || c.MaxChars != 5000 || !c.AutoPaste {
 		t.Fatalf("saved config: %+v %v", c, err)
 	}
@@ -290,8 +291,8 @@ func TestUnloadReloadFailureStaysUnloaded(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.unloadModel()
-	a.paths.server = filepath.Join(a.dir, "missing-server")
-	a.paths.fallback = a.paths.server
+	a.paths.Server = filepath.Join(a.dir, "missing-server")
+	a.paths.Fallback = a.paths.Server
 	cb.text = "こんにちは"
 	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
 	var failure string
@@ -662,8 +663,8 @@ func TestServeIdleAutomaticUnload(t *testing.T) {
 func TestServerWorkResetAfterFailedStartFallbackAndErrQuit(t *testing.T) {
 	// 1. Failed start
 	a1, _, _ := newTestApp(t)
-	a1.paths.server = filepath.Join(a1.dir, "missing-server")
-	a1.paths.fallback = a1.paths.server
+	a1.paths.Server = filepath.Join(a1.dir, "missing-server")
+	a1.paths.Fallback = a1.paths.Server
 	if err := a1.startServer(); err == nil {
 		t.Fatal("expected startServer failure")
 	}
@@ -674,7 +675,7 @@ func TestServerWorkResetAfterFailedStartFallbackAndErrQuit(t *testing.T) {
 	// 2. CPU fallback
 	a2, _, _ := newTestApp(t)
 	a2.conf.ServerFile = filepath.Join("runtime", "vulkan", platform.ServerBinaryName())
-	a2.paths.server = filepath.Join(a2.dir, a2.conf.ServerFile)
+	a2.paths.Server = filepath.Join(a2.dir, a2.conf.ServerFile)
 	if err := a2.startServer(); err != nil {
 		t.Fatalf("startServer fallback: %v", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
@@ -25,9 +26,9 @@ import (
 // and the hotkey; goroutines only talk to it through channels.
 type app struct {
 	dir      string
-	conf     Config
+	conf     config.Config
 	endpoint string
-	paths    appPaths
+	paths    config.Paths
 	tray     platform.Tray
 	sup      *llamaserver.Supervisor
 	limiter  llamaserver.RestartLimiter
@@ -87,7 +88,7 @@ type app struct {
 	capturing      *pendingCapture                                                // a selection copy the serve loop is still waiting for
 
 	statusResetAt  time.Time
-	lastSkipReason skipReason
+	lastSkipReason config.SkipReason
 	lastSkipNotify time.Time
 	now            func() time.Time // time.Now, replaceable in tests
 }
@@ -96,7 +97,7 @@ type app struct {
 // profile is a copy, so a Settings change meanwhile does not move it.
 type pendingCapture struct {
 	task    platform.CaptureTask
-	profile Profile
+	profile config.Profile
 	win     uintptr
 	started time.Time
 	noted   bool // the tray says "copying the selection..."
@@ -112,8 +113,8 @@ type extraHotkey struct {
 	why     string // why hk is nil
 }
 
-func newApp(dir string, conf Config, paths appPaths, tray platform.Tray, serverLog io.Writer) *app {
-	conf.normalizeProfiles()
+func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tray, serverLog io.Writer) *app {
+	conf.NormalizeProfiles()
 	a := &app{
 		confRevision:        1,
 		profilesRev:         1,
@@ -146,7 +147,7 @@ func newApp(dir string, conf Config, paths appPaths, tray platform.Tray, serverL
 	}
 	tray.SetMenu(a.buildMenu)
 	a.sup = &llamaserver.Supervisor{
-		Model: paths.model, Template: paths.template,
+		Model: paths.Model, Template: paths.Template,
 		ContextTokens: conf.ContextTokens, Port: conf.Port, Endpoint: a.endpoint,
 		LogOut:         serverLog,
 		OnStarted:      a.serverStarted,
@@ -216,9 +217,9 @@ func (a *app) startServer() error {
 			}
 		}
 	}
-	err := a.sup.Start(a.paths.server, a.conf.GPULayers, "loading model")
+	err := a.sup.Start(a.paths.Server, a.conf.GPULayers, "loading model")
 	if err == nil {
-		a.activeBackend = currentBackend(a.conf.ServerFile)
+		a.activeBackend = config.CurrentBackend(a.conf.ServerFile)
 		return nil
 	}
 	if errors.Is(err, llamaserver.ErrQuit) {
@@ -229,7 +230,7 @@ func (a *app) startServer() error {
 		return err // every build needs the runtime; the CPU build cannot help
 	}
 	log.Printf("preferred backend failed: %v; see server.log", err)
-	if a.paths.server == a.paths.fallback {
+	if a.paths.Server == a.paths.Fallback {
 		return fmt.Errorf("The translation server failed to start: %w", err)
 	}
 	return a.startFallback()
@@ -246,7 +247,7 @@ func (a *app) runningBackend() string {
 	if a.sup.Running() {
 		rel, err := filepath.Rel(a.dir, a.sup.BinaryPath())
 		if err == nil {
-			b := currentBackend(rel)
+			b := config.CurrentBackend(rel)
 			a.activeBackend = b
 			return b
 		}
@@ -254,13 +255,13 @@ func (a *app) runningBackend() string {
 	if a.activeBackend != "" {
 		return a.activeBackend
 	}
-	return currentBackend(a.conf.ServerFile)
+	return config.CurrentBackend(a.conf.ServerFile)
 }
 
 // onFallback reports whether the server running now is the CPU fallback that
 // startServer chose because the preferred engine did not start.
 func (a *app) onFallback() bool {
-	return a.sup.Running() && a.paths.server != a.paths.fallback && a.sup.BinaryPath() == a.paths.fallback
+	return a.sup.Running() && a.paths.Server != a.paths.Fallback && a.sup.BinaryPath() == a.paths.Fallback
 }
 
 // startFallback starts the CPU fallback build.
@@ -273,11 +274,11 @@ func (a *app) startFallback() error {
 			}
 		}
 	}
-	if statErr := checkFile(a.paths.fallback); statErr != nil {
+	if statErr := config.CheckFile(a.paths.Fallback); statErr != nil {
 		return fmt.Errorf("CPU fallback unavailable: %w", statErr)
 	}
 	log.Print("falling back to CPU")
-	if err := a.sup.Start(a.paths.fallback, 0, "loading model (CPU)"); err != nil {
+	if err := a.sup.Start(a.paths.Fallback, 0, "loading model (CPU)"); err != nil {
 		if errors.Is(err, llamaserver.ErrQuit) {
 			return err
 		}
@@ -423,7 +424,7 @@ func (a *app) hotkeySummary() string {
 			parts = append(parts, p.Hotkey)
 			return
 		}
-		parts = append(parts, p.Hotkey+" ("+p.label()+")")
+		parts = append(parts, p.Hotkey+" ("+p.Label()+")")
 	}
 	if !a.hasNoHotkey() {
 		add(0)
@@ -441,7 +442,7 @@ func (a *app) extraFailures() string {
 	var lines []string
 	for _, e := range a.extras {
 		if e.hk == nil {
-			lines = append(lines, fmt.Sprintf("%s (%s): %s", a.conf.Profiles[e.profile].Hotkey, a.conf.Profiles[e.profile].label(), e.why))
+			lines = append(lines, fmt.Sprintf("%s (%s): %s", a.conf.Profiles[e.profile].Hotkey, a.conf.Profiles[e.profile].Label(), e.why))
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -652,8 +653,8 @@ func (a *app) tickTransientStatus() {
 	}
 }
 
-func (a *app) shouldNotifySkip(reason skipReason) bool {
-	if reason != skipTooLong {
+func (a *app) shouldNotifySkip(reason config.SkipReason) bool {
+	if reason != config.SkipTooLong {
 		return false
 	}
 	now := a.timeNow()
@@ -701,7 +702,7 @@ func (a *app) startTranslation(index int) {
 	profile := a.conf.Profiles[index]
 	win := a.foreground()
 	a.abortTranslation()
-	if profile.inputMode() == InputClipboard {
+	if profile.InputMode() == config.InputClipboard {
 		// The text is already on the clipboard: no Ctrl+C, no waiting for a copy,
 		// and never a fresh selection (so no auto-paste).
 		source, err := a.cb.Read()
@@ -738,10 +739,10 @@ func (a *app) stepCapture() {
 }
 
 // translateCaptured checks the captured text and translates it in the background.
-func (a *app) translateCaptured(profile Profile, win uintptr, source string, fromSelection bool, err error) {
+func (a *app) translateCaptured(profile config.Profile, win uintptr, source string, fromSelection bool, err error) {
 	capturedAt := a.timeNow()
 	if err != nil {
-		if profile.inputMode() == InputClipboard {
+		if profile.InputMode() == config.InputClipboard {
 			log.Printf("cannot read the clipboard: %v", err)
 		} else {
 			log.Printf("cannot capture selection: %v", err)
@@ -754,12 +755,12 @@ func (a *app) translateCaptured(profile Profile, win uintptr, source string, fro
 		}
 		return
 	}
-	reason, direction := profile.check(source, a.conf.MaxChars)
-	if reason != skipNone {
+	reason, direction := profile.Check(source, a.conf.MaxChars)
+	if reason != config.SkipNone {
 		count := utf8.RuneCountInString(source)
-		msg := skipMessage(reason, count, a.conf.MaxChars, profile.label())
+		msg := config.SkipMessage(reason, count, a.conf.MaxChars, profile.Label())
 		log.Printf("skipped (%s): %s", reason, msg)
-		a.setTransientStatus(skipStatus(reason, profile.label()))
+		a.setTransientStatus(config.SkipStatus(reason, profile.Label()))
 		if a.shouldNotifySkip(reason) {
 			a.tray.Notify("Clipboard Translator", msg, true)
 		}
@@ -817,7 +818,7 @@ func (a *app) translateCaptured(profile Profile, win uintptr, source string, fro
 	}
 	log.Printf("translating %s -> %s", from, direction.Target)
 	a.tray.SetStatus("Clipboard Translator - translating... (0s)")
-	outputMode := profile.outputMode()
+	outputMode := profile.OutputMode()
 	go func() {
 		translated, err := llamaserver.Translate(ctx, a.endpoint, key, source, direction, a.conf.MaxTokens)
 		select {
@@ -859,7 +860,7 @@ func (a *app) handleResult(res result) {
 	// apps can update clipboard formats without changing the text.
 	// Compare text AND replace under a single OpenClipboard lock.
 	replacement := res.translated
-	if res.output == OutputBilingual {
+	if res.output == config.OutputBilingual {
 		replacement = formatBilingual(res.original, res.translated)
 	}
 	applied, err := applyTranslation(a.cb, res.original, replacement)

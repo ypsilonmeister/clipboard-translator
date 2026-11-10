@@ -10,29 +10,20 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
-func TestSettingsCustomHotkeysRoundTrip(t *testing.T) {
-	for _, spec := range []string{"Ctrl+Alt+E", "ctrl+alt+e", "Ctrl+Alt+Q"} {
-		f, err := formFromProfile(Profile{Hotkey: spec, Languages: []string{"ja", "en"}}, "windows")
-		if err != nil || !strings.EqualFold(f.hotkeyString(), spec) {
-			t.Fatalf("%s: %+v %v", spec, f, err)
-		}
-	}
-}
-
 func TestBackendHelpers(t *testing.T) {
-	if got := currentBackend("runtime/cuda/llama-server.exe"); got != "cuda" {
+	if got := CurrentBackend("runtime/cuda/llama-server.exe"); got != "cuda" {
 		t.Errorf("currentBackend = %q", got)
 	}
-	if got := currentBackend(`runtime\vulkan\llama-server.exe`); got != "vulkan" {
+	if got := CurrentBackend(`runtime\vulkan\llama-server.exe`); got != "vulkan" {
 		t.Errorf("backslashes: currentBackend = %q", got)
 	}
-	if got := currentBackend("tools/llama-server.exe"); got != "" {
+	if got := CurrentBackend("tools/llama-server.exe"); got != "" {
 		t.Errorf("custom location must give no backend, got %q", got)
 	}
-	if f, n := backendSettings("cpu"); f != "runtime/cpu/"+platform.ServerBinaryName() || n != 0 {
+	if f, n := BackendSettings("cpu"); f != "runtime/cpu/"+platform.ServerBinaryName() || n != 0 {
 		t.Errorf("cpu settings = %q, %d", f, n)
 	}
-	if f, n := backendSettings("cuda"); f != "runtime/cuda/"+platform.ServerBinaryName() || n != 99 {
+	if f, n := BackendSettings("cuda"); f != "runtime/cuda/"+platform.ServerBinaryName() || n != 99 {
 		t.Errorf("cuda settings = %q, %d", f, n)
 	}
 	dir := t.TempDir()
@@ -44,7 +35,7 @@ func TestBackendHelpers(t *testing.T) {
 	// A directory at the binary path must not be treated as an available backend.
 	cudaDir := filepath.Join(dir, "runtime", "cuda", platform.ServerBinaryName())
 	os.MkdirAll(cudaDir, 0o755)
-	if got := availableBackends(dir); !reflect.DeepEqual(got, []string{"cpu", "vulkan"}) {
+	if got := AvailableBackends(dir); !reflect.DeepEqual(got, []string{"cpu", "vulkan"}) {
 		t.Errorf("availableBackends = %v", got)
 	}
 }
@@ -60,7 +51,7 @@ func TestUpdateConfigFilePreservesEverythingElse(t *testing.T) {
 `
 	path := filepath.Join(dir, "config.json")
 	os.WriteFile(path, []byte(original), 0o644)
-	if err := updateConfigFile(dir, map[string]any{"hotkey": "Ctrl+Shift+Y", "auto_paste": true}); err != nil {
+	if err := UpdateFile(dir, map[string]any{"hotkey": "Ctrl+Shift+Y", "auto_paste": true}); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(path)
@@ -79,7 +70,7 @@ func TestUpdateConfigFilePreservesEverythingElse(t *testing.T) {
 		t.Fatalf("config.json.bak must hold the previous file, got:\n%s", bak)
 	}
 	// The result must still load as a Config with the other values intact.
-	c, err := loadConfig(dir)
+	c, err := Load(dir)
 	if err != nil || c.Hotkey != "Ctrl+Shift+Y" || c.Port != 18119 {
 		t.Fatalf("loadConfig after update: %+v, %v", c, err)
 	}
@@ -87,10 +78,10 @@ func TestUpdateConfigFilePreservesEverythingElse(t *testing.T) {
 
 func TestUpdateConfigFileMissingAndInvalid(t *testing.T) {
 	dir := t.TempDir()
-	if err := updateConfigFile(dir, map[string]any{"hotkey": "Ctrl+Alt+T"}); err != nil {
+	if err := UpdateFile(dir, map[string]any{"hotkey": "Ctrl+Alt+T"}); err != nil {
 		t.Fatalf("a missing config.json must be created: %v", err)
 	}
-	if c, err := loadConfig(dir); err != nil || c.Hotkey != "Ctrl+Alt+T" {
+	if c, err := Load(dir); err != nil || c.Hotkey != "Ctrl+Alt+T" {
 		t.Fatalf("created config: %+v, %v", c, err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "config.json.bak")); err == nil {
@@ -98,7 +89,7 @@ func TestUpdateConfigFileMissingAndInvalid(t *testing.T) {
 	}
 	bad := t.TempDir()
 	os.WriteFile(filepath.Join(bad, "config.json"), []byte(`["not an object"]`), 0o644)
-	err := updateConfigFile(bad, map[string]any{"hotkey": "x"})
+	err := UpdateFile(bad, map[string]any{"hotkey": "x"})
 	if err == nil || !strings.Contains(err.Error(), "object") {
 		t.Fatalf("a non-object config must be refused, got %v", err)
 	}

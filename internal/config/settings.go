@@ -14,22 +14,22 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
-// backendNames are the llama.cpp builds setup.ps1 can install, in Settings order.
-var backendNames = []string{"cpu", "cuda", "vulkan", "metal"}
+// BackendNames are the llama.cpp builds setup.ps1 can install, in Settings order.
+var BackendNames = []string{"cpu", "cuda", "vulkan", "metal"}
 
-// availableBackends lists the installed builds (runtime/<name>/llama-server.exe).
-func availableBackends(dir string) []string {
+// AvailableBackends lists the installed builds (runtime/<name>/llama-server.exe).
+func AvailableBackends(dir string) []string {
 	var out []string
-	for _, b := range backendNames {
-		if err := checkFile(filepath.Join(dir, "runtime", b, platform.ServerBinaryName())); err == nil {
+	for _, b := range BackendNames {
+		if err := CheckFile(filepath.Join(dir, "runtime", b, platform.ServerBinaryName())); err == nil {
 			out = append(out, b)
 		}
 	}
 	return out
 }
 
-// currentBackend derives the backend from conf.ServerFile ("runtime/<name>/...").
-func currentBackend(serverFile string) string {
+// CurrentBackend derives the backend from conf.ServerFile ("runtime/<name>/...").
+func CurrentBackend(serverFile string) string {
 	// config.json may use either slash; filepath.ToSlash would leave backslashes alone off Windows.
 	parts := strings.Split(strings.ReplaceAll(serverFile, `\`, "/"), "/")
 	if len(parts) >= 3 && parts[0] == "runtime" {
@@ -38,8 +38,8 @@ func currentBackend(serverFile string) string {
 	return ""
 }
 
-// backendSettings are the config values setup.ps1 itself writes for a backend.
-func backendSettings(name string) (serverFile string, gpuLayers int) {
+// BackendSettings are the config values setup.ps1 itself writes for a backend.
+func BackendSettings(name string) (serverFile string, gpuLayers int) {
 	gpuLayers = 99
 	if name == "cpu" {
 		gpuLayers = 0
@@ -55,7 +55,7 @@ type configEntry struct {
 // parseConfigEntries splits a config.json object into its entries, in file
 // order. A leading UTF-8 BOM is ignored. A key that appears twice becomes one
 // entry at its first position with the last value, as json.Unmarshal (and so
-// loadConfig) reads it. Anything after the closing brace is an error.
+// Load) reads it. Anything after the closing brace is an error.
 func parseConfigEntries(b []byte) ([]configEntry, error) {
 	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(b, utf8BOM)))
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
@@ -94,13 +94,13 @@ func parseConfigEntries(b []byte) ([]configEntry, error) {
 	return out, nil
 }
 
-// updateConfigFile sets the given keys in config.json. Every other key, known
+// UpdateFile sets the given keys in config.json. Every other key, known
 // to this version or not, keeps its value and its position. The previous file is
 // saved as config.json.bak. The file is rewritten in place (not replaced by a
 // rename) so a hard link, as used by Scoop's "persist", stays intact. A UTF-8
 // BOM at the start of the old file is accepted; the .bak keeps it, the new
 // file is written without one.
-func updateConfigFile(dir string, set map[string]any) error {
+func UpdateFile(dir string, set map[string]any) error {
 	path := filepath.Join(dir, "config.json")
 	old, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

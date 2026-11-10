@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,9 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
@@ -34,145 +32,12 @@ type result struct {
 	capturedAt           time.Time
 }
 
-type skipReason int
-
-const (
-	skipNone skipReason = iota
-	skipEmpty
-	skipTooLong
-	skipURL
-	skipNoTranslatableText
-)
-
-func (r skipReason) String() string {
-	switch r {
-	case skipNone:
-		return "none"
-	case skipEmpty:
-		return "empty"
-	case skipTooLong:
-		return "too long"
-	case skipURL:
-		return "URL"
-	case skipNoTranslatableText:
-		return "no translatable text"
-	default:
-		return "unknown"
-	}
-}
-
-// check classifies why s cannot be translated by p, or returns skipNone and
-// the languages.Direction.
-func (p Profile) check(s string, maxChars int) (skipReason, languages.Direction) {
-	if strings.TrimSpace(s) == "" {
-		return skipEmpty, languages.Direction{}
-	}
-	if utf8.RuneCountInString(s) > maxChars {
-		return skipTooLong, languages.Direction{}
-	}
-	if languages.IsURL(strings.TrimSpace(s)) {
-		return skipURL, languages.Direction{}
-	}
-	if p.Target != "" {
-		if strings.IndexFunc(s, unicode.IsLetter) < 0 {
-			return skipNoTranslatableText, languages.Direction{}
-		}
-		return skipNone, languages.Direction{Target: p.Target}
-	}
-	dir, ok := languages.DirectionFor(p.Languages, s)
-	if !ok {
-		return skipNoTranslatableText, languages.Direction{}
-	}
-	return skipNone, dir
-}
-
-// skipReason returns why s cannot be translated by p, or skipNone if it can.
-func (p Profile) skipReason(s string, maxChars int) skipReason {
-	reason, _ := p.check(s, maxChars)
-	return reason
-}
-
-// direction is a profile's direction for s, or false for empty, too long,
-// URL-only or undetectable text (see languages.DirectionFor for pairs).
-func (p Profile) direction(s string, maxChars int) (languages.Direction, bool) {
-	reason, dir := p.check(s, maxChars)
-	return dir, reason == skipNone
-}
-
-// skipMessage returns the user-facing message explaining why translation was skipped.
-func skipMessage(reason skipReason, count, limit int, label string) string {
-	switch reason {
-	case skipEmpty:
-		return "Nothing to translate: no text was selected or copied."
-	case skipTooLong:
-		return fmt.Sprintf("Nothing was translated: the selection is %d characters, over the %d-character limit. Select less text or raise the limit in Settings (Longest text).", count, limit)
-	case skipURL:
-		return "Nothing was translated: the selection is just a URL."
-	case skipNoTranslatableText:
-		if label != "" {
-			return fmt.Sprintf("Nothing was translated: this hotkey translates %s.", label)
-		}
-		return "Nothing was translated: no translatable text found."
-	default:
-		return ""
-	}
-}
-
-// skipStatus returns the tooltip status text for a skipped request.
-func skipStatus(reason skipReason, label string) string {
-	switch reason {
-	case skipEmpty:
-		return "Clipboard Translator - nothing to translate (empty selection)"
-	case skipTooLong:
-		return "Clipboard Translator - text is too long"
-	case skipURL:
-		return "Clipboard Translator - nothing to translate (URL only)"
-	case skipNoTranslatableText:
-		if strings.Contains(label, "↔") {
-			return "Clipboard Translator - nothing to translate (not " + label + ")"
-		}
-		return "Clipboard Translator - nothing to translate (unsupported text)"
-	default:
-		return ""
-	}
-}
-
-// label says what the profile does, for the tooltip and notifications.
-func (p Profile) label() string {
-	if p.Target != "" {
-		return "to " + languages.Name(p.Target)
-	}
-	return languages.PairLabel(p.Languages)
-}
-
 func appDir() (string, error) {
 	p, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Dir(p), nil
-}
-
-// pathWithin resolves a config.json path to a file below base. The result is
-// never base itself, and drive-relative ("C:foo") or rooted ("\foo", "/foo")
-// paths are refused because Windows would resolve them against the current
-// drive or directory instead of base.
-func pathWithin(base, p string) (string, error) {
-	if strings.TrimSpace(p) == "" {
-		return "", errors.New("path is empty; use a path relative to the app folder")
-	}
-	if filepath.IsAbs(p) || filepath.VolumeName(p) != "" || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
-		return "", errors.New("paths must be relative to app folder")
-	}
-	full := filepath.Clean(filepath.Join(base, filepath.FromSlash(p)))
-	rel, err := filepath.Rel(base, full)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", errors.New("path outside app folder")
-	}
-	if rel == "." {
-		return "", errors.New("path must name a file inside the app folder, not the folder itself")
-	}
-	return full, nil
 }
 
 // ignoreWriteErrors lets log output go to stdout when there is one. In the
@@ -224,7 +89,7 @@ func main() {
 	defer logf.Close()
 	log.SetOutput(io.MultiWriter(logf, ignoreWriteErrors{os.Stdout}))
 	log.SetFlags(log.Ldate | log.Ltime)
-	conf, err := loadConfig(dir)
+	conf, err := config.Load(dir)
 	if err != nil {
 		fatal("config: ", err)
 	}
@@ -246,7 +111,7 @@ func main() {
 	if !ok {
 		return
 	}
-	paths, err := resolvePaths(dir, conf)
+	paths, err := config.ResolvePaths(dir, conf)
 	if err != nil {
 		fatal(err)
 	}

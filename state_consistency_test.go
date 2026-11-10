@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
@@ -46,9 +47,9 @@ func settingsOnlySave(t *testing.T, edit func(*settingsForm)) *app {
 	return a
 }
 
-func checkReloaded(t *testing.T, a *app) Config {
+func checkReloaded(t *testing.T, a *app) config.Config {
 	t.Helper()
-	c, err := loadConfig(a.dir)
+	c, err := config.Load(a.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func TestSettingsLanguagesSurviveRestartAfterSettingsOnlySave(t *testing.T) {
 	changeSettingsLanguages(t, a, []string{"ja", "ko"})
 	c := checkReloaded(t, a)
 	if !languages.SamePair(c.Profiles[0].Languages, []string{"ja", "ko"}) || !languages.SamePair(c.Languages, []string{"ja", "ko"}) {
-		t.Fatalf("Settings change lost after reload: memory=%v disk=%v explicit=%v", a.conf.Languages, c.Profiles[0].Languages, a.conf.explicitProfiles)
+		t.Fatalf("Settings change lost after reload: memory=%v disk=%v explicit=%v", a.conf.Languages, c.Profiles[0].Languages, a.conf.ExplicitProfiles)
 	}
 	if !c.AutoPaste {
 		t.Error("auto_paste from the settings page was lost")
@@ -82,7 +83,7 @@ func TestSettingsHotkeySurvivesRestartAfterSettingsOnlySave(t *testing.T) {
 	}
 	c := checkReloaded(t, a)
 	if c.Profiles[0].Hotkey != "Ctrl+Shift+Y" || c.Hotkey != "Ctrl+Shift+Y" {
-		t.Fatalf("Settings change lost after reload: memory=%q disk=%q explicit=%v", a.conf.Hotkey, c.Profiles[0].Hotkey, a.conf.explicitProfiles)
+		t.Fatalf("Settings change lost after reload: memory=%q disk=%q explicit=%v", a.conf.Hotkey, c.Profiles[0].Hotkey, a.conf.ExplicitProfiles)
 	}
 	if c.MaxChars != 2000 {
 		t.Errorf("max_chars from the settings page was lost: %d", c.MaxChars)
@@ -97,13 +98,13 @@ func TestSettingsHotkeySurvivesRestartAfterSettingsOnlySave(t *testing.T) {
 func startOnFallback(t *testing.T) *app {
 	t.Helper()
 	a, _, _ := newTestApp(t)
-	a.conf.ServerFile, a.conf.GPULayers = backendSettings("vulkan")
-	paths, err := resolvePaths(a.dir, a.conf)
+	a.conf.ServerFile, a.conf.GPULayers = config.BackendSettings("vulkan")
+	paths, err := config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	if err := updateConfigFile(a.dir, map[string]any{"server_file": a.conf.ServerFile, "gpu_layers": a.conf.GPULayers}); err != nil {
+	if err := config.UpdateFile(a.dir, map[string]any{"server_file": a.conf.ServerFile, "gpu_layers": a.conf.GPULayers}); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.startServer(); err != nil {
@@ -139,11 +140,11 @@ func engineChecks(t *testing.T, a *app) (page, menu []string) {
 // preferenceOnDisk is the engine config.json names.
 func preferenceOnDisk(t *testing.T, a *app) string {
 	t.Helper()
-	c, err := loadConfig(a.dir)
+	c, err := config.Load(a.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return currentBackend(c.ServerFile)
+	return config.CurrentBackend(c.ServerFile)
 }
 
 func TestCPUFallbackIsShownAsTheRunningEngine(t *testing.T) {
@@ -161,7 +162,7 @@ func TestCPUFallbackIsShownAsTheRunningEngine(t *testing.T) {
 	}
 	// One failed start does not change the preference: the GPU is tried again
 	// at the next start.
-	if currentBackend(a.conf.ServerFile) != "vulkan" || preferenceOnDisk(t, a) != "vulkan" {
+	if config.CurrentBackend(a.conf.ServerFile) != "vulkan" || preferenceOnDisk(t, a) != "vulkan" {
 		t.Fatalf("the configured engine must stay vulkan: memory %q, disk %q", a.conf.ServerFile, preferenceOnDisk(t, a))
 	}
 }
@@ -189,7 +190,7 @@ func TestChoosingRunningFallbackViaSettingsRequest(t *testing.T) {
 		t.Fatal("choosing the engine that already runs must not restart it")
 	}
 
-	if c, _ := loadConfig(a.dir); currentBackend(c.ServerFile) != "cpu" || c.GPULayers != 0 {
+	if c, _ := config.Load(a.dir); config.CurrentBackend(c.ServerFile) != "cpu" || c.GPULayers != 0 {
 		t.Errorf("config.json on disk: %q gpu_layers=%d", c.ServerFile, c.GPULayers)
 	}
 
@@ -220,7 +221,7 @@ func TestChoosingTheConfiguredGPUAfterFallbackRetriesIt(t *testing.T) {
 	if !strings.Contains(tray.lastNote(), "keeping the previous engine") {
 		t.Errorf("the user must be told, got %q", tray.lastNote())
 	}
-	if currentBackend(a.conf.ServerFile) != "vulkan" || preferenceOnDisk(t, a) != "vulkan" {
+	if config.CurrentBackend(a.conf.ServerFile) != "vulkan" || preferenceOnDisk(t, a) != "vulkan" {
 		t.Errorf("the preference must not change: memory %q, disk %q", a.conf.ServerFile, preferenceOnDisk(t, a))
 	}
 
@@ -262,7 +263,7 @@ func TestRetryingTheConfiguredGPUWorksOnceItCanStart(t *testing.T) {
 	if len(page) != 1 || page[0] != "vulkan" || len(menu) != 0 {
 		t.Fatalf("vulkan must be the one checked: page %v, menu %v", page, menu)
 	}
-	if c, _ := loadConfig(a.dir); currentBackend(c.ServerFile) != "vulkan" || c.GPULayers != 99 {
+	if c, _ := config.Load(a.dir); config.CurrentBackend(c.ServerFile) != "vulkan" || c.GPULayers != 99 {
 		t.Errorf("config.json: %q gpu_layers=%d", c.ServerFile, c.GPULayers)
 	}
 }
@@ -274,10 +275,10 @@ func TestChoosingTheRunningFallbackKeepsItWithoutRestart(t *testing.T) {
 	if a.sup.PID() != pid || !healthy(a) {
 		t.Fatal("choosing the engine that already runs must not restart it")
 	}
-	if currentBackend(a.conf.ServerFile) != "cpu" || a.conf.GPULayers != 0 || a.onFallback() {
+	if config.CurrentBackend(a.conf.ServerFile) != "cpu" || a.conf.GPULayers != 0 || a.onFallback() {
 		t.Fatalf("the running CPU must become the configured engine: %q gpu_layers=%d", a.conf.ServerFile, a.conf.GPULayers)
 	}
-	if c, _ := loadConfig(a.dir); currentBackend(c.ServerFile) != "cpu" || c.GPULayers != 0 {
+	if c, _ := config.Load(a.dir); config.CurrentBackend(c.ServerFile) != "cpu" || c.GPULayers != 0 {
 		t.Errorf("config.json: %q gpu_layers=%d", c.ServerFile, c.GPULayers)
 	}
 	// Choosing it again changes nothing.
@@ -302,8 +303,8 @@ func TestSwitchModelOnCPUFallbackUsesFallbackAndKeepsFallbackState(t *testing.T)
 	if !healthy(a) || a.sup.PID() == oldPid {
 		t.Fatal("server must be restarted with the new model")
 	}
-	if a.sup.BinaryPath() != a.paths.fallback {
-		t.Fatalf("server should be running fallback %q, got %q", a.paths.fallback, a.sup.BinaryPath())
+	if a.sup.BinaryPath() != a.paths.Fallback {
+		t.Fatalf("server should be running fallback %q, got %q", a.paths.Fallback, a.sup.BinaryPath())
 	}
 	if !a.onFallback() {
 		t.Fatal("a.onFallback() must still be true after switching models on CPU fallback")
@@ -311,17 +312,17 @@ func TestSwitchModelOnCPUFallbackUsesFallbackAndKeepsFallbackState(t *testing.T)
 	if got := a.runningBackend(); got != "cpu" {
 		t.Fatalf("running backend must still be cpu, got %q", got)
 	}
-	if currentBackend(a.conf.ServerFile) != "vulkan" {
+	if config.CurrentBackend(a.conf.ServerFile) != "vulkan" {
 		t.Fatalf("preferred engine in config must stay vulkan, got %q", a.conf.ServerFile)
 	}
 	if a.conf.ModelFile != "models/b.gguf" {
 		t.Fatalf("model file should be updated to models/b.gguf, got %q", a.conf.ModelFile)
 	}
-	c, err := loadConfig(a.dir)
+	c, err := config.Load(a.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.ModelFile != "models/b.gguf" || currentBackend(c.ServerFile) != "vulkan" {
+	if c.ModelFile != "models/b.gguf" || config.CurrentBackend(c.ServerFile) != "vulkan" {
 		t.Errorf("saved config: model=%q server=%q", c.ModelFile, c.ServerFile)
 	}
 }
@@ -339,8 +340,8 @@ func TestSwitchModelOnCPUFallbackFailureRestoresFallbackWithoutTouchingGPU(t *te
 	if !healthy(a) {
 		t.Fatal("server must be restored and healthy")
 	}
-	if a.sup.BinaryPath() != a.paths.fallback {
-		t.Fatalf("server should be restored to fallback %q, got %q", a.paths.fallback, a.sup.BinaryPath())
+	if a.sup.BinaryPath() != a.paths.Fallback {
+		t.Fatalf("server should be restored to fallback %q, got %q", a.paths.Fallback, a.sup.BinaryPath())
 	}
 	if !a.onFallback() {
 		t.Fatal("a.onFallback() must still be true after failed model switch on CPU fallback")

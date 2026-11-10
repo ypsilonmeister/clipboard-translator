@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models/modeltest"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
@@ -122,7 +123,7 @@ func TestCheckModelSwitch(t *testing.T) {
 	}
 	a.dl.SetState(models.DownloadState{})
 	// No custom template: refused with a pointer to its configuration.
-	os.Remove(a.paths.template)
+	os.Remove(a.paths.Template)
 	if _, err := a.checkModelSwitch("a"); err == nil || !strings.Contains(err.Error(), "template") {
 		t.Errorf("template: %v", err)
 	}
@@ -138,8 +139,8 @@ func TestSwitchModelWorksAndIsSaved(t *testing.T) {
 	if err := a.switchModel(models.Catalog[1]); err != nil {
 		t.Fatal(err)
 	}
-	if a.conf.ModelFile != "models/b.gguf" || !strings.HasSuffix(filepath.ToSlash(a.sup.Model), "models/b.gguf") || !strings.HasSuffix(filepath.ToSlash(a.paths.model), "models/b.gguf") {
-		t.Fatalf("not switched: conf=%q sup=%q paths=%q", a.conf.ModelFile, a.sup.Model, a.paths.model)
+	if a.conf.ModelFile != "models/b.gguf" || !strings.HasSuffix(filepath.ToSlash(a.sup.Model), "models/b.gguf") || !strings.HasSuffix(filepath.ToSlash(a.paths.Model), "models/b.gguf") {
+		t.Fatalf("not switched: conf=%q sup=%q paths=%q", a.conf.ModelFile, a.sup.Model, a.paths.Model)
 	}
 	if !healthy(a) {
 		t.Error("the server must be running with the new model")
@@ -350,7 +351,7 @@ func TestPageSwitchesEngine(t *testing.T) {
 		st := decodeAPI(t, b).State
 		return st != nil && st.Busy == "" && st.Notice != ""
 	})
-	if currentBackend(a.conf.ServerFile) != "cuda" || !healthy(a) {
+	if config.CurrentBackend(a.conf.ServerFile) != "cuda" || !healthy(a) {
 		t.Errorf("the working engine must stay: %s", a.conf.ServerFile)
 	}
 }
@@ -399,9 +400,9 @@ func TestPageRetriesMissingTemplate(t *testing.T) {
 			f := newSettingsFixture(t)
 			a := f.a
 			a.conf.TemplateFile = "models/chat_template.jinja"
-			a.paths.template = filepath.Join(a.dir, "models", "chat_template.jinja")
+			a.paths.Template = filepath.Join(a.dir, "models", "chat_template.jinja")
 			// Even a damaged default template must offer recovery.
-			if err := os.WriteFile(a.paths.template, []byte("broken"), 0o644); err != nil {
+			if err := os.WriteFile(a.paths.Template, []byte("broken"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			a.dl = models.NewManager(a.dir, version)
@@ -493,7 +494,7 @@ func TestPageSavesMaxChars(t *testing.T) {
 	if resp.StatusCode != 200 || f.a.conf.MaxChars != 250 || decodeAPI(t, body).State.MaxChars != 250 {
 		t.Fatalf("save: %d %s (conf %d)", resp.StatusCode, body, f.a.conf.MaxChars)
 	}
-	if c, err := loadConfig(f.a.dir); err != nil || c.MaxChars != 250 {
+	if c, err := config.Load(f.a.dir); err != nil || c.MaxChars != 250 {
 		t.Errorf("saved config: %d %v", c.MaxChars, err)
 	}
 	// Only max_chars changed: the hotkeys were not registered again.
@@ -516,7 +517,7 @@ func TestPageSavesMaxChars(t *testing.T) {
 	if err := loadConfig2(t, `{"max_chars": 0}`); err == nil || !strings.Contains(err.Error(), "max_chars") {
 		t.Errorf("config.json: %v", err)
 	}
-	if validateMaxChars(1) != nil || validateMaxChars(100000) != nil || validateMaxChars(100001) == nil {
+	if config.ValidateMaxChars(1) != nil || config.ValidateMaxChars(100000) != nil || config.ValidateMaxChars(100001) == nil {
 		t.Error("validateMaxChars")
 	}
 }
@@ -720,7 +721,7 @@ func TestModelDeleteRefusesActiveModel(t *testing.T) {
 			s := f.server(t)
 			putModel(t, f.a.dir, e)
 			f.a.conf.ModelFile = tc.modelFile
-			f.a.paths, _ = resolvePaths(f.a.dir, f.a.conf)
+			f.a.paths, _ = config.ResolvePaths(f.a.dir, f.a.conf)
 
 			_, stateBytes := s.do(t, "GET", "/api/state", nil, nil)
 			st := decodeAPI(t, stateBytes).State
@@ -772,7 +773,7 @@ func TestModelDeleteRefusesActiveModel(t *testing.T) {
 		defer os.Remove(linkPath)
 
 		f.a.conf.ModelFile = "models/custom-alias.gguf"
-		f.a.paths, _ = resolvePaths(f.a.dir, f.a.conf)
+		f.a.paths, _ = config.ResolvePaths(f.a.dir, f.a.conf)
 
 		_, stateBytes := s.do(t, "GET", "/api/state", nil, nil)
 		st := decodeAPI(t, stateBytes).State
@@ -943,7 +944,7 @@ func TestTranslationModelMenuInstalledCounts(t *testing.T) {
 			}
 			if n > 0 {
 				a.conf.ModelFile = "models/" + models.Catalog[0].File
-				paths, err := resolvePaths(a.dir, a.conf)
+				paths, err := config.ResolvePaths(a.dir, a.conf)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1035,12 +1036,12 @@ func TestTranslationModelMenuDisabledWhileBusy(t *testing.T) {
 	putModel(t, a.dir, models.Catalog[0])
 	putModel(t, a.dir, models.Catalog[1])
 	a.conf.ModelFile = "models/" + models.Catalog[1].File
-	paths, err := resolvePaths(a.dir, a.conf)
+	paths, err := config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.Model = paths.model
+	a.sup.Model = paths.Model
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
@@ -1096,12 +1097,12 @@ func TestTranslationModelMenuSwitching(t *testing.T) {
 	putModel(t, a.dir, models.Catalog[0])
 	putModel(t, a.dir, models.Catalog[1])
 	a.conf.ModelFile = "models/" + models.Catalog[1].File
-	paths, err := resolvePaths(a.dir, a.conf)
+	paths, err := config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.Model = paths.model
+	a.sup.Model = paths.Model
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
@@ -1121,8 +1122,8 @@ func TestTranslationModelMenuSwitching(t *testing.T) {
 	if a.conf.ModelFile != wantModelRel {
 		t.Fatalf("conf.ModelFile = %q, want %q", a.conf.ModelFile, wantModelRel)
 	}
-	if !strings.HasSuffix(filepath.ToSlash(a.paths.model), wantModelRel) {
-		t.Fatalf("paths.model = %q, want suffix %q", a.paths.model, wantModelRel)
+	if !strings.HasSuffix(filepath.ToSlash(a.paths.Model), wantModelRel) {
+		t.Fatalf("paths.model = %q, want suffix %q", a.paths.Model, wantModelRel)
 	}
 	if !strings.HasSuffix(filepath.ToSlash(a.sup.Model), wantModelRel) {
 		t.Fatalf("sup.Model = %q, want suffix %q", a.sup.Model, wantModelRel)
@@ -1168,12 +1169,12 @@ func TestTranslationModelMenuSelectActiveDoesNothing(t *testing.T) {
 	putModel(t, a.dir, models.Catalog[0])
 	putModel(t, a.dir, models.Catalog[1])
 	a.conf.ModelFile = "models/" + models.Catalog[0].File
-	paths, err := resolvePaths(a.dir, a.conf)
+	paths, err := config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.Model = paths.model
+	a.sup.Model = paths.Model
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
@@ -1201,12 +1202,12 @@ func TestTranslationModelMenuFailureKeepsOldModel(t *testing.T) {
 		putModel(t, a.dir, models.Catalog[0])
 		putModel(t, a.dir, models.Catalog[1])
 		a.conf.ModelFile = "models/" + models.Catalog[1].File
-		paths, err := resolvePaths(a.dir, a.conf)
+		paths, err := config.ResolvePaths(a.dir, a.conf)
 		if err != nil {
 			t.Fatal(err)
 		}
 		a.paths = paths
-		a.sup.Model = paths.model
+		a.sup.Model = paths.Model
 		if err := a.startServer(); err != nil {
 			t.Fatal(err)
 		}
@@ -1242,12 +1243,12 @@ func TestTranslationModelMenuFailureKeepsOldModel(t *testing.T) {
 		putModel(t, a.dir, models.Catalog[0])
 		putModel(t, a.dir, models.Catalog[1])
 		a.conf.ModelFile = "models/" + models.Catalog[0].File
-		paths, err := resolvePaths(a.dir, a.conf)
+		paths, err := config.ResolvePaths(a.dir, a.conf)
 		if err != nil {
 			t.Fatal(err)
 		}
 		a.paths = paths
-		a.sup.Model = paths.model
+		a.sup.Model = paths.Model
 		if err := a.startServer(); err != nil {
 			t.Fatal(err)
 		}
@@ -1275,12 +1276,12 @@ func TestTranslationModelMenuUnloadedState(t *testing.T) {
 	putModel(t, a.dir, models.Catalog[0])
 	putModel(t, a.dir, models.Catalog[1])
 	a.conf.ModelFile = "models/" + models.Catalog[1].File
-	paths, err := resolvePaths(a.dir, a.conf)
+	paths, err := config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.Model = paths.model
+	a.sup.Model = paths.Model
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
@@ -193,7 +194,7 @@ func (a *app) copyFromHistory(i int) {
 
 // saveConfig writes changed keys to config.json and tells the user if that fails.
 func (a *app) saveConfig(set map[string]any) {
-	if err := updateConfigFile(a.dir, set); err != nil {
+	if err := config.UpdateFile(a.dir, set); err != nil {
 		log.Printf("could not save config.json: %v", err)
 		a.tray.Notify("Clipboard Translator", "The change works now but could not be saved to config.json: "+err.Error(), true)
 	}
@@ -221,7 +222,7 @@ func (noHotkey) Close() error           { return nil }
 func (a *app) switchBackend(name string) {
 	defer a.beginServerWork()()
 	if name == a.runningBackend() {
-		if name != currentBackend(a.conf.ServerFile) {
+		if name != config.CurrentBackend(a.conf.ServerFile) {
 			a.keepRunningBackend(name)
 		}
 		return
@@ -231,8 +232,8 @@ func (a *app) switchBackend(name string) {
 	// again just to see it fail.
 	wasFallback := a.onFallback()
 	newConf := a.conf
-	newConf.ServerFile, newConf.GPULayers = backendSettings(name)
-	paths, err := resolvePaths(a.dir, newConf)
+	newConf.ServerFile, newConf.GPULayers = config.BackendSettings(name)
+	paths, err := config.ResolvePaths(a.dir, newConf)
 	if err != nil {
 		a.tray.Notify("Clipboard Translator", "Could not switch the engine: "+err.Error(), true)
 		return
@@ -244,7 +245,7 @@ func (a *app) switchBackend(name string) {
 	a.sup.Stop()
 	// Start the chosen build itself, without the CPU fallback of startServer:
 	// silently running on the CPU would misrepresent the active engine in Settings.
-	err = a.sup.Start(paths.server, newConf.GPULayers, "switching engine")
+	err = a.sup.Start(paths.Server, newConf.GPULayers, "switching engine")
 	if err == nil {
 		a.conf, a.paths = newConf, paths
 		a.activeBackend = name
@@ -285,8 +286,8 @@ func (a *app) switchBackend(name string) {
 // Nothing is restarted.
 func (a *app) keepRunningBackend(name string) {
 	conf := a.conf
-	conf.ServerFile, conf.GPULayers = backendSettings(name)
-	paths, err := resolvePaths(a.dir, conf)
+	conf.ServerFile, conf.GPULayers = config.BackendSettings(name)
+	paths, err := config.ResolvePaths(a.dir, conf)
 	if err != nil {
 		a.tray.Notify("Clipboard Translator", "Could not switch the engine: "+err.Error(), true)
 		return

@@ -6,12 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
 
 func TestChatTemplateFreshInstall(t *testing.T) {
 	// 1. Default config points to models/chat_template.2b.jinja
-	conf := defaultConfig()
+	conf := config.Default()
 	if conf.TemplateFile != "models/chat_template.2b.jinja" {
 		t.Fatalf("default template_file = %q, want models/chat_template.2b.jinja", conf.TemplateFile)
 	}
@@ -23,17 +24,17 @@ func TestChatTemplateFreshInstall(t *testing.T) {
 	a.conf.TemplateFile = "models/" + m2b.TemplateFile()
 
 	// Before template is present: missingFor must report it and startServer must fail.
-	paths, err := resolvePaths(a.dir, a.conf)
+	paths, err := config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	missing := paths.missingFor(a.conf, a.dir)
+	missing := paths.MissingFor(a.conf, a.dir)
 	if len(missing) != 1 || !strings.Contains(missing[0], "chat_template.2b.jinja") {
 		t.Fatalf("expected template missing, got: %v", missing)
 	}
 	a.paths = paths
-	a.sup.Model = paths.model
-	a.sup.Template = paths.template
+	a.sup.Model = paths.Model
+	a.sup.Template = paths.Template
 	if err := a.startServer(); err == nil {
 		t.Fatal("startServer must fail when template is missing")
 	}
@@ -51,15 +52,15 @@ func TestChatTemplateFreshInstall(t *testing.T) {
 	if !m2b.TemplateInstalled(a.dir) {
 		t.Fatal("templateInstalled must be true after writing pinned template")
 	}
-	paths, err = resolvePaths(a.dir, a.conf)
+	paths, err = config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.Model = paths.model
-	a.sup.Template = paths.template
+	a.sup.Model = paths.Model
+	a.sup.Template = paths.Template
 
-	missing = paths.missingFor(a.conf, a.dir)
+	missing = paths.MissingFor(a.conf, a.dir)
 	if len(missing) != 0 {
 		t.Fatalf("expected no missing files, got: %v", missing)
 	}
@@ -102,19 +103,19 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 	if m2b.TemplateInstalled(a.dir) {
 		t.Fatal("templateInstalled must be false for old 2B pin")
 	}
-	paths, err := resolvePaths(a.dir, a.conf)
+	paths, err := config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	missing := paths.missingFor(a.conf, a.dir)
+	missing := paths.MissingFor(a.conf, a.dir)
 	if len(missing) == 0 {
 		t.Fatal("missingFor must detect stale template as missing")
 	}
 
 	// 2. startServer must refuse to start with stale template
 	a.paths = paths
-	a.sup.Model = paths.model
-	a.sup.Template = paths.template
+	a.sup.Model = paths.Model
+	a.sup.Template = paths.Template
 	if err := a.startServer(); err == nil || !strings.Contains(err.Error(), "does not match expected SHA-256") {
 		t.Fatalf("startServer must refuse stale template: %v", err)
 	}
@@ -133,15 +134,15 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 		t.Fatal("templateInstalled must be true after new template is placed")
 	}
 	// resolvePaths automatically picks the verified primary template even if conf has legacy path
-	paths, err = resolvePaths(a.dir, a.conf)
+	paths, err = config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if paths.template != filepath.Join(a.dir, "models", m2b.TemplateFile()) {
-		t.Fatalf("resolvePaths must pick %s, got %s", m2b.TemplateFile(), paths.template)
+	if paths.Template != filepath.Join(a.dir, "models", m2b.TemplateFile()) {
+		t.Fatalf("resolvePaths must pick %s, got %s", m2b.TemplateFile(), paths.Template)
 	}
 	a.paths = paths
-	a.sup.Template = paths.template
+	a.sup.Template = paths.Template
 	if err := a.startServer(); err != nil {
 		t.Fatalf("startServer must succeed with new template: %v", err)
 	}
@@ -156,15 +157,15 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 	if !m2b.TemplateInstalled(a.dir) {
 		t.Fatal("templateInstalled must be true when legacy template has matching hash")
 	}
-	paths, err = resolvePaths(a.dir, a.conf)
+	paths, err = config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if paths.template != legacyPath {
-		t.Fatalf("resolvePaths must fall back to matching legacy template %s, got %s", legacyPath, paths.template)
+	if paths.Template != legacyPath {
+		t.Fatalf("resolvePaths must fall back to matching legacy template %s, got %s", legacyPath, paths.Template)
 	}
 	a.paths = paths
-	a.sup.Template = paths.template
+	a.sup.Template = paths.Template
 	if err := a.startServer(); err != nil {
 		t.Fatalf("startServer must succeed with matching legacy template: %v", err)
 	}
@@ -203,13 +204,13 @@ func TestChatTemplateModelSwitch(t *testing.T) {
 	// Start on 2B
 	a.conf.ModelFile = "models/" + m2b.File
 	a.conf.TemplateFile = "models/" + m2b.TemplateFile()
-	paths, err := resolvePaths(a.dir, a.conf)
+	paths, err := config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.Model = paths.model
-	a.sup.Template = paths.template
+	a.sup.Model = paths.Model
+	a.sup.Template = paths.Template
 	if err := a.startServer(); err != nil {
 		t.Fatalf("startServer on 2B failed: %v", err)
 	}
@@ -295,10 +296,10 @@ func TestChatTemplateSwitchRefusesMismatchedTemplate(t *testing.T) {
 
 	a.conf.ModelFile = "models/" + m2b.File
 	a.conf.TemplateFile = "models/" + m2b.TemplateFile()
-	paths, _ := resolvePaths(a.dir, a.conf)
+	paths, _ := config.ResolvePaths(a.dir, a.conf)
 	a.paths = paths
-	a.sup.Model = paths.model
-	a.sup.Template = paths.template
+	a.sup.Model = paths.Model
+	a.sup.Template = paths.Template
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +316,7 @@ func TestChatTemplateSwitchRefusesMismatchedTemplate(t *testing.T) {
 	if a.conf.ModelFile != "models/"+m2b.File {
 		t.Errorf("model changed after failed switch: %s", a.conf.ModelFile)
 	}
-	if a.sup.Template != paths.template {
+	if a.sup.Template != paths.Template {
 		t.Errorf("template changed after failed switch: %s", a.sup.Template)
 	}
 }
@@ -344,13 +345,13 @@ func TestChatTemplateCustomTemplatePreserved(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(a.dir, "config.json"), []byte(`{"template_file": "`+customRel+`"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	paths, err := resolvePaths(a.dir, a.conf)
+	paths, err := config.ResolvePaths(a.dir, a.conf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.Model = paths.model
-	a.sup.Template = paths.template
+	a.sup.Model = paths.Model
+	a.sup.Template = paths.Template
 
 	// Starts without SHA-256 check
 	if err := a.startServer(); err != nil {

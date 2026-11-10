@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
@@ -31,13 +32,13 @@ func (a *app) isModelActive(e models.Entry) bool {
 	catalogPath := filepath.Clean(e.Path(a.dir))
 	catInfo, catErr := os.Stat(catalogPath)
 
-	activePaths := []string{a.paths.model}
+	activePaths := []string{a.paths.Model}
 	if a.sup != nil && a.sup.Running() && a.sup.Model != "" {
 		activePaths = append(activePaths, a.sup.Model)
 	}
 	// If a.paths.model is not resolved yet, resolve from a.conf.ModelFile.
-	if a.paths.model == "" && a.conf.ModelFile != "" {
-		if resolved, err := pathWithin(a.dir, a.conf.ModelFile); err == nil {
+	if a.paths.Model == "" && a.conf.ModelFile != "" {
+		if resolved, err := config.PathWithin(a.dir, a.conf.ModelFile); err == nil {
 			activePaths = append(activePaths, resolved)
 		}
 	}
@@ -103,10 +104,10 @@ func (a *app) fillModelsAndEngines(st *settingsState) {
 		st.CustomModel = a.conf.ModelFile
 	}
 	cur := a.runningBackend() // after a CPU fallback, not the configured one
-	cfg := currentBackend(a.conf.ServerFile)
+	cfg := config.CurrentBackend(a.conf.ServerFile)
 	st.ConfiguredEngine = cfg
 	st.RunningEngine = cur
-	for _, b := range availableBackends(a.dir) {
+	for _, b := range config.AvailableBackends(a.dir) {
 		st.Engines = append(st.Engines, engineState{Name: b, Label: backendLabel(b), Active: b == cur})
 	}
 	if d.Key != "" {
@@ -167,7 +168,7 @@ func (a *app) checkModelSwitch(key string) (models.Entry, error) {
 		return e, fmt.Errorf("%s is not installed; download it first", e.Name)
 	}
 	if models.IsCustomTemplate(a.conf.TemplateFile) {
-		if err := checkFile(a.paths.template); err != nil {
+		if err := config.CheckFile(a.paths.Template); err != nil {
 			return e, fmt.Errorf("the configured chat template is missing (%v); check template_file in config.json", err)
 		}
 	} else if !e.TemplateInstalled(a.dir) {
@@ -197,13 +198,13 @@ func (a *app) switchModel(e models.Entry) error {
 		}
 		saveMap["template_file"] = newConf.TemplateFile
 	}
-	paths, err := resolvePaths(a.dir, newConf)
+	paths, err := config.ResolvePaths(a.dir, newConf)
 	if err != nil {
 		return err
 	}
 	if !models.IsCustomTemplate(newConf.TemplateFile) && e.TemplateSha256 != "" {
-		if !models.VerifyFileSha256(paths.template, e.TemplateSha256) {
-			return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(paths.template), e.Name)
+		if !models.VerifyFileSha256(paths.Template, e.TemplateSha256) {
+			return fmt.Errorf("chat template %s does not match expected SHA-256 for %s", filepath.Base(paths.Template), e.Name)
 		}
 	}
 	log.Printf("switching model to %s", e.Name)
@@ -211,13 +212,13 @@ func (a *app) switchModel(e models.Entry) error {
 	a.modelUnloaded = false
 	a.updateReadyTip()
 	a.sup.Stop()
-	a.sup.Model = paths.model
-	a.sup.Template = paths.template
-	bin := a.paths.server
+	a.sup.Model = paths.Model
+	a.sup.Template = paths.Template
+	bin := a.paths.Server
 	layers := a.conf.GPULayers
 	label := "loading " + e.Name
 	if wasFallback {
-		bin = a.paths.fallback
+		bin = a.paths.Fallback
 		layers = 0
 		label = "loading " + e.Name + " (CPU)"
 	}
@@ -261,7 +262,7 @@ func (a *app) switchModel(e models.Entry) error {
 // startEngineSwitch handles "use this engine" from the page.
 func (a *app) startEngineSwitch(req settingsRequest) {
 	found := false
-	for _, b := range availableBackends(a.dir) {
+	for _, b := range config.AvailableBackends(a.dir) {
 		found = found || b == req.arg
 	}
 	if !found {
@@ -331,7 +332,7 @@ func (a *app) handleDeleteModelRequest(req settingsRequest) {
 		targetRel += ".partial"
 	}
 
-	targetPath, err := pathWithin(a.dir, targetRel)
+	targetPath, err := config.PathWithin(a.dir, targetRel)
 	if err != nil {
 		req.reply <- settingsReply{state: a.settingsState(), err: err}
 		return

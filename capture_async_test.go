@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
@@ -108,8 +109,8 @@ func TestCaptureDoneOnFirstStepTranslatesAtOnce(t *testing.T) {
 // again and never translated.
 func TestNewHotkeyDropsPendingCapture(t *testing.T) {
 	a := profilesApp(t,
-		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
-		Profile{Hotkey: "Ctrl+Alt+K", Languages: []string{"ja", "en"}, Input: InputClipboard})
+		config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
+		config.Profile{Hotkey: "Ctrl+Alt+K", Languages: []string{"ja", "en"}, Input: config.InputClipboard})
 	a.endpoint = translateStub(t, "こんにちは").URL
 	a.foreground = func() uintptr { return 1 }
 	a.cb = &testClipboard{text: "Copied by hand"}

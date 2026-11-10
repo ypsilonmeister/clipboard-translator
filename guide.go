@@ -35,7 +35,7 @@ func (a *app) guideSteps() []string {
 		"Paste with " + platform.PasteShortcut() + " when the tray says the translation is ready.",
 	}
 	if len(a.conf.Profiles) == 1 {
-		steps[1] += " It translates " + a.conf.Profiles[0].label() + "."
+		steps[1] += " It translates " + a.conf.Profiles[0].Label() + "."
 	}
 	return steps
 }
