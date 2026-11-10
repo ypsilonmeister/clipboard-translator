@@ -848,12 +848,13 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 	a.updateTranslationStatus()
 	outputMode := profile.OutputMode()
 	maxTokens := a.conf.MaxTokens
+	budget := chunkBudget(a.conf.MaxChars) // configuration belongs to the UI thread
 	promptText := source
 	if profile.CleanupNewlinesMode() == config.CleanupNewlinesAuto {
 		promptText = textstruct.CleanSpuriousNewlines(source, direction.Source)
 	}
 	go func() {
-		translated, err := a.translatePrompt(ctx, g, key, promptText, direction, maxTokens)
+		translated, err := a.translatePrompt(ctx, g, key, promptText, direction, maxTokens, budget)
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
 			direction: direction, window: win, fromSelection: fromSelection, output: outputMode,

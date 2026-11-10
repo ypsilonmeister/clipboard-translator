@@ -407,7 +407,7 @@ func TestFormatBilingual(t *testing.T) {
 			name:       "three matching paragraphs with CRLF",
 			source:     "P1\r\n\r\nP2\r\n\r\nP3",
 			translated: "T1\n\nT2\n\nT3",
-			want:       "P1\nT1\n\nP2\nT2\n\nP3\nT3",
+			want:       "P1\nT1\r\n\r\nP2\nT2\r\n\r\nP3\nT3",
 		},
 		{
 			name:       "mismatched paragraph count falls back to plain join",
@@ -423,5 +423,13 @@ func TestFormatBilingual(t *testing.T) {
 				t.Errorf("FormatBilingual(%q, %q) = %q, want %q", tc.source, tc.translated, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFormatBilingualPreservesOriginalWhitespace(t *testing.T) {
+	source := "\r\n\r\n  First paragraph.  \r\n \r\n    Second paragraph.\t"
+	want := "\r\n\r\n  First paragraph.  \n訳一\r\n \r\n    Second paragraph.\t\n訳二"
+	if got := FormatBilingual(source, "訳一\n\n訳二"); got != want {
+		t.Fatalf("raw source whitespace changed: got %q want %q", got, want)
 	}
 }

@@ -29,7 +29,9 @@ type chunkTask struct {
 }
 
 type paraStructure struct {
-	subCount int
+	subCount   int
+	lineBreaks bool
+	separators []string
 }
 
 type translationProgress struct {
@@ -77,8 +79,15 @@ func planChunks(promptText string, budget int) ([]chunkTask, []paraStructure) {
 			})
 			structure[pIdx] = paraStructure{subCount: 1}
 		} else {
-			// Oversized paragraph: split into sentences or code lines
-			subChunks := textstruct.ChunkText(para, budget)
+			// Preserve explicit line structure; cleanup has already removed only
+			// the line breaks the user opted to treat as spurious.
+			lineBreaks := strings.Contains(para, "\n")
+			var subChunks []string
+			if lineBreaks {
+				subChunks = textstruct.ChunkLines(para, budget)
+			} else {
+				subChunks = textstruct.ChunkText(para, budget)
+			}
 			if len(subChunks) == 0 {
 				subChunks = []string{para}
 			}
@@ -89,7 +98,22 @@ func planChunks(promptText string, budget int) ([]chunkTask, []paraStructure) {
 					text:      sub,
 				})
 			}
-			structure[pIdx] = paraStructure{subCount: len(subChunks)}
+			var separators []string
+			if lineBreaks {
+				cursor := 0
+				for i, sub := range subChunks {
+					cursor += len(sub)
+					if i+1 < len(subChunks) {
+						sep := ""
+						if cursor < len(para) && para[cursor] == '\n' {
+							sep = "\n"
+							cursor++
+						}
+						separators = append(separators, sep)
+					}
+				}
+			}
+			structure[pIdx] = paraStructure{subCount: len(subChunks), lineBreaks: lineBreaks, separators: separators}
 		}
 	}
 
@@ -98,10 +122,19 @@ func planChunks(promptText string, budget int) ([]chunkTask, []paraStructure) {
 
 // recombineTranslatedParagraphs reassembles translated subchunks into paragraphs and
 // joins paragraphs with double newlines.
-func recombineTranslatedParagraphs(results [][]string, targetLang string) string {
+func recombineTranslatedParagraphs(results [][]string, structure []paraStructure) string {
 	paras := make([]string, len(results))
 	for i, subs := range results {
-		if len(subs) == 1 {
+		if structure[i].lineBreaks {
+			var out strings.Builder
+			for j, sub := range subs {
+				if j > 0 {
+					out.WriteString(structure[i].separators[j-1])
+				}
+				out.WriteString(sub)
+			}
+			paras[i] = out.String()
+		} else if len(subs) == 1 {
 			paras[i] = strings.TrimSpace(subs[0])
 		} else {
 			paras[i] = textstruct.JoinSentences(subs)
@@ -112,8 +145,7 @@ func recombineTranslatedParagraphs(results [][]string, targetLang string) string
 
 // translatePrompt executes sequential chunk translations through llama-server,
 // reporting progress to the UI thread, and applying all-or-nothing rollback on error.
-func (a *app) translatePrompt(ctx context.Context, g uint64, key string, promptText string, direction languages.Direction, maxTokens int) (string, error) {
-	budget := chunkBudget(a.conf.MaxChars)
+func (a *app) translatePrompt(ctx context.Context, g uint64, key string, promptText string, direction languages.Direction, maxTokens, budget int) (string, error) {
 	tasks, structure := planChunks(promptText, budget)
 	if len(tasks) == 0 {
 		return "", nil
@@ -147,7 +179,7 @@ func (a *app) translatePrompt(ctx context.Context, g uint64, key string, promptT
 		results[task.paraIndex][task.subIndex] = translated
 	}
 
-	return recombineTranslatedParagraphs(results, direction.Target), nil
+	return recombineTranslatedParagraphs(results, structure), nil
 }
 
 func (a *app) reportProgress(p translationProgress) {
