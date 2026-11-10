@@ -16,7 +16,7 @@ character limits — so you can use it for the text you would not paste into an 
 translator, like work email, code comments or internal documents.
 
 Choose the model size in Settings (0.8B / 2B / 8B). There is nothing else to set up:
-no Ollama, and on Windows not even Python (Linux/macOS use Python only for setup).
+no Ollama, no Python — first-run setup runs in the app itself.
 
 **Built with PLaMo.** The translation model is PLaMo by Preferred Networks and is
 used under the [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-ja);
@@ -151,8 +151,7 @@ On Linux and macOS the option is `--model 0.8b|2b|8b` (for example
    xattr -dr com.apple.quarantine "/Applications/Clipboard Translator.app"
    ```
 
-5. **Install Python 3.12+** if you do not have it (`brew install python`); first-run setup needs it.
-6. **Start the app** and accept the download prompt (model over 1 GB). Then grant access in
+5. **Start the app** and accept the download prompt (model over 1 GB). Then grant access in
    *System Settings > Privacy & Security > Accessibility* so it can copy the selection.
 
 The details below explain each part.
@@ -166,8 +165,8 @@ These are **ad-hoc signed development builds**, without Developer ID signing or
 notarization. Gatekeeper acceptance and public-distribution signing are not verified.
 Accessibility access may need to be granted again after replacing a development build.
 
-First-run setup requires Python with `tarfile.data_filter` (Python 3.12+, or a security-patched
-3.10/3.11; for example install Python with Homebrew). Start the app and accept the explicit
+First-run setup runs in the app itself (its `setup` subcommand); no Python is needed.
+Start the app and accept the explicit
 download prompt. A responsive setup window offers Cancel; download details go to `setup.log`.
 A fixed official llama.cpp macOS archive is verified against its pinned SHA-256 and supports
 both CPU and Metal. Metal is selected by default; CPU is available as a fallback and in Settings (Translation engine card).
@@ -244,7 +243,7 @@ have not been verified. Only the GNOME 50.1 test VM has been measured so far.
 On Ubuntu 24.04, install the runtime dependencies:
 
 ```bash
-sudo apt-get install libgtk-3-0t64 libxtst6 python3 xdg-utils libnotify-bin
+sudo apt-get install libgtk-3-0t64 libxtst6 xdg-utils libnotify-bin
 ```
 
 Extract the Linux `tar.gz` from Releases into a writable, dedicated directory in your home
@@ -258,8 +257,8 @@ bash setup.sh                  # downloads the model and official CPU runtime
 bash setup.sh --backend vulkan
 ```
 
-Setup requires Python with `tarfile.data_filter` (Python 3.12+, or a security-patched
-3.10/3.11). Runtime archives are checked against the SHA-256 published by GitHub.
+Setup runs in the app binary (`setup.sh` forwards to its `setup` subcommand); no Python
+is needed. Runtime archives are checked against their pinned SHA-256.
 CPU is the default; Vulkan falls back to the installed CPU runtime if it cannot start.
 A fresh download of the model and the chat template is checked against pinned SHA-256 values, as on Windows; the size check only guards a file that is already on disk.
 CPU and Vulkan runtime files retain their upstream layout and shared-library links.

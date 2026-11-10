@@ -38,13 +38,13 @@ go build -trimpath -buildvcs=false -ldflags "-H=windowsgui -s -w" -o ClipboardTr
 ```
 
 Linux: install `libgtk-3-dev libx11-dev libxtst-dev pkg-config`, then run
-`go test ./...` and `bash tools/package-linux.sh dev`. `setup.sh` needs Python
-with `tarfile.data_filter`. Native integration tests run on a disposable Xvfb
+`go test ./...` and `bash tools/package-linux.sh dev`. First-run setup needs
+no Python: the binary's `setup` subcommand does the work and the setup
+scripts are thin wrappers around it. Native integration tests run on a disposable Xvfb
 display by default, not on a desktop someone is working at:
 
 ```bash
 env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 CT_TEST_X11=1 xvfb-run -a go test -tags x11test -run '^TestX11' -timeout 60s ./internal/platform
-python3 tools/test_linux_setup.py
 ```
 
 `GDK_BACKEND=x11` matters on a machine that also runs a Wayland session (Ubuntu
@@ -79,8 +79,8 @@ macOS needs a native macOS runner with Xcode Command Line Tools. Build with
 `internal/platform/desktop_darwin.go` / `native_darwin.m` own AppKit/Carbon and must stay on the
 process main thread. `CT_TEST_MACOS=1 go test -tags mactest -run '^TestMacNative' -v ./internal/platform`
 executes native smoke checks through TestMain on that thread (CI only, no key
-injection or Accessibility prompts). `python3 tools/test_macos_setup.py` runs
-setup fixtures on any platform. macOS data goes to Application Support, never
+injection or Accessibility prompts). Setup behaviour is covered by the
+`internal/setup` Go tests on any platform. macOS data goes to Application Support, never
 inside the `.app`. Packages are ad-hoc signed only; Developer ID signing and
 notarization are outside this implementation.
 
@@ -96,24 +96,25 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 
 | Path | Role |
 | --- | --- |
-| `main.go`, `embed.go`, `resource_windows_amd64.syso` | The `main` package: `main()` locks the OS thread and calls `app.Run`; `embed.go` embeds `setup.ps1`, `setup.sh` and `setup-macos.sh` (they must stay in the repository root) and `main.go` holds the `version` string that `-X main.version` stamps. The `.syso` (icon, version info, DPI manifest) is linked into this package, so its tests (`resources_windows_test.go`) live here too |
+| `main.go`, `embed.go`, `resource_windows_amd64.syso` | The `main` package: `main()` dispatches the `setup` subcommand to `internal/setup` and otherwise locks the OS thread and calls `app.Run`; `embed.go` embeds `setup.ps1`, `setup.sh` and `setup-macos.sh` (they must stay in the repository root) and `main.go` holds the `version` string that `-X main.version` stamps. The `.syso` (icon, version info, DPI manifest) is linked into this package, so its tests (`resources_windows_test.go`) live here too |
 | `internal/app/` | The program: `Run` (`run.go`; startup and shutdown, `fatal`, `applyTranslation`), the `app` struct and its main loop `serve` (`app.go`: hotkeys, one per profile, tray commands, update results, translation results, Settings-page requests, download results; `startTranslation` / `handleResult` / `abortTranslation`), the tray commands (`app_menu.go`), the UI-thread idle timer and intentional unload/reload state (`app_idle.go`), the app's side of the Settings page (`app_settings.go`), the model switch and delete for the page (`app_models.go`), the quick start guide (`guide.go`), the last 10 translations in memory and `decidePaste` for auto-paste (`history.go`), and checking that the model/runtime exist and offering to run the setup script (`setup_flow.go`). Almost all tests are here: they drive `*app` through its seams (`newHotkey`, `capture`, `paste`, `foreground`, `openURL`, `showErr`, ...), with `fakeTray` and a `TestMain` that turns the test binary into a fake `llama-server` |
 | `internal/platform/` | Everything that differs per OS (tray, hotkeys, clipboard, selection capture, autostart, child-process lifetime, data directory, the native cgo files). One package; per-OS files are selected by file suffix and build tags. The app reaches it through exported names (`platform.NewHotkey`, `platform.NewTray`, ...). `capture.go` is `captureJob`: the ordering rules of selection capture (modifiers released, focus unchanged, clipboard sequence) over per-OS pieces, so they are tested without a desktop; `serve` steps the job (`stepCapture`) every ~15 ms instead of sleeping, so a slow copy never blocks the UI thread. `psscript.go` holds the PowerShell command lines that run `setup.ps1` / `install.ps1` and keep the failure prompt open; `update_windows.go` runs the installer. Its tests have their own `TestMain` (fake server, mac harness); `assets/` embeds `icon.png` for the Linux tray |
 | `internal/config/` | `Config` + validation (`config.go`); order-preserving in-place `config.json` edits with a `.bak` and backend detection (`settings.go`); `Profile` and what one hotkey translates, skip reasons and messages (`profile.go`); `PathWithin`, `ResolvePaths`, `CheckFile` (`paths.go`) |
 | `internal/hotkeyspec/` | The hotkey syntax (`Ctrl+Alt+E`): one parser shared by the config check and the per-OS hotkey code; no OS dependency |
 | `internal/languages/` | The 53 model languages, `Validate`, and `DirectionFor`: the script of the text picks the direction of a language pair (URLs are skipped). Standard library only |
 | `internal/llamaserver/` | `Supervisor` for `llama-server` (`server.go`: start, stop, exit detection), `RestartLimiter` (max 3 per 10 min) and backoff, and the loopback HTTP client (`client.go`: `WaitReady`, `Translate`). Its fields, `Start` and `Stop` belong to the UI thread; `Supervisor.APIKey` is never logged. `llama_smoke_test.go` is the real-binary smoke test (`//go:build llamasmoke`): it starts `llama-server` through `Supervisor` and tests translation with the real model |
-| `internal/models/` | `models.go` is the model catalog (pinned revision and SHA-256, kept equal to `setup.ps1`, `setup.sh` and `setup-macos.sh`; tests compare them); `modeldl.go` is the download manager (resume, SHA-256 check, cancel; owned by `app`, not by the Settings server; the only code that contacts the model host); `modeltest/` is a fake model host for tests |
+| `internal/models/` | `models.go` is the model catalog (pinned revision and SHA-256, kept equal to the record in `setup.ps1`; tests compare them); `modeldl.go` is the download manager (resume, SHA-256 check, cancel; owned by `app`, not by the Settings server; the only code that contacts the model host); `modeltest/` is a fake model host for tests |
+| `internal/setup/` | The first-run installer behind `clipboard-translator setup` (Issue #152): pinned model + template download, the pinned llama.cpp runtime per platform (`llama.go`), traversal-safe zip/tar.gz extraction, and the engine/model `config.json` decision the setup scripts used to share. The scripts are thin wrappers around it |
 | `internal/settings/` | The Settings page: `server.go` serves it on 127.0.0.1 while it is open (token, Host/Origin checks, CSP) and never touches app state; `web/` is the embedded HTML/CSS/JS. The JSON field names of `State` and `Form` are the page's contract |
 | `internal/update/` | "Check for updates" (GitHub API, only on click), version compare, install-kind detection (installer / Scoop / portable), the release-tag check and the `install.ps1` URL |
 | `internal/testsupport/` | Test-only helpers shared by several packages: the fake `llama-server` and the loopback-only transport |
-| `setup.ps1`, `install.ps1` | Downloads model + llama.cpp; the one-line installer. Must parse on Windows PowerShell 5.1 *and* PowerShell 7 |
-| `tools/bump_llama_pin.py` | Bumps, checks, and inspects (`--show`) the pinned llama.cpp release tag and asset SHA-256 hashes across `setup.ps1`, `setup.sh` and `setup-macos.sh` |
+| `setup.ps1`, `install.ps1` | Thin wrappers that forward to the binary's `setup` subcommand; the one-line installer. Must parse on Windows PowerShell 5.1 *and* PowerShell 7 |
+| `tools/bump_llama_pin.py` | Bumps, checks, and inspects (`--show`) the pinned llama.cpp release tag and asset SHA-256 hashes across `setup.ps1`, `setup.sh`, `setup-macos.sh` and `internal/setup/llama.go` |
 | `tools/print_model_pin.py` | Prints pinned model URLs and SHA-256 digests from `internal/models/models.go` for workflow and scripts |
 | `bucket/clipboard-translator.json` | Scoop manifest (this repo is also the bucket) |
 | `tools/mksyso`, `tools/mkicon` | Generate `resource_windows_amd64.syso` (icon, version info, DPI manifest) and `assets/icon.*` |
 
-Package dependencies point downwards: `main` -> `app` -> `settings`, `llamaserver`, `update`, `models`, `config`, `platform` -> `hotkeyspec`, `languages`. Nothing under `internal/` imports `app`, and `internal/models` imports no other package of the module (it is the only code that talks to the model host). The split is described in `docs/package-split-design.md` (Issue #104).
+Package dependencies point downwards: `main` -> `app` -> `settings`, `llamaserver`, `update`, `models`, `config`, `platform` -> `hotkeyspec`, `languages`; `main` -> `setup` -> `models`, `config`, `platform`. Nothing under `internal/` imports `app`, and `internal/models` imports no other package of the module (it is the only code that talks to the model host). The split is described in `docs/package-split-design.md` (Issue #104).
 
 ## Things that bite
 
@@ -156,10 +157,11 @@ Package dependencies point downwards: `main` -> `app` -> `settings`, `llamaserve
   page (Hugging Face, the pinned revision and SHA-256 only). The Settings page
   itself is a loopback-only server that exists while it is open. Keep it that
   way and keep the README's privacy section true if you add anything.
-- **Pinned llama.cpp release.** `setup.ps1`, `setup.sh` and `setup-macos.sh`
-  install a pinned llama.cpp release tag with verified SHA-256 digests for all
+- **Pinned llama.cpp release.** The binary's setup installs a pinned
+  llama.cpp release tag with verified SHA-256 digests for all
   asset families (Windows CPU, CUDA+cudart, Vulkan; Linux CPU, Vulkan; macOS
-  ARM64, x64). Update them using `python3 tools/bump_llama_pin.py <tag>`.
+  ARM64, x64). The pin is recorded in `internal/setup/llama.go` and in the
+  setup scripts; update them using `python3 tools/bump_llama_pin.py <tag>`.
 - **Don't commit large or third-party files**: `models/`, `runtime/`, `*.exe`,
   logs (all in `.gitignore`).
 
@@ -185,16 +187,17 @@ Package dependencies point downwards: `main` -> `app` -> `settings`, `llamaserve
 
 ## Bumping llama.cpp
 
-The setup scripts install a fixed official llama.cpp release (release tag and
-asset SHA-256 hashes hard-coded in each script). To bump to a newer llama.cpp
+Setup installs a fixed official llama.cpp release (release tag and
+asset SHA-256 hashes hard-coded in `internal/setup/llama.go` and recorded in
+each setup script). To bump to a newer llama.cpp
 release:
 
 1. Run `python3 tools/bump_llama_pin.py <tag>` (queries GitHub API for that
    release tag, verifies all required asset families and SHA-256 digests are
-   published, and rewrites the pin blocks across `setup.ps1`, `setup.sh`, and
-   `setup-macos.sh`).
+   published, and rewrites the pin blocks across `setup.ps1`, `setup.sh`,
+   `setup-macos.sh` and `internal/setup/llama.go`).
 2. Run `python3 tools/bump_llama_pin.py --check` (or `go test ./...`) to ensure
-   all scripts agree and hashes match.
+   all copies agree and hashes match.
 3. Run the llama.cpp smoke workflow (`.github/workflows/llama-smoke.yml` via
    `workflow_dispatch` on the branch, or let it run on the PR because the pin
    files are in its paths) and verify it passes before merge.
