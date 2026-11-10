@@ -25,7 +25,6 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: CT_TEST_MACOS=1 go test -tags mactest -run '^TestMacNative' -v -timeout 60s ./internal/platform
-      - run: python3 tools/test_macos_setup.py
       - name: Package
         env:
           TAG: ${{ github.ref_name }}
@@ -48,7 +47,6 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 CT_TEST_X11=1 xvfb-run -a go test -tags x11test -run '^TestX11' -timeout 60s ./internal/platform
-      - run: python3 tools/test_linux_setup.py
       - name: Package
         env:
           TAG: ${{ github.ref_name }}
