@@ -13,8 +13,10 @@ The maintainer approved the recommended Q1-Q6 choices in #143 during implementat
 
 ## Stages
 
-Each stage is a separate PR targeting main. This document records implementation status,
-not a claim that the application already supports Wayland.
+Each stage is a separate PR targeting main. W4 enables the experimental Wayland backend;
+W0-W3 boundaries below describe the state at those stages. This is not a claim that
+every release or compositor supports Wayland. The [manual test sheet](wayland-manual-test.md)
+separates observed results from the remaining packaged-app acceptance checks.
 
 - W0: separate backend-neutral GTK C code from X11 C code and select the Linux session backend.
   Implemented in this change. Wayland continues to report the existing unsupported-session error;
@@ -28,6 +30,8 @@ not a claim that the application already supports Wayland.
 - W4: capability/consent recovery UX and real shortcut descriptions in Settings and the guide.
   Implemented in the production platform API; automatic paste remains disabled.
 - W5: user documentation and a manual Wayland test sheet.
+  Documented in both READMEs and `wayland-manual-test.md`; unchecked acceptance cases
+  remain pending, rather than being inferred from CI or the native API smoke tests.
 - W6: measure KDE Plasma and a wlroots compositor before extending support.
 - W7: optional StatusNotifierItem/dbusmenu tray.
 
