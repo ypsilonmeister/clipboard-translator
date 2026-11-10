@@ -15,7 +15,7 @@ API キーも、文字数の制限もありません。オンライン翻訳に�
 たとえば仕事のメールやコードのコメント、社内文書にも使えます。
 
 モデルの大きさは設定画面で選べます（0.8B／2B／8B）。ほかに用意するものはありません。
-Ollama は不要で、Windows では Python も不要です（Linux／macOS ではセットアップ時だけ使います）。
+Ollama も Python も不要で、初回セットアップはアプリ本体が担います。
 
 **Built with PLaMo.** 翻訳モデルは Preferred Networks 社の PLaMo で、
 [PLaMo コミュニティライセンス](https://plamo.preferredai.jp/info/plamo-community-license-ja)
@@ -143,8 +143,7 @@ Linux と macOS では `--model 0.8b|2b|8b` を使います(例: `bash setup.sh 
    xattr -dr com.apple.quarantine "/Applications/Clipboard Translator.app"
    ```
 
-5. Python 3.12 以降がなければ入れます(`brew install python`)。初回セットアップに必要です。
-6. **アプリを起動**し、ダウンロードの確認(モデルは 1 GB 超)に同意します。そのあと、選択範囲をコピーできるように
+5. **アプリを起動**し、ダウンロードの確認(モデルは 1 GB 超)に同意します。そのあと、選択範囲をコピーできるように
    *システム設定 > プライバシーとセキュリティ > アクセシビリティ* で許可します。
 
 以下に、それぞれの詳細を説明します。
@@ -157,8 +156,7 @@ CI は Apple Silicon（`arm64`）と Intel（`amd64`）用に、それぞれ
 一般配布の署名手順は未検証です。
 開発用ビルドの置き換え後は、アクセシビリティ権限の再設定が必要になる場合があります。
 
-初回セットアップには `tarfile.data_filter` が使える Python（3.12 以降、またはセキュリティ更新済みの
-3.10／3.11）が必要です。例えば Homebrew で Python を導入してください。
+初回セットアップはアプリ本体（`setup` サブコマンド）が担うため、Python は不要です。
 アプリを開き、ダウンロードの確認に同意すると、キャンセル可能なセットアップウィンドウを表示します。
 詳細は `setup.log` に記録します。固定された公式 llama.cpp アーカイブをピン留めされた SHA-256 と照合し、
 標準で Metal を使用します。同じランタイムを CPU としても利用でき、フォールバックとして利用できるほか、設定画面（Translation engine カード）で切り替えられます。
@@ -226,7 +224,7 @@ CI は Apple Silicon／Intel の両方で、AppKit、クリップボード、Car
 Ubuntu 24.04 では、実行に必要なパッケージを入れます。
 
 ```bash
-sudo apt-get install libgtk-3-0t64 libxtst6 python3 xdg-utils libnotify-bin
+sudo apt-get install libgtk-3-0t64 libxtst6 xdg-utils libnotify-bin
 ```
 
 Releases の Linux 用 `tar.gz` をホーム以下の書き込み可能な専用フォルダーに展開し、実行します。
@@ -239,8 +237,8 @@ bash setup.sh                  # モデルと公式 CPU ランタイムを取得
 bash setup.sh --backend vulkan
 ```
 
-セットアップには `tarfile.data_filter` が使える Python（3.12 以降、またはセキュリティ更新済みの
-3.10／3.11）が必要です。ランタイムのアーカイブは GitHub 公開の SHA-256 と照合します。
+セットアップはアプリ本体（`setup.sh` はその `setup` サブコマンドへ転送します）が担うため、
+Python は不要です。ランタイムのアーカイブはピン留めされた SHA-256 と照合します。
 標準は CPU で、Vulkan が起動できなければ導入済みの CPU に切り替わります。
 モデルとチャットテンプレートは、Windows と同様に、新しくダウンロードしたものを固定した SHA-256 と照合します(サイズの確認は、すでにディスクにあるファイルを守るためだけです)。
 ランタイムの共有ライブラリとリンクはアーカイブの配置を保って導入します。
