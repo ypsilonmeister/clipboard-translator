@@ -16,17 +16,19 @@ import (
 
 // Command IDs of the app-specific tray menu items.
 const (
-	cmdCheckUpdate  = platform.FirstAppCommand + 1
-	cmdDoUpdate     = platform.FirstAppCommand + 2
-	cmdOpenConfig   = platform.FirstAppCommand + 3
-	cmdPlamoLicense = platform.FirstAppCommand + 4
-	cmdCancel       = platform.FirstAppCommand + 5
-	cmdHistoryClear = platform.FirstAppCommand + 7
-	cmdSettings     = platform.FirstAppCommand + 8
-	cmdUnloadModel  = platform.FirstAppCommand + 10
-	cmdQuickstart   = platform.FirstAppCommand + 11
-	cmdModelBase    = platform.FirstAppCommand + 100 // + index into models.Catalog
-	cmdHistoryBase  = platform.FirstAppCommand + 300 // + index into history (newest first)
+	cmdCheckUpdate          = platform.FirstAppCommand + 1
+	cmdDoUpdate             = platform.FirstAppCommand + 2
+	cmdOpenConfig           = platform.FirstAppCommand + 3
+	cmdPlamoLicense         = platform.FirstAppCommand + 4
+	cmdCancel               = platform.FirstAppCommand + 5
+	cmdHistoryClear         = platform.FirstAppCommand + 7
+	cmdSettings             = platform.FirstAppCommand + 8
+	cmdUnloadModel          = platform.FirstAppCommand + 10
+	cmdQuickstart           = platform.FirstAppCommand + 11
+	cmdModelBase            = platform.FirstAppCommand + 100 // + index into models.Catalog
+	cmdHistoryBase          = platform.FirstAppCommand + 300 // translation; + index into history (newest first)
+	cmdHistorySourceBase    = cmdHistoryBase + historySize
+	cmdHistoryBilingualBase = cmdHistorySourceBase + historySize
 )
 
 func backendLabel(name string) string {
@@ -74,14 +76,18 @@ func (a *app) buildMenu() []platform.MenuItem {
 	if len(modelSub) >= 2 {
 		items = append(items, platform.MenuItem{Label: "Translation model", Sub: modelSub})
 	}
-	var recent []platform.MenuItem
+	var recent, copyOptions []platform.MenuItem
 	for i, e := range a.hist.Items() {
 		recent = append(recent, platform.MenuItem{ID: cmdHistoryBase + i, Label: historyLabel(e)})
+		copyOptions = append(copyOptions, platform.MenuItem{Label: historyLabel(e), Sub: []platform.MenuItem{
+			{ID: cmdHistorySourceBase + i, Label: "Copy original"},
+			{ID: cmdHistoryBilingualBase + i, Label: "Copy original + translation"},
+		}})
 	}
 	if len(recent) == 0 {
 		recent = []platform.MenuItem{{Label: "(nothing yet)", Disabled: true}}
 	} else {
-		recent = append(recent, platform.MenuItem{Separator: true}, platform.MenuItem{ID: cmdHistoryClear, Label: "Clear history"})
+		recent = append(recent, platform.MenuItem{Label: "Copy original or both", Sub: copyOptions}, platform.MenuItem{Separator: true}, platform.MenuItem{ID: cmdHistoryClear, Label: "Clear history"})
 	}
 	items = append(items, platform.MenuItem{Label: "Recent translations (click to copy)", Sub: recent})
 
@@ -106,8 +112,12 @@ func (a *app) buildMenu() []platform.MenuItem {
 // handleCommand runs one app-specific menu command. It runs on the UI thread.
 func (a *app) handleCommand(id int) {
 	switch {
-	case id >= cmdHistoryBase:
-		a.copyFromHistory(id - cmdHistoryBase)
+	case id >= cmdHistoryBilingualBase && id < cmdHistoryBilingualBase+historySize:
+		a.copyHistoryText(id-cmdHistoryBilingualBase, "bilingual")
+	case id >= cmdHistorySourceBase && id < cmdHistorySourceBase+historySize:
+		a.copyHistoryText(id-cmdHistorySourceBase, "original")
+	case id >= cmdHistoryBase && id < cmdHistoryBase+historySize:
+		a.copyHistoryText(id-cmdHistoryBase, "translation")
 	case id >= cmdModelBase && id < cmdModelBase+len(models.Catalog):
 		a.switchModelFromMenu(id - cmdModelBase)
 	case id == cmdUnloadModel:
@@ -177,14 +187,20 @@ func (a *app) switchModelFromMenu(idx int) {
 	_ = a.switchModel(e)
 }
 
-// copyFromHistory puts the translation of history entry i (newest first) on the
-// clipboard again.
-func (a *app) copyFromHistory(i int) {
+// copyHistoryText copies the selected representation without pasting it.
+func (a *app) copyHistoryText(i int, kind string) {
 	items := a.hist.Items()
 	if i < 0 || i >= len(items) || a.cb == nil {
 		return
 	}
-	if err := a.cb.Write(items[i].Translated); err != nil {
+	text := items[i].Translated
+	switch kind {
+	case "original":
+		text = items[i].Source
+	case "bilingual":
+		text = formatBilingual(items[i].Source, items[i].Translated)
+	}
+	if err := a.cb.Write(text); err != nil {
 		log.Printf("could not copy from history: %v", err)
 		a.tray.Notify("Clipboard Translator", "Could not copy to the clipboard: "+err.Error(), true)
 		return

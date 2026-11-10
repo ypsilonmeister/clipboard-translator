@@ -117,6 +117,7 @@
         target: p.target || 'en',
         output: p.output || 'replace',
         input: p.input || 'selection',
+        cleanup_newlines: p.cleanup_newlines || 'off',
       })),
     };
   }
@@ -139,7 +140,7 @@
       max_chars: m.max_chars,
       idle_unload_minutes: m.idle_unload_minutes,
       profiles: m.profiles.map((p) => {
-        const out = { ctrl: p.ctrl, alt: p.alt, shift: p.shift, win: p.win, key: p.key, output: p.output || 'replace', input: p.input || 'selection' };
+        const out = { ctrl: p.ctrl, alt: p.alt, shift: p.shift, win: p.win, key: p.key, output: p.output || 'replace', input: p.input || 'selection', cleanup_newlines: p.cleanup_newlines || 'off' };
         if (p.mode === 'target') out.target = p.target; else out.languages = [p.a, p.b];
         return out;
       }),
@@ -316,6 +317,22 @@
     );
     outputSelect.value = p.output || 'replace';
     card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: outputId, text: 'Output' }), outputSelect));
+
+    const cleanupId = 'cleanup-' + i;
+    const cleanupSelect = h('select', {
+      id: cleanupId,
+      class: 'cleanup-newlines',
+      'aria-label': 'Newline cleanup for hotkey ' + (i + 1),
+      onchange: (e) => {
+        p.cleanup_newlines = e.target.value;
+        touchField('profiles');
+      },
+    },
+      h('option', { value: 'off', text: 'Keep original line breaks' }),
+      h('option', { value: 'auto', text: 'Clean up spurious line breaks (e.g. from PDFs)' }),
+    );
+    cleanupSelect.value = p.cleanup_newlines || 'off';
+    card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: cleanupId, text: 'Line breaks' }), cleanupSelect));
 
     card.append(h('p', { class: 'field-error', role: 'alert', hidden: true }));
     return card;
@@ -888,7 +905,7 @@
   async function init() {
     $('guide').addEventListener('toggle', () => { guideTouched = true; });
     $('add').addEventListener('click', () => {
-      model.profiles.push({ ctrl: true, alt: true, shift: false, win: false, key: nextFreeKey(), mode: 'target', a: 'ja', b: 'en', target: 'en', output: 'replace', input: 'selection' });
+      model.profiles.push({ ctrl: true, alt: true, shift: false, win: false, key: nextFreeKey(), mode: 'target', a: 'ja', b: 'en', target: 'en', output: 'replace', input: 'selection', cleanup_newlines: 'off' });
       touchField('profiles');
       renderHotkeys();
     });

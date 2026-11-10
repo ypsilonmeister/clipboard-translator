@@ -1373,6 +1373,64 @@ func TestSettingsProfileInputSaveAndState(t *testing.T) {
 	}
 }
 
+func TestSettingsProfileCleanupNewlinesSaveAndState(t *testing.T) {
+	f := newSettingsFixture(t)
+	s := f.server(t)
+
+	_, body := s.do(t, "GET", "/api/state", nil, nil)
+	st := decodeAPI(t, body).State
+	if st == nil || len(st.Profiles) != 1 || st.Profiles[0].CleanupNewlines != config.CleanupNewlinesOff {
+		t.Fatalf("initial state cleanup_newlines: %+v", st)
+	}
+
+	saveForm := settings.Form{
+		BaseRevision: st.Revision,
+		MaxChars:     4000,
+		Changed:      []string{"profiles"},
+		Profiles: []settings.ProfileForm{
+			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, CleanupNewlines: config.CleanupNewlinesAuto},
+		},
+	}
+	resp, body := s.do(t, "POST", "/api/save", saveForm, nil)
+	r := decodeAPI(t, body)
+	if resp.StatusCode != 200 || r.Error != "" || r.State == nil {
+		t.Fatalf("save auto cleanup_newlines: %d %s", resp.StatusCode, body)
+	}
+	if r.State.Profiles[0].CleanupNewlines != config.CleanupNewlinesAuto || f.a.conf.Profiles[0].CleanupNewlines != config.CleanupNewlinesAuto {
+		t.Fatalf("cleanup_newlines not applied: state %q, conf %q", r.State.Profiles[0].CleanupNewlines, f.a.conf.Profiles[0].CleanupNewlines)
+	}
+	raw, err := os.ReadFile(filepath.Join(f.a.dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"cleanup_newlines":"auto"`) {
+		t.Fatalf("config.json did not save cleanup_newlines:\n%s", raw)
+	}
+
+	// An unknown value is rejected and nothing changes.
+	bad := saveForm
+	bad.BaseRevision = r.State.Revision
+	bad.Profiles = []settings.ProfileForm{{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, CleanupNewlines: "sometimes"}}
+	resp, body = s.do(t, "POST", "/api/save", bad, nil)
+	if resp.StatusCode == 200 || !strings.Contains(decodeAPI(t, body).Error, "cleanup_newlines") {
+		t.Fatalf("an unknown cleanup_newlines must be rejected: %d %s", resp.StatusCode, body)
+	}
+	if f.a.conf.Profiles[0].CleanupNewlines != config.CleanupNewlinesAuto {
+		t.Fatal("a rejected save changed cleanup_newlines")
+	}
+
+	// Saving the same settings again changes nothing (hotkeys are not re-registered).
+	before := f.reg.Load()
+	same := saveForm
+	same.BaseRevision = r.State.Revision
+	if resp, _ := s.do(t, "POST", "/api/save", same, nil); resp.StatusCode != 200 {
+		t.Fatalf("second save: %d", resp.StatusCode)
+	}
+	if f.reg.Load() != before {
+		t.Error("an unchanged save re-registered hotkeys")
+	}
+}
+
 func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 	f := newSettingsFixture(t)
 	s := f.server(t)

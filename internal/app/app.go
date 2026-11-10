@@ -19,6 +19,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
+	"github.com/ypsilonmeister/clipboard-translator/internal/textstruct"
 	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
@@ -841,8 +842,12 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 	a.tray.SetStatus("Clipboard Translator - translating... (0s)")
 	outputMode := profile.OutputMode()
 	maxTokens := a.conf.MaxTokens
+	promptText := source
+	if profile.CleanupNewlinesMode() == config.CleanupNewlinesAuto {
+		promptText = textstruct.CleanSpuriousNewlines(source, direction.Source)
+	}
 	go func() {
-		translated, err := llamaserver.Translate(ctx, a.endpoint, key, source, direction, maxTokens)
+		translated, err := llamaserver.Translate(ctx, a.endpoint, key, promptText, direction, maxTokens)
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
 			direction: direction, window: win, fromSelection: fromSelection, output: outputMode,
@@ -893,7 +898,8 @@ func (a *app) handleResult(res result) {
 		return
 	}
 	if !applied {
-		log.Print("clipboard text changed during translation; result discarded (new clipboard preserved)")
+		a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
+		log.Print("clipboard text changed during translation; result kept in history (new clipboard preserved)")
 		current, readErr := a.cb.Read()
 		if readErr != nil {
 			log.Printf("clipboard change diagnostics: could not read current clipboard: %v", readErr)
@@ -905,7 +911,7 @@ func (a *app) handleResult(res result) {
 			log.Printf("clipboard change diagnostics: %s", platform.ClassifyClipboardDiff(res.original, current, elapsed))
 		}
 		a.tray.SetStatus(a.readyTip)
-		a.tray.Notify("Clipboard Translator", "The clipboard changed while translating, so the result was dropped and the new clipboard text was kept.", false)
+		a.tray.Notify("Clipboard Translator", "The clipboard changed while translating. Your new clipboard text was kept; copy the translation from Recent translations in the tray menu.", false)
 		return
 	}
 	a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})

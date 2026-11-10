@@ -41,15 +41,16 @@ const (
 // and the key as a string (A-Z, 0-9, or F1-F12), so the page does not need to
 // know the hotkey syntax.
 type ProfileForm struct {
-	Ctrl      bool     `json:"ctrl"`
-	Alt       bool     `json:"alt"`
-	Shift     bool     `json:"shift"`
-	Win       bool     `json:"win"`
-	Key       string   `json:"key"`
-	Languages []string `json:"languages,omitempty"`
-	Target    string   `json:"target,omitempty"`
-	Output    string   `json:"output,omitempty"`
-	Input     string   `json:"input,omitempty"`
+	Ctrl            bool     `json:"ctrl"`
+	Alt             bool     `json:"alt"`
+	Shift           bool     `json:"shift"`
+	Win             bool     `json:"win"`
+	Key             string   `json:"key"`
+	Languages       []string `json:"languages,omitempty"`
+	Target          string   `json:"target,omitempty"`
+	Output          string   `json:"output,omitempty"`
+	Input           string   `json:"input,omitempty"`
+	CleanupNewlines string   `json:"cleanup_newlines,omitempty"`
 }
 
 // QuickstartGuide is the guide as the Settings page shows it (built by the app
@@ -560,7 +561,8 @@ func FormFromProfile(p config.Profile, goos string) (ProfileForm, error) {
 		return ProfileForm{}, err
 	}
 	return ProfileForm{Ctrl: spec.Ctrl, Alt: spec.Alt, Shift: spec.Shift, Win: spec.Win, Key: spec.Key,
-		Languages: append([]string(nil), p.Languages...), Target: p.Target, Output: p.OutputMode(), Input: p.InputMode()}, nil
+		Languages: append([]string(nil), p.Languages...), Target: p.Target, Output: p.OutputMode(), Input: p.InputMode(),
+		CleanupNewlines: p.CleanupNewlinesMode()}, nil
 }
 
 // hotkeyString writes the form's hotkey the way config.json does.
@@ -601,7 +603,7 @@ func (f Form) ToConfig(base config.Config) (config.Config, error) {
 			if p.Target != "" && len(p.Languages) > 0 {
 				return base, fmt.Errorf("profiles[%d]: use either two languages or one target language, not both", i)
 			}
-			c.Profiles[i] = config.Profile{Hotkey: p.HotkeyString(), Output: p.Output, Input: p.Input}
+			c.Profiles[i] = config.Profile{Hotkey: p.HotkeyString(), Output: p.Output, Input: p.Input, CleanupNewlines: p.CleanupNewlines}
 			if p.Target != "" {
 				c.Profiles[i].Target = p.Target
 			} else {

@@ -145,12 +145,12 @@ func TestHandleResultIgnoresStaleAndFailed(t *testing.T) {
 	if len(tray.notes) != n {
 		t.Fatal("a cancelled request must not show an error")
 	}
-	// The user copied something else meanwhile: keep it, remember nothing.
+	// The user copied something else meanwhile: keep it and remember the translation.
 	cb.text = "typed meanwhile"
 	g = pending(a)
 	a.handleResult(result{original: "x", translated: "X", generation: g})
-	if cb.text != "typed meanwhile" || len(a.hist.Items()) != 0 {
-		t.Fatal("a result for an outdated clipboard must be discarded")
+	if cb.text != "typed meanwhile" || len(a.hist.Items()) != 1 {
+		t.Fatal("a result for a changed clipboard must remain in history")
 	}
 }
 
@@ -385,7 +385,7 @@ func TestHistoryMenuCopiesAndClears(t *testing.T) {
 	a.hist.Add(entry("first", "erste"))
 	a.hist.Add(entry("second & more", "zweite"))
 	sub := find("Recent translations")
-	if len(sub) != 4 || sub[0].ID != cmdHistoryBase || sub[1].ID != cmdHistoryBase+1 || sub[3].ID != cmdHistoryClear {
+	if len(sub) != 5 || sub[0].ID != cmdHistoryBase || sub[1].ID != cmdHistoryBase+1 || sub[4].ID != cmdHistoryClear {
 		t.Fatalf("history submenu = %+v", sub)
 	}
 	if !strings.HasPrefix(sub[0].Label, "second & more") {
@@ -653,8 +653,8 @@ func TestHandleResultDiscardedOutcome(t *testing.T) {
 	if cb.text != "brand new clipboard text" {
 		t.Fatalf("new clipboard must be preserved, got %q", cb.text)
 	}
-	if len(a.hist.Items()) != 0 {
-		t.Fatal("discarded translation must not be added to history")
+	if len(a.hist.Items()) != 1 || a.hist.Items()[0].Translated != "old translation" {
+		t.Fatal("unapplied translation must remain in history")
 	}
 }
 
@@ -715,7 +715,7 @@ func TestOutcomeMessagesDoNotLeakText(t *testing.T) {
 		config.SkipStatus(config.SkipNoTranslatableText, "Japanese ↔ English"),
 		"Clipboard Translator - translation cancelled",
 		"Clipboard Translator - translation is the same as the source; the clipboard still holds the source",
-		"The clipboard changed while translating, so the result was dropped and the new clipboard text was kept.",
+		"The clipboard changed while translating. Your new clipboard text was kept; copy the translation from Recent translations in the tray menu.",
 		"The translation was cut off at the token limit, so no translation was put on the clipboard. Select less text, or raise max_tokens / context_tokens in config.json.",
 	}
 
@@ -997,7 +997,7 @@ func TestHandleResultRealChangeDiscardsWithDiagnostics(t *testing.T) {
 	}
 
 	logOutput := logBuf.String()
-	if !strings.Contains(logOutput, "clipboard text changed during translation; result discarded") {
+	if !strings.Contains(logOutput, "clipboard text changed during translation; result kept in history") {
 		t.Fatalf("missing discard log line in: %q", logOutput)
 	}
 	if !strings.Contains(logOutput, "clipboard change diagnostics:") {
@@ -1130,5 +1130,62 @@ func TestHandleResultBilingualAutoPaste(t *testing.T) {
 		if strings.Contains(text, "Select") || strings.Contains(text, "選択") {
 			t.Errorf("status/note %q leaked source or translated text", text)
 		}
+	}
+}
+
+func TestHistoryCopyFormats(t *testing.T) {
+	a, _, cb, pastes, _ := uxApp(t)
+	a.conf.AutoPaste = true
+	a.hist.Add(entry("original\r\n", "translation"))
+	var menu []platform.MenuItem
+	for _, it := range a.buildMenu() {
+		if it.Label == "Recent translations (click to copy)" {
+			menu = append([]platform.MenuItem{it.Sub[0]}, it.Sub[1].Sub[0].Sub...)
+		}
+	}
+	if len(menu) != 3 {
+		t.Fatalf("copy choices = %+v", menu)
+	}
+	for i, want := range []string{"translation", "original\r\n", "original\ntranslation"} {
+		a.handleCommand(menu[i].ID)
+		if cb.text != want {
+			t.Fatalf("choice %d: got %q, want %q", i, cb.text, want)
+		}
+	}
+	if *pastes != 0 {
+		t.Fatal("history copy must never auto-paste")
+	}
+	for _, base := range []int{cmdHistoryBase, cmdHistorySourceBase, cmdHistoryBilingualBase} {
+		writes := cb.writes
+		a.handleCommand(base + historySize - 1)
+		if cb.writes != writes {
+			t.Fatal("missing history entry must not write")
+		}
+	}
+}
+
+func TestUnappliedTranslationCanBeRecovered(t *testing.T) {
+	for _, output := range []string{config.OutputReplace, config.OutputBilingual} {
+		t.Run(output, func(t *testing.T) {
+			a, tray, cb, pastes, _ := uxApp(t)
+			a.conf.AutoPaste = true
+			cb.text = "new user copy"
+			g := pending(a)
+			a.handleResult(result{original: "source", translated: "translation", generation: g, window: 100, fromSelection: true, output: output})
+			if cb.text != "new user copy" || cb.writes != 0 || *pastes != 0 {
+				t.Fatal("unapplied result must preserve clipboard and never paste")
+			}
+			if !strings.Contains(tray.lastNote(), "Recent translations") || strings.Contains(tray.lastNote(), "dropped") {
+				t.Fatalf("recovery notice = %q", tray.lastNote())
+			}
+			a.handleCommand(cmdHistoryBase)
+			if cb.text != "translation" || *pastes != 0 {
+				t.Fatal("history must recover plain translation without pasting")
+			}
+			a.handleCommand(cmdHistoryBilingualBase)
+			if cb.text != "source\ntranslation" {
+				t.Fatalf("bilingual recovery = %q", cb.text)
+			}
+		})
 	}
 }
