@@ -18,6 +18,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
@@ -54,8 +55,8 @@ type app struct {
 	extras      []extraHotkey
 	hotkeyLimit int // how many hotkeys this OS build can register, hotkeyLimit() in production
 
-	settings       *settingsServer           // the settings page, while it is open
-	settingsReqs   chan settingsRequest      // page -> main loop
+	settings       *settings.Server          // the settings page, while it is open
+	settingsReqs   chan settings.Request     // page -> main loop
 	settingsNotice string                    // why the last switch started from the page did not work
 	settingsIdle   time.Duration             // idle timeout for the settings server; 0 uses settingsIdle
 	openURL        func(target string) error // openTarget, replaceable in tests
@@ -122,7 +123,7 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 		notifyOnCompleteRev: 1,
 		maxCharsRev:         1,
 		hotkeyLimit:         platform.HotkeyLimit(),
-		settingsReqs:        make(chan settingsRequest, 8),
+		settingsReqs:        make(chan settings.Request, 8),
 		dl:                  models.NewManager(dir, version),
 		openURL:             platform.OpenTarget,
 		fallbackEditor:      platform.StartFallbackEditor,

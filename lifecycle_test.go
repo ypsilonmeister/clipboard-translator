@@ -10,6 +10,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 )
 
 func TestStartupHotkeyConflictFallsBackToNoHotkey(t *testing.T) {
@@ -107,8 +108,8 @@ func TestServeRecoversOrQuitsAfterFailedSwitch(t *testing.T) {
 	a.hotkey = fakeHotkey{"Ctrl+Alt+E"}
 	breakPreviousEngine(a)
 	a.limiter = llamaserver.RestartLimiter{Max: 0, Window: time.Minute} // no recovery attempts allowed
-	req := newSettingsRequest(nil, time.Minute)
-	req.action, req.arg = "engine", "vulkan"
+	req := settings.NewRequest(nil, time.Minute)
+	req.Action, req.Arg = "engine", "vulkan"
 	a.settingsReqs <- req
 
 	done := make(chan struct{})
