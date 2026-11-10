@@ -156,7 +156,8 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 ## Tests
 
 - The test binary doubles as a fake `llama-server` (`TestMain` in
-  `helper_test.go`, env `CT_TEST_FAKE_SERVER=1`), so crash recovery and engine
+  `helper_test.go` calls `testsupport.MaybeRunFakeServer`, env
+  `CT_TEST_FAKE_SERVER=1`), so crash recovery and engine
   switching are tested without the real model. Seams like `newHotkey`,
   `showErr`, `foreground`, `paste`, `capture` and `openURL` on `app` are
   replaceable in tests; `fakeTray` records tray calls. Model downloads in tests

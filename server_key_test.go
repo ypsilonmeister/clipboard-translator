@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/testsupport"
 )
 
 func TestNewAPIKeyIsRandomHex(t *testing.T) {
@@ -128,7 +129,7 @@ func TestServerRequiresThePerStartKey(t *testing.T) {
 		t.Errorf("wrong key: status %d, want 401", s)
 	}
 	got, err := translate(context.Background(), a.endpoint, first, "Hello", languages.Direction{Source: "en", Target: "ja"}, 16)
-	if err != nil || got != fakeTranslation {
+	if err != nil || got != testsupport.FakeTranslation {
 		t.Fatalf("with the key: got %q, %v", got, err)
 	}
 
@@ -147,7 +148,7 @@ func TestServerRequiresThePerStartKey(t *testing.T) {
 	if s := chatStatus(t, a.endpoint, "Bearer "+first); s != http.StatusUnauthorized {
 		t.Errorf("the previous key: status %d, want 401", s)
 	}
-	if got, err := translate(context.Background(), a.endpoint, second, "Hello", languages.Direction{Source: "en", Target: "ja"}, 16); err != nil || got != fakeTranslation {
+	if got, err := translate(context.Background(), a.endpoint, second, "Hello", languages.Direction{Source: "en", Target: "ja"}, 16); err != nil || got != testsupport.FakeTranslation {
 		t.Fatalf("with the new key: got %q, %v", got, err)
 	}
 }
@@ -176,7 +177,7 @@ func TestAppTranslationUsesTheServerKey(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("no result")
 	}
-	if cb.text != fakeTranslation {
-		t.Errorf("clipboard = %q, want %q (notes: %v)", cb.text, fakeTranslation, tray.notes)
+	if cb.text != testsupport.FakeTranslation {
+		t.Errorf("clipboard = %q, want %q (notes: %v)", cb.text, testsupport.FakeTranslation, tray.notes)
 	}
 }

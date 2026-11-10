@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/testsupport"
 )
 
 func unloadMenuEnabled(t *testing.T, a *app) bool {
@@ -71,7 +73,7 @@ func TestUnloadModelAndReloadTranslation(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("translation did not finish")
 	}
-	if cb.text != fakeTranslation {
+	if cb.text != testsupport.FakeTranslation {
 		t.Fatalf("clipboard=%q", cb.text)
 	}
 	if a.limiter.Attempt() != 0 {
@@ -364,8 +366,8 @@ func TestReloadSupersededBySecondHotkeyDuringLoad(t *testing.T) {
 		t.Fatal("translation of second hotkey did not complete")
 	}
 
-	if cb.text != fakeTranslation {
-		t.Fatalf("clipboard = %q, want %q", cb.text, fakeTranslation)
+	if cb.text != testsupport.FakeTranslation {
+		t.Fatalf("clipboard = %q, want %q", cb.text, testsupport.FakeTranslation)
 	}
 	if *pastes != 1 {
 		t.Fatalf("pastes = %d, want 1", *pastes)
