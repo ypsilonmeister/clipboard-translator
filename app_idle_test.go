@@ -13,6 +13,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 	"github.com/ypsilonmeister/clipboard-translator/internal/testsupport"
 )
 
@@ -201,7 +202,7 @@ func TestIdleUnloadConfigValidation(t *testing.T) {
 			}
 			base := config.Default()
 			base.NormalizeProfiles()
-			_, err = (settingsForm{IdleUnloadMinutes: minutes, Changed: []string{"idle_unload_minutes"}}).toConfig(base)
+			_, err = (settings.Form{IdleUnloadMinutes: minutes, Changed: []string{"idle_unload_minutes"}}).ToConfig(base)
 			if (err != nil) != invalid {
 				t.Fatalf("settings minutes=%d err=%v", minutes, err)
 			}
@@ -276,7 +277,7 @@ func TestIdleUnloadSettingsResetTimer(t *testing.T) {
 	a.conf.IdleUnloadMinutes = 1
 	a.resetIdleTimer()
 	now = now.Add(time.Hour)
-	form := settingsForm{IdleUnloadMinutes: 2, Changed: []string{"idle_unload_minutes"}}
+	form := settings.Form{IdleUnloadMinutes: 2, Changed: []string{"idle_unload_minutes"}}
 	if _, err := a.applySettings(form); err != nil {
 		t.Fatal(err)
 	}
@@ -315,9 +316,9 @@ func TestSettingsWhileUnloadedAndEngineSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.unloadModel()
-	req := newSettingsRequest(nil, time.Second)
+	req := settings.NewRequest(nil, time.Second)
 	a.handleSettingsRequest(req)
-	st := (<-req.reply).state
+	st := (<-req.Reply).State
 	if len(st.Models) == 0 || len(st.Engines) == 0 || a.sup.Running() || !a.modelUnloaded {
 		t.Fatal("settings must remain available without loading the model")
 	}
@@ -531,8 +532,8 @@ func TestSettingsEngineSwitchDuringDelayedStart(t *testing.T) {
 				}
 				a.unloadModel()
 			}
-			req := newSettingsRequest(nil, time.Minute)
-			req.action, req.arg = "engine", "cuda"
+			req := settings.NewRequest(nil, time.Minute)
+			req.Action, req.Arg = "engine", "cuda"
 			queued := false
 			origUI := a.sup.UI
 			a.sup.UI = func(label string, elapsed time.Duration) bool {
@@ -555,7 +556,7 @@ func TestSettingsEngineSwitchDuringDelayedStart(t *testing.T) {
 			if !queued {
 				t.Fatal("startup callback was not called")
 			}
-			if rep := <-req.reply; !errors.Is(rep.err, errSettingsBusy) {
+			if rep := <-req.Reply; !errors.Is(rep.Err, settings.ErrBusy) {
 				t.Fatalf("busy switch: %+v", rep)
 			}
 			if a.serverWork != 0 || a.sup.Starting() {
@@ -563,11 +564,11 @@ func TestSettingsEngineSwitchDuringDelayedStart(t *testing.T) {
 			}
 			// Retry from Settings after loading ends; this also cancels an in-flight translation.
 			a.sup.UI = origUI
-			retry := newSettingsRequest(nil, time.Minute)
-			retry.action, retry.arg = "engine", "cuda"
+			retry := settings.NewRequest(nil, time.Minute)
+			retry.Action, retry.Arg = "engine", "cuda"
 			a.handleSettingsRequest(retry)
-			if rep := <-retry.reply; rep.err != nil {
-				t.Fatal(rep.err)
+			if rep := <-retry.Reply; rep.Err != nil {
+				t.Fatal(rep.Err)
 			}
 			if a.activeBackend != "cuda" || a.translating || !a.canUnloadModel() || a.serverWork != 0 || a.sup.Starting() {
 				t.Fatal("engine switch did not finish cleanly")

@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 )
 
 func TestSettingsCustomHotkeysRoundTrip(t *testing.T) {
 	for _, spec := range []string{"Ctrl+Alt+E", "ctrl+alt+e", "Ctrl+Alt+Q"} {
-		f, err := formFromProfile(config.Profile{Hotkey: spec, Languages: []string{"ja", "en"}}, "windows")
-		if err != nil || !strings.EqualFold(f.hotkeyString(), spec) {
+		f, err := settings.FormFromProfile(config.Profile{Hotkey: spec, Languages: []string{"ja", "en"}}, "windows")
+		if err != nil || !strings.EqualFold(f.HotkeyString(), spec) {
 			t.Fatalf("%s: %+v %v", spec, f, err)
 		}
 	}
@@ -33,15 +34,15 @@ func TestSettingsRejectsDuplicateHotkeys(t *testing.T) {
 			{Hotkey: tc.a, Languages: []string{"ja", "en"}},
 			{Hotkey: tc.b, Target: "ko"},
 		}
-		form := settingsForm{MaxChars: 4000}
+		form := settings.Form{MaxChars: 4000}
 		for _, p := range profiles {
-			f, err := formFromProfile(p, "windows")
+			f, err := settings.FormFromProfile(p, "windows")
 			if err != nil {
 				t.Fatal(err)
 			}
 			form.Profiles = append(form.Profiles, f)
 		}
-		if _, err := form.toConfig(config.Default()); err == nil || !strings.Contains(err.Error(), "same key combination") {
+		if _, err := form.ToConfig(config.Default()); err == nil || !strings.Contains(err.Error(), "same key combination") {
 			t.Errorf("Settings must reject %q and %q: %v", tc.a, tc.b, err)
 		}
 	}

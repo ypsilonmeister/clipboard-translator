@@ -12,6 +12,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 )
 
 // Issue #60: a settings page save that changes neither hotkeys nor languages
@@ -20,7 +21,7 @@ import (
 
 // settingsOnlySave saves the page's current form on a legacy config.json (no
 // "profiles") with edit applied, and checks no hotkey was registered again.
-func settingsOnlySave(t *testing.T, edit func(*settingsForm)) *app {
+func settingsOnlySave(t *testing.T, edit func(*settings.Form)) *app {
 	t.Helper()
 	a, _, _ := newTestApp(t)
 	// A key this version does not know must survive every save.
@@ -32,7 +33,7 @@ func settingsOnlySave(t *testing.T, edit func(*settingsForm)) *app {
 	regs := 0
 	a.newHotkey = func(spec string) (platform.Hotkey, error) { regs++; return fakeHotkey{spec}, nil }
 
-	form := a.settingsState().settingsForm
+	form := a.settingsState().Form
 	edit(&form)
 	if _, err := a.applySettings(form); err != nil {
 		t.Fatal(err)
@@ -64,7 +65,7 @@ func checkReloaded(t *testing.T, a *app) config.Config {
 }
 
 func TestSettingsLanguagesSurviveRestartAfterSettingsOnlySave(t *testing.T) {
-	a := settingsOnlySave(t, func(f *settingsForm) { f.AutoPaste = !f.AutoPaste })
+	a := settingsOnlySave(t, func(f *settings.Form) { f.AutoPaste = !f.AutoPaste })
 	changeSettingsLanguages(t, a, []string{"ja", "ko"})
 	c := checkReloaded(t, a)
 	if !languages.SamePair(c.Profiles[0].Languages, []string{"ja", "ko"}) || !languages.SamePair(c.Languages, []string{"ja", "ko"}) {
@@ -76,7 +77,7 @@ func TestSettingsLanguagesSurviveRestartAfterSettingsOnlySave(t *testing.T) {
 }
 
 func TestSettingsHotkeySurvivesRestartAfterSettingsOnlySave(t *testing.T) {
-	a := settingsOnlySave(t, func(f *settingsForm) { f.MaxChars = 2000 })
+	a := settingsOnlySave(t, func(f *settings.Form) { f.MaxChars = 2000 })
 	changeSettingsHotkey(t, a, "Ctrl+Shift+Y")
 	if a.conf.Hotkey != "Ctrl+Shift+Y" {
 		t.Fatalf("precondition: hotkey changed in memory, got %q", a.conf.Hotkey)
@@ -179,11 +180,11 @@ func TestChoosingRunningFallbackViaSettingsRequest(t *testing.T) {
 		t.Fatal("expected configured != running before request")
 	}
 
-	req := newActionRequest("engine", "cpu", time.Minute)
+	req := settings.NewActionRequest("engine", "cpu", time.Minute)
 	a.startEngineSwitch(req)
-	rep := <-req.reply
-	if rep.err != nil {
-		t.Fatalf("startEngineSwitch error: %v", rep.err)
+	rep := <-req.Reply
+	if rep.Err != nil {
+		t.Fatalf("startEngineSwitch error: %v", rep.Err)
 	}
 
 	if a.sup.PID() != pid || !healthy(a) {
@@ -194,8 +195,8 @@ func TestChoosingRunningFallbackViaSettingsRequest(t *testing.T) {
 		t.Errorf("config.json on disk: %q gpu_layers=%d", c.ServerFile, c.GPULayers)
 	}
 
-	if rep.state.ConfiguredEngine != "cpu" || rep.state.RunningEngine != "cpu" {
-		t.Errorf("reply state after keep: configured=%q, running=%q", rep.state.ConfiguredEngine, rep.state.RunningEngine)
+	if rep.State.ConfiguredEngine != "cpu" || rep.State.RunningEngine != "cpu" {
+		t.Errorf("reply state after keep: configured=%q, running=%q", rep.State.ConfiguredEngine, rep.State.RunningEngine)
 	}
 	stAfter := a.settingsState()
 	if stAfter.ConfiguredEngine != "cpu" || stAfter.RunningEngine != "cpu" {
@@ -228,9 +229,9 @@ func TestChoosingTheConfiguredGPUAfterFallbackRetriesIt(t *testing.T) {
 	// The same from the settings page: the request is answered as busy and
 	// the page is told afterwards that the engine did not change.
 	pid = a.sup.PID()
-	req := newActionRequest("engine", "vulkan", time.Minute)
+	req := settings.NewActionRequest("engine", "vulkan", time.Minute)
 	a.startEngineSwitch(req)
-	if rep := <-req.reply; rep.err != nil || !strings.Contains(rep.state.Busy, "Vulkan") {
+	if rep := <-req.Reply; rep.Err != nil || !strings.Contains(rep.State.Busy, "Vulkan") {
 		t.Fatalf("the page must be told the app is switching: %+v", rep)
 	}
 	if a.sup.PID() == pid || !healthy(a) || a.runningBackend() != "cpu" {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 )
 
 // settingsFixture is an app whose settings requests are answered by a goroutine
@@ -57,28 +59,42 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 	return f
 }
 
-func (f *settingsFixture) server(t *testing.T) *settingsServer {
+// testServer is a settings.Server plus the requests the tests make against it.
+type testServer struct{ *settings.Server }
+
+func (f *settingsFixture) server(t *testing.T) testServer {
 	t.Helper()
-	s, err := startSettingsServer(f.a.askSettings, f.a.dl, time.Minute)
+	s, err := settings.Start(f.a.askSettings, f.a.dl, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.a.settings = s
-	return s
+	return testServer{s}
 }
 
-func (s *settingsServer) do(t *testing.T, method, path string, body any, edit func(*http.Request)) (*http.Response, []byte) {
+// hostAndToken reads what a browser would get from the server's URL.
+func (s testServer) hostAndToken(t *testing.T) (host, token string) {
+	t.Helper()
+	u, err := url.Parse(s.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Host, u.Query().Get("t")
+}
+
+func (s testServer) do(t *testing.T, method, path string, body any, edit func(*http.Request)) (*http.Response, []byte) {
 	t.Helper()
 	var rd io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
 		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, "http://"+s.host+path, rd)
+	host, token := s.hostAndToken(t)
+	req, err := http.NewRequest(method, "http://"+host+path, rd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set(settingsTokenHeader, s.token)
+	req.Header.Set(settings.TokenHeader, token)
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -94,17 +110,17 @@ func (s *settingsServer) do(t *testing.T, method, path string, body any, edit fu
 	return resp, out
 }
 
-func decodeAPI(t *testing.T, b []byte) apiResponse {
+func decodeAPI(t *testing.T, b []byte) settings.APIResponse {
 	t.Helper()
-	var r apiResponse
+	var r settings.APIResponse
 	if err := json.Unmarshal(b, &r); err != nil {
 		t.Fatalf("not JSON: %s", b)
 	}
 	return r
 }
 
-func validForm() settingsForm {
-	return settingsForm{AutoPaste: true, MaxChars: 4000, Profiles: []profileForm{
+func validForm() settings.Form {
+	return settings.Form{AutoPaste: true, MaxChars: 4000, Profiles: []settings.ProfileForm{
 		{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}},
 		{Ctrl: true, Alt: true, Key: "K", Target: "ko"},
 	}}
@@ -112,13 +128,15 @@ func validForm() settingsForm {
 
 func TestSettingsServerRefusesWhatItShould(t *testing.T) {
 	s := newSettingsFixture(t).server(t)
-	if !strings.HasPrefix(s.URL(), "http://127.0.0.1:") || !strings.Contains(s.URL(), "/?t="+s.token) {
+	host, token := s.hostAndToken(t)
+	_, _ = host, token
+	if !strings.HasPrefix(s.URL(), "http://127.0.0.1:") || !strings.Contains(s.URL(), "/?t="+token) {
 		t.Fatalf("the page must be on 127.0.0.1 and carry the token: %s", s.URL())
 	}
-	if len(s.token) < 32 {
-		t.Errorf("token too short: %q", s.token)
+	if len(token) < 32 {
+		t.Errorf("token too short: %q", token)
 	}
-	port := strings.Split(s.host, ":")[1]
+	port := strings.Split(host, ":")[1]
 	cases := []struct {
 		name   string
 		method string
@@ -127,10 +145,10 @@ func TestSettingsServerRefusesWhatItShould(t *testing.T) {
 		edit   func(*http.Request)
 		want   int
 	}{
-		{"no token", "GET", "/api/state", nil, func(r *http.Request) { r.Header.Del(settingsTokenHeader) }, 403},
-		{"wrong token", "GET", "/api/state", nil, func(r *http.Request) { r.Header.Set(settingsTokenHeader, "nope") }, 403},
-		{"page without token", "GET", "/", nil, func(r *http.Request) { r.Header.Del(settingsTokenHeader) }, 403},
-		{"asset without token", "GET", "/app.js", nil, func(r *http.Request) { r.Header.Del(settingsTokenHeader) }, 403},
+		{"no token", "GET", "/api/state", nil, func(r *http.Request) { r.Header.Del(settings.TokenHeader) }, 403},
+		{"wrong token", "GET", "/api/state", nil, func(r *http.Request) { r.Header.Set(settings.TokenHeader, "nope") }, 403},
+		{"page without token", "GET", "/", nil, func(r *http.Request) { r.Header.Del(settings.TokenHeader) }, 403},
+		{"asset without token", "GET", "/app.js", nil, func(r *http.Request) { r.Header.Del(settings.TokenHeader) }, 403},
 		{"rebinding Host", "GET", "/api/state", nil, func(r *http.Request) { r.Host = "evil.example:" + port }, 403},
 		{"localhost is not our Host", "GET", "/api/state", nil, func(r *http.Request) { r.Host = "localhost:" + port }, 403},
 		{"cross-origin save", "POST", "/api/save", validForm(), func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }, 403},
@@ -155,8 +173,10 @@ func TestSettingsServerRefusesWhatItShould(t *testing.T) {
 
 func TestSettingsServerHeadersAndAssets(t *testing.T) {
 	s := newSettingsFixture(t).server(t)
-	resp, body := s.do(t, "GET", "/?t="+s.token, nil, func(r *http.Request) { r.Header.Del(settingsTokenHeader) })
-	if resp.StatusCode != 200 || !strings.Contains(string(body), "app.js?t="+s.token) || strings.Contains(string(body), "{{TOKEN}}") {
+	host, token := s.hostAndToken(t)
+	_, _ = host, token
+	resp, body := s.do(t, "GET", "/?t="+token, nil, func(r *http.Request) { r.Header.Del(settings.TokenHeader) })
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "app.js?t="+token) || strings.Contains(string(body), "{{TOKEN}}") {
 		t.Fatalf("the page must link its assets with the token: %d %s", resp.StatusCode, body)
 	}
 	csp := resp.Header.Get("Content-Security-Policy")
@@ -178,18 +198,18 @@ func TestSettingsServerHeadersAndAssets(t *testing.T) {
 		}
 	}
 	for _, p := range []string{"/app.js", "/app.css"} {
-		r, b := s.do(t, "GET", p+"?t="+s.token, nil, func(r *http.Request) { r.Header.Del(settingsTokenHeader) })
+		r, b := s.do(t, "GET", p+"?t="+token, nil, func(r *http.Request) { r.Header.Del(settings.TokenHeader) })
 		if r.StatusCode != 200 || len(b) < 500 {
 			t.Errorf("%s: %d, %d bytes", p, r.StatusCode, len(b))
 		}
 	}
 	// An author rule like display:flex beats the hidden attribute; this one restores it
 	// (the busy bar once stayed on screen because of that).
-	css, _ := os.ReadFile("settings_web/app.css")
+	css, _ := os.ReadFile("internal/settings/web/app.css")
 	if !strings.Contains(string(css), "[hidden] { display: none !important; }") {
 		t.Error("app.css must make the hidden attribute win over author display rules")
 	}
-	js, _ := os.ReadFile("settings_web/app.js")
+	js, _ := os.ReadFile("internal/settings/web/app.js")
 	for _, bad := range []string{"innerHTML", "outerHTML", "document.write", "eval("} {
 		if strings.Contains(string(js), bad) {
 			t.Errorf("app.js uses %s", bad)
@@ -206,7 +226,7 @@ func TestSettingsServerHeadersAndAssets(t *testing.T) {
 // The page logic is not run by go test, so these pin the three rules that keep a
 // stale save from slipping through (found in review of #85).
 func TestSettingsPageKeepsStaleSaveGuards(t *testing.T) {
-	b, err := os.ReadFile("settings_web/app.js")
+	b, err := os.ReadFile("internal/settings/web/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +256,7 @@ func TestSettingsPageKeepsStaleSaveGuards(t *testing.T) {
 	if nodePath, err := exec.LookPath("node"); err == nil {
 		cmd := exec.Command(nodePath, "-e", `
 const fs = require('fs');
-const js = fs.readFileSync('settings_web/app.js', 'utf8');
+const js = fs.readFileSync('internal/settings/web/app.js', 'utf8');
 const match = js.match(/function isSaveNeeded\([^)]*\)\s*\{[^}]*\}/);
 if (!match) throw new Error('isSaveNeeded not found in app.js');
 const fn = new Function('return ' + match[0])();
@@ -324,17 +344,17 @@ func TestSettingsSaveRejectsInvalidAndChangesNothing(t *testing.T) {
 	before := f.reg.Load()
 	cfgBefore, _ := os.ReadFile(filepath.Join(f.a.dir, "config.json"))
 
-	bad := map[string]settingsForm{
+	bad := map[string]settings.Form{
 		"no profiles":    {},
-		"no modifier":    {MaxChars: 4000, Profiles: []profileForm{{Key: "E", Languages: []string{"ja", "en"}}}},
-		"invalid key":    {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "!", Languages: []string{"ja", "en"}}}},
-		"same script":    {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Languages: []string{"en", "de"}}}},
-		"unknown target": {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Target: "xx"}}},
-		"duplicate key": {MaxChars: 4000, Profiles: []profileForm{
+		"no modifier":    {MaxChars: 4000, Profiles: []settings.ProfileForm{{Key: "E", Languages: []string{"ja", "en"}}}},
+		"invalid key":    {MaxChars: 4000, Profiles: []settings.ProfileForm{{Ctrl: true, Key: "!", Languages: []string{"ja", "en"}}}},
+		"same script":    {MaxChars: 4000, Profiles: []settings.ProfileForm{{Ctrl: true, Key: "E", Languages: []string{"en", "de"}}}},
+		"unknown target": {MaxChars: 4000, Profiles: []settings.ProfileForm{{Ctrl: true, Key: "E", Target: "xx"}}},
+		"duplicate key": {MaxChars: 4000, Profiles: []settings.ProfileForm{
 			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}},
 			{Alt: true, Ctrl: true, Key: "e", Target: "ko"}}},
-		"both modes":     {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Languages: []string{"ja", "en"}, Target: "ko"}}},
-		"unknown output": {MaxChars: 4000, Profiles: []profileForm{{Ctrl: true, Key: "E", Target: "ko", Output: "foo"}}},
+		"both modes":     {MaxChars: 4000, Profiles: []settings.ProfileForm{{Ctrl: true, Key: "E", Languages: []string{"ja", "en"}, Target: "ko"}}},
+		"unknown output": {MaxChars: 4000, Profiles: []settings.ProfileForm{{Ctrl: true, Key: "E", Target: "ko", Output: "foo"}}},
 	}
 	for name, form := range bad {
 		resp, body := s.do(t, "POST", "/api/save", form, nil)
@@ -344,7 +364,7 @@ func TestSettingsSaveRejectsInvalidAndChangesNothing(t *testing.T) {
 		}
 	}
 	// The error names the profile so the page can show it there.
-	_, body := s.do(t, "POST", "/api/save", settingsForm{MaxChars: 4000, Profiles: []profileForm{
+	_, body := s.do(t, "POST", "/api/save", settings.Form{MaxChars: 4000, Profiles: []settings.ProfileForm{
 		{Ctrl: true, Key: "E", Languages: []string{"ja", "en"}}, {Ctrl: true, Key: "K", Languages: []string{"en", "de"}}}}, nil)
 	if e := decodeAPI(t, body).Error; !strings.HasPrefix(e, "profiles[1]:") {
 		t.Errorf("error should start with profiles[1]: %q", e)
@@ -384,7 +404,7 @@ func TestSettingsSavePartialAndTotalHotkeyFailure(t *testing.T) {
 	f.taken["CTRL+SHIFT+Y"] = true
 	f.taken["CTRL+SHIFT+Z"] = true
 	prev := f.a.conf.Profiles
-	resp, body = s.do(t, "POST", "/api/save", settingsForm{MaxChars: 4000, Profiles: []profileForm{
+	resp, body = s.do(t, "POST", "/api/save", settings.Form{MaxChars: 4000, Profiles: []settings.ProfileForm{
 		{Ctrl: true, Shift: true, Key: "Y", Languages: []string{"ja", "en"}}, {Ctrl: true, Shift: true, Key: "Z", Target: "ko"}}}, nil)
 	r = decodeAPI(t, body)
 	if resp.StatusCode != 422 || !strings.Contains(r.Error, "previous settings were kept") {
@@ -419,9 +439,9 @@ func TestSettingsRequestTimedOutIsNeverApplied(t *testing.T) {
 
 	// The loop is busy: the request times out and the page is told so.
 	form := validForm()
-	req := newSettingsRequest(&form, 30*time.Millisecond)
+	req := settings.NewRequest(&form, 30*time.Millisecond)
 	rep := a.askSettings(req)
-	if !errors.Is(rep.err, errSettingsBusy) {
+	if !errors.Is(rep.Err, settings.ErrBusy) {
 		t.Fatalf("want busy, got %+v", rep)
 	}
 	// When the loop gets to it later, it must be dropped, not applied.
@@ -430,25 +450,26 @@ func TestSettingsRequestTimedOutIsNeverApplied(t *testing.T) {
 	if len(a.conf.Profiles) != 1 || a.conf.AutoPaste {
 		t.Fatalf("a request the page was told had failed was applied: %+v", a.conf)
 	}
-	if got := <-req.reply; !errors.Is(got.err, errSettingsBusy) {
+	if got := <-req.Reply; !errors.Is(got.Err, settings.ErrBusy) {
 		t.Errorf("the dropped request should be answered: %+v", got)
 	}
 }
 
 func TestSettingsServerClosesWhenIdleOrToldTo(t *testing.T) {
 	f := newSettingsFixture(t)
-	s, err := startSettingsServer(f.a.askSettings, f.a.dl, 80*time.Millisecond)
+	s, err := settings.Start(f.a.askSettings, f.a.dl, 80*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !s.Running() {
 		t.Fatal("should be running")
 	}
+	host, _ := testServer{s}.hostAndToken(t)
 	time.Sleep(300 * time.Millisecond)
 	if s.Running() {
 		t.Fatal("an idle server must close itself")
 	}
-	if _, err := http.Get("http://" + s.host + "/"); err == nil {
+	if _, err := http.Get("http://" + host + "/"); err == nil {
 		t.Error("the port is still open")
 	}
 
@@ -493,11 +514,11 @@ func TestSettingsMenuItemOpensThePageAndReusesIt(t *testing.T) {
 
 func TestProfileFormRoundTrip(t *testing.T) {
 	for _, hk := range []string{"Ctrl+Alt+E", "Ctrl+Shift+Y", "Alt+K", "Ctrl+Alt+Shift+Win+Q", "Ctrl+7", "Alt+F5", "Ctrl+Shift+F12"} {
-		f, err := formFromProfile(config.Profile{Hotkey: hk, Languages: []string{"ja", "en"}}, "windows")
+		f, err := settings.FormFromProfile(config.Profile{Hotkey: hk, Languages: []string{"ja", "en"}}, "windows")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := f.hotkeyString(); got != hk {
+		if got := f.HotkeyString(); got != hk {
 			t.Errorf("%q -> %+v -> %q", hk, f, got)
 		}
 	}
@@ -509,15 +530,15 @@ func TestProfileFormRoundTrip(t *testing.T) {
 		{"Ctrl+Alt+F5", "F5"},
 	} {
 		p := config.Profile{Hotkey: tc.hotkey, Languages: []string{"ja", "en"}}
-		form, err := formFromProfile(p, "windows")
+		form, err := settings.FormFromProfile(p, "windows")
 		if err != nil {
 			t.Fatalf("formFromProfile(%q): %v", tc.hotkey, err)
 		}
 		if form.Key != tc.wantKey {
 			t.Errorf("formFromProfile(%q).Key = %q, want %q", tc.hotkey, form.Key, tc.wantKey)
 		}
-		sf := settingsForm{MaxChars: 4000, Profiles: []profileForm{form}}
-		cfg, err := sf.toConfig(config.Default())
+		sf := settings.Form{MaxChars: 4000, Profiles: []settings.ProfileForm{form}}
+		cfg, err := sf.ToConfig(config.Default())
 		if err != nil {
 			t.Fatalf("toConfig for %q: %v", tc.hotkey, err)
 		}
@@ -525,17 +546,17 @@ func TestProfileFormRoundTrip(t *testing.T) {
 			t.Errorf("toConfig hotkey = %q, want %q", cfg.Profiles[0].Hotkey, tc.hotkey)
 		}
 	}
-	f, _ := formFromProfile(config.Profile{Hotkey: "cmd+option+e", Target: "ko"}, "darwin")
-	if !f.Win || !f.Alt || f.Key != "E" || f.Target != "ko" || f.hotkeyString() != "Alt+Win+E" {
-		t.Errorf("macOS names: %+v %q", f, f.hotkeyString())
+	f, _ := settings.FormFromProfile(config.Profile{Hotkey: "cmd+option+e", Target: "ko"}, "darwin")
+	if !f.Win || !f.Alt || f.Key != "E" || f.Target != "ko" || f.HotkeyString() != "Alt+Win+E" {
+		t.Errorf("macOS names: %+v %q", f, f.HotkeyString())
 	}
-	if _, err := formFromProfile(config.Profile{Hotkey: "nonsense"}, "windows"); err == nil {
+	if _, err := settings.FormFromProfile(config.Profile{Hotkey: "nonsense"}, "windows"); err == nil {
 		t.Error("an invalid hotkey must be an error")
 	}
 	// toConfig does not modify its base.
 	base := config.Default()
 	base.NormalizeProfiles()
-	if _, err := validForm().toConfig(base); err != nil || len(base.Profiles) != 1 {
+	if _, err := validForm().ToConfig(base); err != nil || len(base.Profiles) != 1 {
 		t.Errorf("toConfig changed the base or failed: %v %+v", err, base.Profiles)
 	}
 }
@@ -592,7 +613,7 @@ func TestSettingsLanguageChangeFollowedByUnrelatedSettingsSave(t *testing.T) {
 
 	// Also verify direct applySettings with Changed specified preserves Settings languages.
 	changeSettingsLanguages(t, f.a, []string{"ja", "zh-hans"})
-	if _, err := f.a.applySettings(settingsForm{
+	if _, err := f.a.applySettings(settings.Form{
 		BaseRevision: f.a.confRevision,
 		MaxChars:     3000,
 		Changed:      []string{"max_chars"},
@@ -757,7 +778,7 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 
 	resp, body := s.do(t, "POST", "/api/save", map[string]any{
 		"base_revision": st.Revision,
-		"profiles": []profileForm{
+		"profiles": []settings.ProfileForm{
 			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}},
 		},
 		"changed": []string{"profiles"},
@@ -780,7 +801,7 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 	// Resaving with updated revision succeeds.
 	resp, body = s.do(t, "POST", "/api/save", map[string]any{
 		"base_revision": r.State.Revision,
-		"profiles": []profileForm{
+		"profiles": []settings.ProfileForm{
 			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "ko"}},
 		},
 		"changed": []string{"profiles"},
@@ -836,11 +857,11 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 	}
 
 	// Case C: Direct applySettings call with stale BaseRevision on conflicting field.
-	form := f.a.settingsState().settingsForm
+	form := f.a.settingsState().Form
 	changeSettingsLanguages(t, f.a, []string{"ja", "zh-hans"})
 	form.Changed = []string{"profiles"}
 	_, err := f.a.applySettings(form)
-	if !errors.Is(err, ErrConflict) {
+	if !errors.Is(err, settings.ErrConflict) {
 		t.Fatalf("applySettings with stale BaseRevision must return ErrConflict, got %v", err)
 	}
 	if !languages.SamePair(f.a.conf.Languages, []string{"ja", "zh-hans"}) {
@@ -851,10 +872,10 @@ func TestOverlappingEditsConflictHandling(t *testing.T) {
 // These helpers edit the current Settings form, preserving unrelated profiles.
 func changeSettingsHotkey(t *testing.T, a *app, spec string) error {
 	t.Helper()
-	form := a.settingsState().settingsForm
+	form := a.settingsState().Form
 	p := a.conf.Profiles[0]
 	p.Hotkey = spec
-	f, err := formFromProfile(p, "windows")
+	f, err := settings.FormFromProfile(p, "windows")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -866,7 +887,7 @@ func changeSettingsHotkey(t *testing.T, a *app, spec string) error {
 
 func changeSettingsLanguages(t *testing.T, a *app, pair []string) {
 	t.Helper()
-	form := a.settingsState().settingsForm
+	form := a.settingsState().Form
 	form.Profiles[0].Languages = pair
 	form.Changed = []string{"profiles"}
 	if _, err := a.applySettings(form); err != nil {
@@ -876,7 +897,7 @@ func changeSettingsLanguages(t *testing.T, a *app, pair []string) {
 
 func saveSettingsField(t *testing.T, a *app, field string, value bool) {
 	t.Helper()
-	form := a.settingsState().settingsForm
+	form := a.settingsState().Form
 	form.Changed = []string{field}
 	switch field {
 	case "auto_paste":
@@ -909,7 +930,7 @@ func TestSettingsAllHotkeysInactive(t *testing.T) {
 	if len(f.opened) != 1 {
 		t.Fatal("Settings did not open")
 	}
-	_, body := f.a.settings.do(t, "GET", "/api/state", nil, nil)
+	_, body := testServer{f.a.settings}.do(t, "GET", "/api/state", nil, nil)
 	st := decodeAPI(t, body).State
 	if st == nil || len(st.Inactive) != 2 || !strings.Contains(st.Inactive[0], "Ctrl+Alt+E") || !strings.Contains(st.Inactive[1], "Ctrl+Alt+K") {
 		t.Fatalf("inactive state: %s", body)
@@ -917,13 +938,13 @@ func TestSettingsAllHotkeysInactive(t *testing.T) {
 	if !st.NoActiveHotkey {
 		t.Error("expected NoActiveHotkey=true when all hotkeys failed to register")
 	}
-	_, js := f.a.settings.do(t, "GET", "/app.js", nil, nil)
+	_, js := testServer{f.a.settings}.do(t, "GET", "/app.js", nil, nil)
 	if !strings.Contains(string(js), "Choose another hotkey below and click Save") {
 		t.Fatal("inactive banner must explain recovery")
 	}
 	// After the keys become free, an unchanged Save retries registration.
 	f.taken["CTRL+ALT+E"], f.taken["CTRL+ALT+K"] = false, false
-	resp, body := f.a.settings.do(t, "POST", "/api/save", st.settingsForm, nil)
+	resp, body := testServer{f.a.settings}.do(t, "POST", "/api/save", st.Form, nil)
 	rep := decodeAPI(t, body)
 	if resp.StatusCode != 200 || rep.State == nil || len(rep.State.Inactive) != 0 || !f.a.anyHotkeyActive() {
 		t.Fatalf("retry: %d %s", resp.StatusCode, body)
@@ -1022,10 +1043,10 @@ func TestPureHotkeyRetryDoesNotTouchConfigOrRevisions(t *testing.T) {
 	f.a.confRevision = 5
 	f.a.profilesRev = 5
 
-	form := settingsForm{
+	form := settings.Form{
 		BaseRevision: 5,
 		Changed:      []string{"profiles"},
-		Profiles: []profileForm{
+		Profiles: []settings.ProfileForm{
 			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}},
 		},
 	}
@@ -1106,11 +1127,11 @@ func TestSettingsProfileInputSaveAndState(t *testing.T) {
 		t.Fatalf("initial state input: %+v", st)
 	}
 
-	saveForm := settingsForm{
+	saveForm := settings.Form{
 		BaseRevision: st.Revision,
 		MaxChars:     4000,
 		Changed:      []string{"profiles"},
-		Profiles: []profileForm{
+		Profiles: []settings.ProfileForm{
 			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Input: config.InputClipboard},
 		},
 	}
@@ -1133,7 +1154,7 @@ func TestSettingsProfileInputSaveAndState(t *testing.T) {
 	// An unknown value is rejected and nothing changes.
 	bad := saveForm
 	bad.BaseRevision = r.State.Revision
-	bad.Profiles = []profileForm{{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Input: "mouse"}}
+	bad.Profiles = []settings.ProfileForm{{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Input: "mouse"}}
 	resp, body = s.do(t, "POST", "/api/save", bad, nil)
 	if resp.StatusCode == 200 || !strings.Contains(decodeAPI(t, body).Error, "input") {
 		t.Fatalf("an unknown input must be rejected: %d %s", resp.StatusCode, body)
@@ -1166,11 +1187,11 @@ func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 	}
 
 	// Save profile with output: "bilingual".
-	saveForm := settingsForm{
+	saveForm := settings.Form{
 		BaseRevision: st.Revision,
 		MaxChars:     4000,
 		Changed:      []string{"profiles"},
-		Profiles: []profileForm{
+		Profiles: []settings.ProfileForm{
 			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Output: config.OutputBilingual},
 		},
 	}
@@ -1210,10 +1231,10 @@ func TestSettingsProfileOutputSaveAndConflict(t *testing.T) {
 	changeSettingsLanguages(t, f.a, []string{"ja", "ko"})
 
 	// Attempt save with stale base_revision.
-	staleForm := settingsForm{
+	staleForm := settings.Form{
 		BaseRevision: saveForm.BaseRevision, // older than f.a.profilesRev
 		Changed:      []string{"profiles"},
-		Profiles: []profileForm{
+		Profiles: []settings.ProfileForm{
 			{Ctrl: true, Alt: true, Key: "E", Languages: []string{"ja", "en"}, Output: config.OutputReplace},
 		},
 	}

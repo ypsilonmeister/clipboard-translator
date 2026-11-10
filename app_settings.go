@@ -8,16 +8,15 @@ import (
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
-// This file is the app's side of the settings page (settings_server.go): it
+// This file is the app's side of the settings page (internal/settings): it
 // answers the page's requests on the UI thread, where the hotkeys and the
 // config belong.
 
 const settingsIdle = 5 * time.Minute
-
-var ErrConflict = errors.New("The settings were changed while this page was open. Reload the settings to see the changes.")
 
 func (a *app) ensureRevisions() {
 	if a.confRevision == 0 {
@@ -48,7 +47,7 @@ func (a *app) openSettings() {
 		if idle <= 0 {
 			idle = settingsIdle
 		}
-		s, err := startSettingsServer(a.askSettings, a.dl, idle)
+		s, err := settings.Start(a.askSettings, a.dl, idle)
 		if err != nil {
 			log.Printf("settings page: %v", err)
 			a.tray.Notify("Clipboard Translator", "Could not start the settings server: "+err.Error()+". You can open config.json from the tray (Open config.json), edit the hotkey there and restart the app.", true)
@@ -71,32 +70,32 @@ func (a *app) closeSettings() {
 
 // askSettings runs on a server goroutine: it hands the request to the main loop
 // and waits for the answer, giving up at the request's deadline.
-func (a *app) askSettings(req settingsRequest) settingsReply {
+func (a *app) askSettings(req settings.Request) settings.Reply {
 	select {
 	case a.settingsReqs <- req:
 	default:
-		return settingsReply{err: errSettingsBusy}
+		return settings.Reply{Err: settings.ErrBusy}
 	}
-	timer := time.NewTimer(time.Until(req.deadline))
+	timer := time.NewTimer(time.Until(req.Deadline))
 	defer timer.Stop()
 	select {
-	case rep := <-req.reply:
+	case rep := <-req.Reply:
 		return rep
 	case <-timer.C:
-		return settingsReply{err: errSettingsBusy}
+		return settings.Reply{Err: settings.ErrBusy}
 	}
 }
 
 // handleSettingsRequest runs on the UI thread. A request whose deadline passed
 // while the loop was busy is dropped: the page was already told it failed.
-func (a *app) handleSettingsRequest(req settingsRequest) {
+func (a *app) handleSettingsRequest(req settings.Request) {
 	a.settingsServing = true
 	defer func() { a.settingsServing = false }()
-	if time.Now().After(req.deadline) {
-		req.reply <- settingsReply{err: errSettingsBusy}
+	if time.Now().After(req.Deadline) {
+		req.Reply <- settings.Reply{Err: settings.ErrBusy}
 		return
 	}
-	switch req.action {
+	switch req.Action {
 	case "use_model":
 		a.startModelSwitch(req)
 		return
@@ -107,23 +106,23 @@ func (a *app) handleSettingsRequest(req settingsRequest) {
 		a.startEngineSwitch(req)
 		return
 	}
-	if req.save == nil {
-		req.reply <- settingsReply{state: a.settingsState()}
+	if req.Save == nil {
+		req.Reply <- settings.Reply{State: a.settingsState()}
 		return
 	}
 	a.settingsNotice = ""
-	warnings, err := a.applySettings(*req.save)
-	req.reply <- settingsReply{state: a.settingsState(), warnings: warnings, err: err}
+	warnings, err := a.applySettings(*req.Save)
+	req.Reply <- settings.Reply{State: a.settingsState(), Warnings: warnings, Err: err}
 }
 
 // settingsState is what the page shows now.
-func (a *app) settingsState() settingsState {
+func (a *app) settingsState() settings.State {
 	a.ensureRevisions()
-	st := settingsState{
+	st := settings.State{
 		Revision:       a.confRevision,
-		Languages:      languageOptions(),
+		Languages:      settings.LanguageOptions(),
 		MaxHotkeys:     a.hotkeyLimit,
-		WinKey:         winKeyName(runtime.GOOS),
+		WinKey:         settings.WinKeyName(runtime.GOOS),
 		Inactive:       a.inactiveHotkeys(),
 		NoActiveHotkey: !a.anyHotkeyActive(),
 	}
@@ -137,7 +136,7 @@ func (a *app) settingsState() settingsState {
 	st.Notice = a.settingsNotice
 	a.fillModelsAndEngines(&st)
 	for _, p := range a.conf.Profiles {
-		f, err := formFromProfile(p, runtime.GOOS)
+		f, err := settings.FormFromProfile(p, runtime.GOOS)
 		if err != nil {
 			log.Printf("settings page: profile %q: %v", p.Hotkey, err)
 			continue
@@ -209,7 +208,7 @@ func sameProfiles(a, b []config.Profile) bool {
 // saves config.json and reports what is not active. It returns an error, and
 // leaves everything as it was, when the settings are invalid or none of the new
 // hotkeys can be registered. An unchanged save retries when no hotkey is active.
-func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
+func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 	a.ensureRevisions()
 	hasField := func(field string) bool {
 		if len(form.Changed) == 0 {
@@ -225,26 +224,26 @@ func (a *app) applySettings(form settingsForm) (warnings []string, err error) {
 
 	if form.BaseRevision > 0 {
 		if len(form.Changed) == 0 && form.BaseRevision < a.confRevision {
-			return nil, ErrConflict
+			return nil, settings.ErrConflict
 		}
 		if hasField("profiles") && form.BaseRevision < a.profilesRev {
-			return nil, ErrConflict
+			return nil, settings.ErrConflict
 		}
 		if hasField("auto_paste") && form.BaseRevision < a.autoPasteRev {
-			return nil, ErrConflict
+			return nil, settings.ErrConflict
 		}
 		if hasField("notify_on_complete") && form.BaseRevision < a.notifyOnCompleteRev {
-			return nil, ErrConflict
+			return nil, settings.ErrConflict
 		}
 		if hasField("idle_unload_minutes") && form.BaseRevision < a.idleUnloadRev {
-			return nil, ErrConflict
+			return nil, settings.ErrConflict
 		}
 		if hasField("max_chars") && form.BaseRevision < a.maxCharsRev {
-			return nil, ErrConflict
+			return nil, settings.ErrConflict
 		}
 	}
 
-	cand, err := form.toConfig(a.conf)
+	cand, err := form.ToConfig(a.conf)
 	if err != nil {
 		return nil, err
 	}

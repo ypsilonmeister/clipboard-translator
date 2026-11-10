@@ -12,6 +12,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 )
 
 // Model and engine choice for the settings page. Everything here runs on the UI
@@ -61,7 +62,7 @@ func (a *app) isModelActive(e models.Entry) bool {
 }
 
 // fillModelsAndEngines adds what the model and engine sections show.
-func (a *app) fillModelsAndEngines(st *settingsState) {
+func (a *app) fillModelsAndEngines(st *settings.State) {
 	_, known := models.ForFile(a.conf.ModelFile)
 	// One snapshot of the download for the whole state: reading it per model
 	// could show "downloading" in one place and "done" in another.
@@ -82,7 +83,7 @@ func (a *app) fillModelsAndEngines(st *settingsState) {
 			deleteBlocked = "downloading"
 		}
 
-		st.Models = append(st.Models, modelState{
+		st.Models = append(st.Models, settings.ModelState{
 			Key:               e.Key,
 			Name:              e.Name,
 			Note:              e.Note,
@@ -108,7 +109,7 @@ func (a *app) fillModelsAndEngines(st *settingsState) {
 	st.ConfiguredEngine = cfg
 	st.RunningEngine = cur
 	for _, b := range config.AvailableBackends(a.dir) {
-		st.Engines = append(st.Engines, engineState{Name: b, Label: backendLabel(b), Active: b == cur})
+		st.Engines = append(st.Engines, settings.EngineState{Name: b, Label: backendLabel(b), Active: b == cur})
 	}
 	if d.Key != "" {
 		st.Download = &d
@@ -123,13 +124,13 @@ func (a *app) serviceSettingsWhileBusy(label string) {
 	for {
 		select {
 		case req := <-a.settingsReqs:
-			if time.Now().After(req.deadline) || req.action != "" || req.save != nil {
-				req.reply <- settingsReply{err: errSettingsBusy}
+			if time.Now().After(req.Deadline) || req.Action != "" || req.Save != nil {
+				req.Reply <- settings.Reply{Err: settings.ErrBusy}
 				continue
 			}
 			st := a.settingsState()
 			st.Busy = label
-			req.reply <- settingsReply{state: st}
+			req.Reply <- settings.Reply{State: st}
 		default:
 			return
 		}
@@ -137,20 +138,20 @@ func (a *app) serviceSettingsWhileBusy(label string) {
 }
 
 // startModelSwitch handles "use this model" from the page.
-func (a *app) startModelSwitch(req settingsRequest) {
-	e, err := a.checkModelSwitch(req.arg)
+func (a *app) startModelSwitch(req settings.Request) {
+	e, err := a.checkModelSwitch(req.Arg)
 	if err != nil {
-		req.reply <- settingsReply{state: a.settingsState(), err: err}
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: err}
 		return
 	}
 	if cur, ok := models.ForFile(a.conf.ModelFile); ok && cur.Key == e.Key {
-		req.reply <- settingsReply{state: a.settingsState()}
+		req.Reply <- settings.Reply{State: a.settingsState()}
 		return
 	}
 	a.settingsNotice = ""
 	st := a.settingsState()
 	st.Busy = "switching to " + e.Name
-	req.reply <- settingsReply{state: st} // answer first: what follows blocks the loop
+	req.Reply <- settings.Reply{State: st} // answer first: what follows blocks the loop
 	if err := a.switchModel(e); err != nil && !errors.Is(err, llamaserver.ErrQuit) {
 		a.settingsNotice = err.Error()
 	}
@@ -260,28 +261,28 @@ func (a *app) switchModel(e models.Entry) error {
 }
 
 // startEngineSwitch handles "use this engine" from the page.
-func (a *app) startEngineSwitch(req settingsRequest) {
+func (a *app) startEngineSwitch(req settings.Request) {
 	found := false
 	for _, b := range config.AvailableBackends(a.dir) {
-		found = found || b == req.arg
+		found = found || b == req.Arg
 	}
 	if !found {
-		req.reply <- settingsReply{state: a.settingsState(), err: fmt.Errorf("the %q engine is not installed", req.arg)}
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: fmt.Errorf("the %q engine is not installed", req.Arg)}
 		return
 	}
-	if a.runningBackend() == req.arg {
-		a.switchBackend(req.arg) // at most makes a running fallback the configured engine; nothing restarts
-		req.reply <- settingsReply{state: a.settingsState()}
+	if a.runningBackend() == req.Arg {
+		a.switchBackend(req.Arg) // at most makes a running fallback the configured engine; nothing restarts
+		req.Reply <- settings.Reply{State: a.settingsState()}
 		return
 	}
 	a.settingsNotice = ""
 	st := a.settingsState()
-	st.Busy = "switching to " + backendLabel(req.arg)
-	req.reply <- settingsReply{state: st}
-	a.switchBackend(req.arg)
+	st.Busy = "switching to " + backendLabel(req.Arg)
+	req.Reply <- settings.Reply{State: st}
+	a.switchBackend(req.Arg)
 	// Ask the server that runs: after a failed retry of the configured GPU from
 	// the CPU fallback, config.json still names that GPU.
-	if !a.sup.Running() || a.runningBackend() != req.arg {
+	if !a.sup.Running() || a.runningBackend() != req.Arg {
 		a.settingsNotice = "The engine could not be switched, so the previous one is still in use. translator.log has the reason."
 	}
 }
@@ -298,22 +299,22 @@ func (a *app) onDownloadFinished(st models.DownloadState) {
 }
 
 // handleDeleteModelRequest handles "delete_model" from the page on the UI thread.
-func (a *app) handleDeleteModelRequest(req settingsRequest) {
-	if req.kind != "model" && req.kind != "partial" {
-		req.reply <- settingsReply{state: a.settingsState(), err: errors.New("kind must be 'model' or 'partial'")}
+func (a *app) handleDeleteModelRequest(req settings.Request) {
+	if req.Kind != "model" && req.Kind != "partial" {
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: errors.New("kind must be 'model' or 'partial'")}
 		return
 	}
 
-	e, ok := models.ByKey(req.arg)
+	e, ok := models.ByKey(req.Arg)
 	if !ok {
-		req.reply <- settingsReply{state: a.settingsState(), err: fmt.Errorf("unknown model %q", req.arg)}
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: fmt.Errorf("unknown model %q", req.Arg)}
 		return
 	}
 
 	// Refuse the active model ONLY when deleting the model file.
 	// Partial files can be removed even for the active model.
-	if req.kind == "model" && a.isModelActive(e) {
-		req.reply <- settingsReply{state: a.settingsState(), err: fmt.Errorf("%s is currently in use and cannot be deleted", e.Name)}
+	if req.Kind == "model" && a.isModelActive(e) {
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: fmt.Errorf("%s is currently in use and cannot be deleted", e.Name)}
 		return
 	}
 
@@ -321,20 +322,20 @@ func (a *app) handleDeleteModelRequest(req settingsRequest) {
 	if a.dl != nil {
 		release, err := a.dl.ReserveDelete(e.Key)
 		if err != nil {
-			req.reply <- settingsReply{state: a.settingsState(), err: err}
+			req.Reply <- settings.Reply{State: a.settingsState(), Err: err}
 			return
 		}
 		defer release()
 	}
 
 	targetRel := filepath.Join("models", e.File)
-	if req.kind == "partial" {
+	if req.Kind == "partial" {
 		targetRel += ".partial"
 	}
 
 	targetPath, err := config.PathWithin(a.dir, targetRel)
 	if err != nil {
-		req.reply <- settingsReply{state: a.settingsState(), err: err}
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: err}
 		return
 	}
 
@@ -342,11 +343,11 @@ func (a *app) handleDeleteModelRequest(req settingsRequest) {
 	// (OneDrive placeholders, CompactOS) must not be refused (isRemovableFile).
 	info, errStat := os.Lstat(targetPath)
 	if errStat != nil && !errors.Is(errStat, os.ErrNotExist) {
-		req.reply <- settingsReply{state: a.settingsState(), err: sanitizeFileErr(targetRel, errStat)}
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: sanitizeFileErr(targetRel, errStat)}
 		return
 	}
 	if errStat == nil && !models.IsRemovableFile(info) {
-		req.reply <- settingsReply{state: a.settingsState(), err: fmt.Errorf("refusing to delete %s: not a regular file", filepath.ToSlash(targetRel))}
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: fmt.Errorf("refusing to delete %s: not a regular file", filepath.ToSlash(targetRel))}
 		return
 	}
 
@@ -355,7 +356,7 @@ func (a *app) handleDeleteModelRequest(req settingsRequest) {
 	if errStat == nil {
 		if err := os.Remove(targetPath); err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				req.reply <- settingsReply{state: a.settingsState(), err: sanitizeFileErr(targetRel, err)}
+				req.Reply <- settings.Reply{State: a.settingsState(), Err: sanitizeFileErr(targetRel, err)}
 				return
 			}
 			// Another caller removed it before os.Remove: freed stays 0, deleted stays false.
@@ -365,13 +366,13 @@ func (a *app) handleDeleteModelRequest(req settingsRequest) {
 		}
 	}
 
-	if req.kind == "partial" && a.dl != nil {
+	if req.Kind == "partial" && a.dl != nil {
 		a.dl.ClearKey(e.Key)
 	}
 
 	var notice string
 	label := strings.ToUpper(e.Key)
-	if req.kind == "partial" {
+	if req.Kind == "partial" {
 		if deleted {
 			notice = fmt.Sprintf("Removed the partial download of %s (%s freed).", label, formatBytes(freed))
 		} else {
@@ -388,7 +389,7 @@ func (a *app) handleDeleteModelRequest(req settingsRequest) {
 	// NOTE: Do not store delete result in a.settingsNotice (Item 3).
 	// Return it only in settingsReply.notice.
 	st := a.settingsState()
-	req.reply <- settingsReply{state: st, notice: notice}
+	req.Reply <- settings.Reply{State: st, Notice: notice}
 }
 
 func formatBytes(n int64) string {

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 )
 
 // The quick start guide: select text -> hotkey -> paste. It is built from the
@@ -13,15 +14,6 @@ import (
 // It appears once as a tray notification (quickstart_shown in config.json), is
 // always on the Settings page, and can be read again from the tray menu. It
 // changes no setting; in particular it never turns on auto-paste.
-
-// quickstartGuide is the guide as the Settings page shows it.
-type quickstartGuide struct {
-	Active  bool     `json:"active"` // a hotkey works, so the steps can be followed
-	Intro   string   `json:"intro"`  // what to do now, or why nothing works yet
-	Steps   []string `json:"steps,omitempty"`
-	Extras  string   `json:"extras,omitempty"` // optional configuration, mentioned after the basics
-	Initial bool     `json:"initial"`          // first run: the page opens the guide
-}
 
 // guideSteps are the three steps with the real hotkey, or nil when none works.
 func (a *app) guideSteps() []string {
@@ -42,8 +34,8 @@ func (a *app) guideSteps() []string {
 
 const guideExtras = "Other models, languages, hotkeys and automatic pasting are optional; you can change them in Settings whenever you like."
 
-func (a *app) quickstartGuide() quickstartGuide {
-	g := quickstartGuide{Initial: !a.conf.QuickstartShown}
+func (a *app) quickstartGuide() settings.QuickstartGuide {
+	g := settings.QuickstartGuide{Initial: !a.conf.QuickstartShown}
 	g.Steps = a.guideSteps()
 	if g.Steps == nil {
 		g.Intro = "The hotkey " + a.conf.Hotkey + " is not active (another program may be using it), so translating by hotkey does not work yet. Choose another hotkey under Hotkeys below and click Save."

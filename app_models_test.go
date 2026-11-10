@@ -12,6 +12,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models/modeltest"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
@@ -44,13 +45,13 @@ func testEntry(key, file string) models.Entry {
 	return models.Entry{Key: key, Name: "Model " + key, File: file, Repo: "r", Revision: "v", SizeLabel: "1 MB", MinBytes: 1 << 20}
 }
 
-func findModel(st settingsState, key string) modelState {
+func findModel(st settings.State, key string) settings.ModelState {
 	for _, m := range st.Models {
 		if m.Key == key {
 			return m
 		}
 	}
-	return modelState{}
+	return settings.ModelState{}
 }
 
 // newDLFixture starts a fake model host and puts its small model "t1" in the catalog.
@@ -207,9 +208,9 @@ func TestSwitchModelFailureWhenRestoreAlsoFails(t *testing.T) {
 			if source == "tray" {
 				a.handleCommand(cmdModelBase)
 			} else {
-				req := newActionRequest("use_model", "bad", time.Minute)
+				req := settings.NewActionRequest("use_model", "bad", time.Minute)
 				a.startModelSwitch(req)
-				if rep := <-req.reply; rep.err != nil || rep.state.Busy == "" {
+				if rep := <-req.Reply; rep.Err != nil || rep.State.Busy == "" {
 					t.Fatalf("switch request: %+v", rep)
 				}
 			}
@@ -239,21 +240,21 @@ func TestSwitchModelFailureWhenRestoreAlsoFails(t *testing.T) {
 func TestServiceSettingsWhileBusyOnlyAnswersStateRequests(t *testing.T) {
 	a, _, _ := newTestApp(t)
 	form := validForm()
-	reqs := map[string]settingsRequest{
-		"state":   newSettingsRequest(nil, time.Minute),
-		"save":    newSettingsRequest(&form, time.Minute),
-		"action":  newActionRequest("use_model", "x", time.Minute),
-		"expired": newSettingsRequest(nil, -time.Second),
+	reqs := map[string]settings.Request{
+		"state":   settings.NewRequest(nil, time.Minute),
+		"save":    settings.NewRequest(&form, time.Minute),
+		"action":  settings.NewActionRequest("use_model", "x", time.Minute),
+		"expired": settings.NewRequest(nil, -time.Second),
 	}
 	for _, r := range reqs {
 		a.settingsReqs <- r
 	}
 	a.serviceSettingsWhileBusy("loading Model b")
-	if rep := <-reqs["state"].reply; rep.err != nil || rep.state.Busy != "loading Model b" || len(rep.state.Profiles) == 0 {
+	if rep := <-reqs["state"].Reply; rep.Err != nil || rep.State.Busy != "loading Model b" || len(rep.State.Profiles) == 0 {
 		t.Errorf("state while busy: %+v", rep)
 	}
 	for _, k := range []string{"save", "action", "expired"} {
-		if rep := <-reqs[k].reply; rep.err != errSettingsBusy {
+		if rep := <-reqs[k].Reply; rep.Err != settings.ErrBusy {
 			t.Errorf("%s while busy must be refused, got %+v", k, rep)
 		}
 	}
