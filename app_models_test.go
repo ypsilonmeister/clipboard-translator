@@ -11,6 +11,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models/modeltest"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
 // putModel creates a (sparse) file big enough to count as the model's installed file.
@@ -64,7 +65,7 @@ func newDLFixture(t *testing.T) *modeltest.Host {
 func TestSettingsStateListsModelsAndEngines(t *testing.T) {
 	a, _, _ := newTestApp(t)
 	st := a.settingsState()
-	if len(st.Models) != len(models.Catalog) || st.LicenseURL != plamoLicenseURL {
+	if len(st.Models) != len(models.Catalog) || st.LicenseURL != update.PlamoLicenseURL {
 		t.Fatalf("models: %+v license %q", st.Models, st.LicenseURL)
 	}
 	for _, m := range st.Models {

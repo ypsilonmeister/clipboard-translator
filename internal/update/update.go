@@ -10,63 +10,59 @@ import (
 	"strings"
 )
 
-// version is the release this binary was built from. release.yml sets it with
-// -ldflags "-X main.version=<tag without v>"; a local build stays "dev".
-var version = "dev"
-
 const (
-	repoSlug         = "ypsilonmeister/clipboard-translator"
-	latestReleaseAPI = "https://api.github.com/repos/" + repoSlug + "/releases/latest"
-	releasesPage     = "https://github.com/" + repoSlug + "/releases"
-	plamoLicenseURL  = "https://plamo.preferredai.jp/info/plamo-community-license-ja"
+	RepoSlug         = "ypsilonmeister/clipboard-translator"
+	LatestReleaseAPI = "https://api.github.com/repos/" + RepoSlug + "/releases/latest"
+	ReleasesPage     = "https://github.com/" + RepoSlug + "/releases"
+	PlamoLicenseURL  = "https://plamo.preferredai.jp/info/plamo-community-license-ja"
 )
 
-type releaseInfo struct{ Tag, URL string }
+type ReleaseInfo struct{ Tag, URL string }
 
 var releaseTagPattern = regexp.MustCompile(`^v[0-9]+(\.[0-9]+)*$`)
 
 // installScriptURL pins the updater itself to the release the user confirmed.
-func installScriptURL(tag string) (string, error) {
+func InstallScriptURL(tag string) (string, error) {
 	if !releaseTagPattern.MatchString(tag) {
 		return "", fmt.Errorf("invalid release tag %q: expected v followed by dot-separated numbers (for example v0.7.0)", tag)
 	}
-	return "https://raw.githubusercontent.com/" + repoSlug + "/" + tag + "/install.ps1", nil
+	return "https://raw.githubusercontent.com/" + RepoSlug + "/" + tag + "/install.ps1", nil
 }
 
 // fetchLatest asks the GitHub API for the newest published release. It is only
 // called when the user picks "Check for updates"; the app never phones home on
 // its own.
-func fetchLatest(ctx context.Context, apiURL string) (releaseInfo, error) {
+func FetchLatest(ctx context.Context, apiURL, version string) (ReleaseInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
-		return releaseInfo{}, err
+		return ReleaseInfo{}, err
 	}
 	req.Header.Set("User-Agent", "ClipboardTranslator/"+version)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return releaseInfo{}, err
+		return ReleaseInfo{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return releaseInfo{}, fmt.Errorf("GitHub answered %s", resp.Status)
+		return ReleaseInfo{}, fmt.Errorf("GitHub answered %s", resp.Status)
 	}
 	var body struct {
 		TagName string `json:"tag_name"`
 		HTMLURL string `json:"html_url"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return releaseInfo{}, err
+		return ReleaseInfo{}, err
 	}
 	if body.TagName == "" {
-		return releaseInfo{}, fmt.Errorf("the release has no tag")
+		return ReleaseInfo{}, fmt.Errorf("the release has no tag")
 	}
-	return releaseInfo{Tag: body.TagName, URL: body.HTMLURL}, nil
+	return ReleaseInfo{Tag: body.TagName, URL: body.HTMLURL}, nil
 }
 
 // versionParts reads "v1.2.3", "1.2.3-rc1" or "1.2" as numbers. It returns nil
 // for anything that does not start with a digit ("dev").
-func versionParts(v string) []int {
+func VersionParts(v string) []int {
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
 	if v == "" || v[0] < '0' || v[0] > '9' {
 		return nil
@@ -87,8 +83,8 @@ func versionParts(v string) []int {
 
 // compareVersions compares numerically, so 0.10.0 is newer than 0.9.0. Missing
 // parts count as 0. It returns 0 when either side is not a version.
-func compareVersions(a, b string) int {
-	pa, pb := versionParts(a), versionParts(b)
+func CompareVersions(a, b string) int {
+	pa, pb := VersionParts(a), VersionParts(b)
 	if pa == nil || pb == nil {
 		return 0
 	}
@@ -110,27 +106,27 @@ func compareVersions(a, b string) int {
 	return 0
 }
 
-func isNewerVersion(latest, current string) bool { return compareVersions(latest, current) > 0 }
+func IsNewerVersion(latest, current string) bool { return CompareVersions(latest, current) > 0 }
 
 // installKind says how the running copy got here, which decides how it updates.
-type installKind int
+type InstallKind int
 
 const (
-	kindPortable  installKind = iota // a zip extracted by hand
-	kindInstaller                    // installed by install.ps1
-	kindScoop                        // installed by Scoop
+	KindPortable  InstallKind = iota // a zip extracted by hand
+	KindInstaller                    // installed by install.ps1
+	KindScoop                        // installed by Scoop
 )
 
 // detectInstallKind looks at the app folder and at the InstallLocation that
 // install.ps1 records for "Apps & features".
-func detectInstallKind(dir, installLocation string) installKind {
+func DetectInstallKind(dir, installLocation string) InstallKind {
 	// Windows paths: case-insensitive, either slash, optional trailing slash.
 	norm := func(p string) string { return strings.TrimRight(strings.ToLower(strings.ReplaceAll(p, `\`, "/")), "/") }
 	if strings.Contains(norm(dir)+"/", "/scoop/apps/") {
-		return kindScoop
+		return KindScoop
 	}
 	if installLocation != "" && norm(installLocation) == norm(dir) {
-		return kindInstaller
+		return KindInstaller
 	}
-	return kindPortable
+	return KindPortable
 }

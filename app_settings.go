@@ -6,6 +6,8 @@ import (
 	"log"
 	"runtime"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
 // This file is the app's side of the settings page (settings_server.go): it
@@ -130,7 +132,7 @@ func (a *app) settingsState() settingsState {
 	st.NotifyOnComplete = a.conf.NotifyOnComplete
 	st.MaxChars = a.conf.MaxChars
 	st.IdleUnloadMinutes = a.conf.IdleUnloadMinutes
-	st.LicenseURL = plamoLicenseURL
+	st.LicenseURL = update.PlamoLicenseURL
 	st.Notice = a.settingsNotice
 	a.fillModelsAndEngines(&st)
 	for _, p := range a.conf.Profiles {

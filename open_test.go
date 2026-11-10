@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
 func TestOpenConfigFile_OpenerSucceeds(t *testing.T) {
@@ -78,8 +80,8 @@ func TestOpenLicense_Succeeds(t *testing.T) {
 		return nil
 	}
 	a.handleCommand(cmdPlamoLicense)
-	if opened != plamoLicenseURL {
-		t.Errorf("openURL called with %q, want %q", opened, plamoLicenseURL)
+	if opened != update.PlamoLicenseURL {
+		t.Errorf("openURL called with %q, want %q", opened, update.PlamoLicenseURL)
 	}
 	if tray.lastNote() != "" || tray.lastError() {
 		t.Errorf("unexpected notification: %q (error=%v)", tray.lastNote(), tray.lastError())
@@ -95,14 +97,14 @@ func TestOpenLicense_Fails(t *testing.T) {
 	if !tray.lastError() {
 		t.Error("expected error notification")
 	}
-	if !strings.Contains(tray.lastNote(), plamoLicenseURL) {
-		t.Errorf("notification %q does not contain license URL %q", tray.lastNote(), plamoLicenseURL)
+	if !strings.Contains(tray.lastNote(), update.PlamoLicenseURL) {
+		t.Errorf("notification %q does not contain license URL %q", tray.lastNote(), update.PlamoLicenseURL)
 	}
 }
 
 func TestOpenReleasesPage_Succeeds(t *testing.T) {
 	a, tray, _ := newTestApp(t)
-	a.latest = releaseInfo{Tag: "v9.9.9"}
+	a.latest = update.ReleaseInfo{Tag: "v9.9.9"}
 	a.askYesNo = func(msg string) bool { return true }
 	opened := ""
 	a.openURL = func(target string) error {
@@ -110,8 +112,8 @@ func TestOpenReleasesPage_Succeeds(t *testing.T) {
 		return nil
 	}
 	a.startUpdate()
-	if opened != releasesPage {
-		t.Errorf("openURL called with %q, want %q", opened, releasesPage)
+	if opened != update.ReleasesPage {
+		t.Errorf("openURL called with %q, want %q", opened, update.ReleasesPage)
 	}
 	if tray.lastNote() != "" || tray.lastError() {
 		t.Errorf("unexpected notification: %q (error=%v)", tray.lastNote(), tray.lastError())
@@ -120,7 +122,7 @@ func TestOpenReleasesPage_Succeeds(t *testing.T) {
 
 func TestOpenReleasesPage_Fails(t *testing.T) {
 	a, tray, _ := newTestApp(t)
-	a.latest = releaseInfo{Tag: "v9.9.9"}
+	a.latest = update.ReleaseInfo{Tag: "v9.9.9"}
 	a.askYesNo = func(msg string) bool { return true }
 	a.openURL = func(target string) error {
 		return errors.New("browser failed")
@@ -129,7 +131,7 @@ func TestOpenReleasesPage_Fails(t *testing.T) {
 	if !tray.lastError() {
 		t.Error("expected error notification")
 	}
-	if !strings.Contains(tray.lastNote(), releasesPage) {
-		t.Errorf("notification %q does not contain releases page URL %q", tray.lastNote(), releasesPage)
+	if !strings.Contains(tray.lastNote(), update.ReleasesPage) {
+		t.Errorf("notification %q does not contain releases page URL %q", tray.lastNote(), update.ReleasesPage)
 	}
 }
