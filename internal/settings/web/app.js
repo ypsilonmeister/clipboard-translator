@@ -30,6 +30,20 @@
     idle_unload_minutes: false,
   };
 
+  const editSeq = {
+    profiles: 0,
+    auto_paste: 0,
+    notify_on_complete: 0,
+    max_chars: 0,
+    idle_unload_minutes: 0,
+  };
+
+  function touchField(key) {
+    dirtyFields[key] = true;
+    editSeq[key]++;
+    markDirty();
+  }
+
   function isDirty() {
     return dirtyFields.profiles || dirtyFields.auto_paste || dirtyFields.notify_on_complete || dirtyFields.max_chars || dirtyFields.idle_unload_minutes;
   }
@@ -219,7 +233,7 @@
   // ---- hotkeys ------------------------------------------------------------------------
 
   function langSelect(value, onchange, label) {
-    const sel = h('select', { class: 'lang', 'aria-label': label, onchange: (e) => { onchange(e.target.value); dirtyFields.profiles = true; markDirty(); } },
+    const sel = h('select', { class: 'lang', 'aria-label': label, onchange: (e) => { onchange(e.target.value); touchField('profiles'); } },
       state.language_options.map((o) => h('option', { value: o.code, text: o.name + ' (' + o.code + ')' })));
     sel.value = value;
     return sel;
@@ -231,7 +245,7 @@
 
     const remove = h('button', { type: 'button', class: 'danger', disabled: model.profiles.length <= 1,
       'aria-label': 'Remove hotkey ' + (i + 1),
-      onclick: () => { model.profiles.splice(i, 1); dirtyFields.profiles = true; markDirty(); renderHotkeys(); } }, 'Remove');
+      onclick: () => { model.profiles.splice(i, 1); touchField('profiles'); renderHotkeys(); } }, 'Remove');
     card.append(h('div', { class: 'profile-head' },
       h('h3', { text: 'Hotkey ' + (i + 1) }),
       h('span', { class: 'spacer' }), remove));
@@ -239,10 +253,10 @@
     const keyRow = h('div', { class: 'row' }, h('span', { class: 'label', text: 'Keys' }));
     for (const [id, name] of mods) {
       keyRow.append(h('label', { class: 'chip' },
-        h('input', { type: 'checkbox', checked: p[id], onchange: (e) => { p[id] = e.target.checked; dirtyFields.profiles = true; markDirty(); } }), name));
+        h('input', { type: 'checkbox', checked: p[id], onchange: (e) => { p[id] = e.target.checked; touchField('profiles'); } }), name));
     }
     keyRow.append(h('span', { class: 'plus', text: '+' }));
-    const letter = h('select', { class: 'letter', 'aria-label': 'Key of hotkey ' + (i + 1), onchange: (e) => { p.key = e.target.value; dirtyFields.profiles = true; markDirty(); } },
+    const letter = h('select', { class: 'letter', 'aria-label': 'Key of hotkey ' + (i + 1), onchange: (e) => { p.key = e.target.value; touchField('profiles'); } },
       HOTKEY_KEYS.map((l) => h('option', { value: l, text: l })));
     letter.value = p.key;
     keyRow.append(letter);
@@ -252,7 +266,7 @@
     const seg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'How hotkey ' + (i + 1) + ' translates' },
       [['pair', 'Between two languages'], ['target', 'Into one language']].map(([v, text]) =>
         h('label', {}, h('input', { type: 'radio', name, value: v, checked: p.mode === v,
-          onchange: () => { p.mode = v; dirtyFields.profiles = true; markDirty(); renderHotkeys(); } }), text)));
+          onchange: () => { p.mode = v; touchField('profiles'); renderHotkeys(); } }), text)));
     card.append(h('div', { class: 'row' }, h('span', { class: 'label', text: 'Translate' }), seg));
 
     if (p.mode === 'pair') {
@@ -274,8 +288,7 @@
       'aria-label': 'Text source for hotkey ' + (i + 1),
       onchange: (e) => {
         p.input = e.target.value;
-        dirtyFields.profiles = true;
-        markDirty();
+        touchField('profiles');
       },
     },
       h('option', { value: 'selection', text: 'Selected text (copied first)' }),
@@ -291,8 +304,7 @@
       'aria-label': 'Output format for hotkey ' + (i + 1),
       onchange: (e) => {
         p.output = e.target.value;
-        dirtyFields.profiles = true;
-        markDirty();
+        touchField('profiles');
       },
     },
       h('option', { value: 'replace', text: 'Replace with the translation' }),
@@ -739,8 +751,7 @@
     }
     if (model.max_chars !== n) {
       model.max_chars = n;
-      dirtyFields.max_chars = true;
-      markDirty();
+      touchField('max_chars');
     }
     const minutes = Number($('idle-unload-minutes').value);
     if (!Number.isInteger(minutes) || minutes < 0 || minutes > 1440) {
@@ -751,8 +762,7 @@
     }
     if (model.idle_unload_minutes !== minutes) {
       model.idle_unload_minutes = minutes;
-      dirtyFields.idle_unload_minutes = true;
-      markDirty();
+      touchField('idle_unload_minutes');
     }
     if (!isSaveNeeded(isDirty(), state && state.no_active_hotkey)) {
       // Nothing to send. Sending every field with an old revision would report a
@@ -766,7 +776,7 @@
     showFieldError('');
     showBanner([]);
     const submittedDirty = Object.assign({}, dirtyFields);
-    const submittedModel = JSON.parse(JSON.stringify(model));
+    const submittedSeq = Object.assign({}, editSeq);
     const r = await api('/api/save', toPayload(model));
     saving = false;
     renderBusy();
@@ -786,10 +796,7 @@
     }
     state = Object.assign({}, r.data.state);
     const freshModel = toModel(state);
-    const hasNewEdits = (key) => {
-      if (!submittedDirty[key]) return dirtyFields[key];
-      return JSON.stringify(model[key]) !== JSON.stringify(submittedModel[key]);
-    };
+    const hasNewEdits = (key) => editSeq[key] !== submittedSeq[key];
     const keepProfiles = hasNewEdits('profiles');
     if (!keepProfiles) {
       model.profiles = freshModel.profiles;
@@ -816,7 +823,13 @@
       dirtyFields.idle_unload_minutes = false;
       $('idle-unload-minutes').value = String(model.idle_unload_minutes);
     }
-    if (!isDirty()) {
+    let advanceBaseRevision = !isDirty();
+    for (const key of Object.keys(dirtyFields)) {
+      if (submittedDirty[key] && hasNewEdits(key)) {
+        advanceBaseRevision = true;
+      }
+    }
+    if (advanceBaseRevision) {
       baseRevision = state.revision || 0;
     }
     dirty = isDirty();
@@ -867,25 +880,21 @@
     $('guide').addEventListener('toggle', () => { guideTouched = true; });
     $('add').addEventListener('click', () => {
       model.profiles.push({ ctrl: true, alt: true, shift: false, win: false, key: nextFreeKey(), mode: 'target', a: 'ja', b: 'en', target: 'en', output: 'replace', input: 'selection' });
-      dirtyFields.profiles = true;
-      markDirty();
+      touchField('profiles');
       renderHotkeys();
     });
     $('auto-paste').addEventListener('change', (e) => {
       model.auto_paste = e.target.checked;
-      dirtyFields.auto_paste = true;
-      markDirty();
+      touchField('auto_paste');
     });
     $('notify-on-complete').addEventListener('change', (e) => {
       model.notify_on_complete = e.target.checked;
-      dirtyFields.notify_on_complete = true;
-      markDirty();
+      touchField('notify_on_complete');
     });
     $('max-chars').addEventListener('input', () => {
-      dirtyFields.max_chars = true;
-      markDirty();
+      touchField('max_chars');
     });
-    $('idle-unload-minutes').addEventListener('input', () => { dirtyFields.idle_unload_minutes = true; markDirty(); });
+    $('idle-unload-minutes').addEventListener('input', () => { touchField('idle_unload_minutes'); });
     $('save').addEventListener('click', save);
     $('close').addEventListener('click', async () => {
       if (dirty && !confirm('Close without saving your changes?')) return;
