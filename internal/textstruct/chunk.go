@@ -20,6 +20,67 @@ var (
 	}
 )
 
+// SplitParagraphs splits text at blank line boundaries (\r?\n\s*\r?\n) and trims
+// empty outer whitespace.
+func SplitParagraphs(text string) []string {
+	if text == "" {
+		return nil
+	}
+	rawParas := reParaSplit.Split(text, -1)
+	var paras []string
+	for _, p := range rawParas {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			paras = append(paras, trimmed)
+		}
+	}
+	if len(paras) == 0 && strings.TrimSpace(text) != "" {
+		return []string{strings.TrimSpace(text)}
+	}
+	return paras
+}
+
+// JoinSentences joins sentence fragments into a paragraph, inserting a space
+// between non-CJK adjacent characters and joining CJK characters directly.
+func JoinSentences(sentences []string) string {
+	var b strings.Builder
+	for _, s := range sentences {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			prevRunes := []rune(b.String())
+			nextRunes := []rune(s)
+			if len(prevRunes) > 0 && len(nextRunes) > 0 {
+				last := prevRunes[len(prevRunes)-1]
+				first := nextRunes[0]
+				if !isCJK(last) && !isCJK(first) && !unicode.IsSpace(last) {
+					b.WriteByte(' ')
+				}
+			}
+		}
+		b.WriteString(s)
+	}
+	return b.String()
+}
+
+// FormatBilingual formats source and translated text. If both texts contain
+// multiple matching paragraphs, they are interleaved paragraph-by-paragraph.
+// Otherwise, it falls back to joining source and translated with a newline.
+func FormatBilingual(source, translated string) string {
+	sourceParas := SplitParagraphs(source)
+	transParas := SplitParagraphs(translated)
+	if len(sourceParas) > 1 && len(sourceParas) == len(transParas) {
+		pairs := make([]string, len(sourceParas))
+		for i := range sourceParas {
+			pairs[i] = strings.TrimRight(sourceParas[i], "\r\n") + "\n" + strings.TrimSpace(transParas[i])
+		}
+		return strings.Join(pairs, "\n\n")
+	}
+	return strings.TrimRight(source, "\r\n") + "\n" + translated
+}
+
 // ChunkText splits long text exceeding maxChunkChars into coherent semantic segments
 // (paragraphs first, sentences second, runes fallback), respecting model context limits.
 func ChunkText(text string, maxChunkChars int) []string {
@@ -31,14 +92,7 @@ func ChunkText(text string, maxChunkChars int) []string {
 	}
 
 	// Step 1: Split at paragraph boundaries (blank lines)
-	rawParas := reParaSplit.Split(text, -1)
-	var paras []string
-	for _, p := range rawParas {
-		trimmed := strings.TrimSpace(p)
-		if trimmed != "" {
-			paras = append(paras, trimmed)
-		}
-	}
+	paras := SplitParagraphs(text)
 	if len(paras) == 0 {
 		return []string{text}
 	}
