@@ -84,6 +84,9 @@ type LanguageOption struct {
 
 // State is what the page shows.
 type State struct {
+	ActualHotkeys []string `json:"actual_hotkeys,omitempty"`
+	Wayland       bool     `json:"wayland,omitempty"`
+	DesktopStatus string   `json:"desktop_status,omitempty"`
 	Form
 	Revision       int              `json:"revision"`
 	Languages      []LanguageOption `json:"language_options"`

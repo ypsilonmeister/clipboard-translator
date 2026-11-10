@@ -126,9 +126,21 @@ func (a *app) settingsState() settings.State {
 		Inactive:       a.inactiveHotkeys(),
 		NoActiveHotkey: !a.anyHotkeyActive(),
 	}
+	for i := range a.conf.Profiles {
+		actual := a.hotkeyLabel(i)
+		if actual != "" && actual != a.conf.Profiles[i].Hotkey {
+			if st.ActualHotkeys == nil {
+				st.ActualHotkeys = make([]string, len(a.conf.Profiles))
+			}
+			st.ActualHotkeys[i] = actual
+		}
+	}
 	st.Guide = a.quickstartGuide()
 	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste
+	desktop := a.desktopStatus()
+	st.Wayland = desktop.Wayland
+	st.DesktopStatus = desktop.Message
 	st.NotifyOnComplete = a.conf.NotifyOnComplete
 	st.MaxChars = a.conf.MaxChars
 	st.IdleUnloadMinutes = a.conf.IdleUnloadMinutes

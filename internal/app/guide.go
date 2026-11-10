@@ -17,6 +17,9 @@ import (
 
 // guideSteps are the three steps with the real hotkey, or nil when none works.
 func (a *app) guideSteps() []string {
+	if s := a.desktopStatus(); s.Wayland && !s.Ready {
+		return nil
+	}
 	sum := a.hotkeySummary()
 	if sum == "" {
 		return nil
@@ -25,6 +28,9 @@ func (a *app) guideSteps() []string {
 		"Select the text you want to translate, in any program.",
 		"Press " + sum + ".",
 		"Paste with " + platform.PasteShortcut() + " when the tray says the translation is ready.",
+	}
+	if a.desktopStatus().Wayland {
+		steps[1] += " Release the hotkey modifiers before continuing."
 	}
 	if len(a.conf.Profiles) == 1 {
 		steps[1] += " It translates " + a.conf.Profiles[0].Label() + "."
@@ -38,12 +44,19 @@ func (a *app) quickstartGuide() settings.QuickstartGuide {
 	g := settings.QuickstartGuide{Initial: !a.conf.QuickstartShown}
 	g.Steps = a.guideSteps()
 	if g.Steps == nil {
+		if s := a.desktopStatus(); s.Wayland {
+			g.Intro = s.Message + " Use Retry Wayland permissions in the control window when available."
+			return g
+		}
 		g.Intro = "The hotkey " + a.conf.Hotkey + " is not active (another program may be using it), so translating by hotkey does not work yet. Choose another hotkey under Hotkeys below and click Save."
 		return g
 	}
 	g.Active = true
 	g.Intro = "Translate your first text in three steps:"
 	g.Extras = guideExtras
+	if a.desktopStatus().Wayland {
+		g.Extras = "Automatic paste is disabled on Wayland. The desktop chooses the active shortcuts; the requested keys remain editable below."
+	}
 	return g
 }
 
@@ -51,6 +64,9 @@ func (a *app) quickstartGuide() settings.QuickstartGuide {
 func (a *app) guideNotification() (msg string, isError bool) {
 	steps := a.guideSteps()
 	if steps == nil {
+		if s := a.desktopStatus(); s.Wayland {
+			return s.Message + " Use Retry Wayland permissions in the control window when available.", true
+		}
 		return fmt.Sprintf("The hotkey %s is not active (another program may be using it). Open Settings... from the tray menu and choose another hotkey.", a.conf.Hotkey), true
 	}
 	return "Ready. " + strings.Join(steps, " "), false

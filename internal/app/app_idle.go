@@ -18,7 +18,7 @@ func (a *app) serverStarted() {
 }
 
 func (a *app) busy() bool {
-	return a.translating || a.serverWork > 0 || (a.sup != nil && a.sup.Starting()) || a.settingsServing
+	return a.translating || a.pendingRead != nil || a.pendingResult != nil || a.pendingHistory != nil || a.serverWork > 0 || (a.sup != nil && a.sup.Starting()) || a.settingsServing
 }
 
 func (a *app) canUnloadModel() bool {

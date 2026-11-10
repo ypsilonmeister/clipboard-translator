@@ -114,6 +114,46 @@ class BumpLlamaPinTests(unittest.TestCase):
             self.assertEqual(len(errors), 1)
             self.assertIn('setup.sh cpu: sha256 is', errors[0])
 
+    def test_rewrite_and_check_go_block(self):
+        go_template = (
+            'package setup\n\n'
+            f'{bump.GO_START_MARKER}\n'
+            'const llamaTag = "b1"\n'
+            f'{bump.GO_END_MARKER}\n'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_file_raw(root / 'setup.ps1', PS1_TEMPLATE.replace('\n', '\r\n'))
+            write_file_raw(root / 'setup.sh', SH_TEMPLATE)
+            write_file_raw(root / 'setup-macos.sh', SH_TEMPLATE)
+            go_path = root / 'internal' / 'setup' / 'llama.go'
+            go_path.parent.mkdir(parents=True)
+            write_file_raw(go_path, go_template)
+
+            tag, assets = bump.resolve_assets(FIXTURE_RELEASE)
+            bump.rewrite_scripts(root, tag, assets)
+
+            text = go_path.read_text(encoding='utf-8')
+            self.assertIn(f'const llamaTag = "{FIXTURE_TAG}"', text)
+            self.assertIn('"linux/cpu":', text)
+            self.assertIn('e' * 64, text)
+            self.assertEqual(bump.check_scripts(root, tag, assets), [])
+
+            corrupted = text.replace('e' * 64, '0' * 64)
+            write_file_raw(go_path, corrupted)
+            errors = bump.check_scripts(root, tag, assets)
+            self.assertEqual(len(errors), 1)
+            self.assertIn('internal/setup/llama.go linux/cpu: sha256 is', errors[0])
+
+    def test_shell_blocks_are_comments(self):
+        # Since Issue #152 the shell scripts are thin wrappers; the pin
+        # block they carry must stay inert (commented out).
+        tag, assets = bump.resolve_assets(FIXTURE_RELEASE)
+        for block in (bump.generate_sh_block(tag, assets, '\n'),
+                      bump.generate_macos_block(tag, assets, '\n')):
+            for line in block.splitlines():
+                self.assertTrue(line.startswith('#'), line)
+
     def test_main_cli(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

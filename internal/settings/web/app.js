@@ -251,6 +251,10 @@
       h('h3', { text: 'Hotkey ' + (i + 1) }),
       h('span', { class: 'spacer' }), remove));
 
+    const actual = state.actual_hotkeys && state.actual_hotkeys[i];
+    card.append(h('p', { class: 'hint actual-hotkey', 'data-index': String(i), hidden: !actual,
+      text: actual ? 'Currently active shortcut: ' + actual : '' }));
+
     const keyRow = h('div', { class: 'row' }, h('span', { class: 'label', text: 'Keys' }));
     for (const [id, name] of mods) {
       keyRow.append(h('label', { class: 'chip' },
@@ -626,6 +630,14 @@
 
   function renderBusy() {
     if (closed) return;
+    const desktop = $('desktop-status');
+    if (desktop) {
+      desktop.textContent = state.desktop_status || '';
+      if (state.wayland) desktop.textContent += ' Retry Wayland permissions is available in the control window when access needs attention.';
+      desktop.hidden = !state.desktop_status;
+    }
+    const autoPaste = $('auto-paste');
+    if (autoPaste) autoPaste.disabled = !!state.wayland;
     const bar = $('busybar');
     if (bar) bar.hidden = !appBusy();
     const busyText = $('busytext');
@@ -660,6 +672,11 @@
     renderModels();
     renderEngines();
     renderBusy();
+    for (const el of document.querySelectorAll('.actual-hotkey')) {
+      const actual = state.actual_hotkeys && state.actual_hotkeys[Number(el.getAttribute('data-index'))];
+      el.textContent = actual ? 'Currently active shortcut: ' + actual : '';
+      el.hidden = !actual;
+    }
   }
 
   // Take new data from the app without touching what is being edited.

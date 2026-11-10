@@ -16,7 +16,7 @@ func TestEmbeddedSetupIsTheRealScript(t *testing.T) {
 		t.Fatal("the embedded setup.ps1 differs from the file in the repository")
 	}
 	s := string(embeddedSetup)
-	for _, want := range []string{"param(", "-Backend", "plamo-3-translate-2b", "llama-server.exe", "config.json"} {
+	for _, want := range []string{"param(", "-Backend", "plamo-3-translate-2b", "ClipboardTranslator.exe", "config.json"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("embedded setup.ps1 lacks %q", want)
 		}
@@ -33,15 +33,19 @@ func TestEmbeddedMacSetupIsTheRealScript(t *testing.T) {
 func TestSetupPinsModelDownloads(t *testing.T) {
 	s := string(embeddedSetup)
 	if strings.Contains(s, "resolve/main") {
-		t.Error("setup.ps1 must download the model from a pinned revision, not resolve/main")
+		t.Error("setup must download the model from a pinned revision, not resolve/main")
 	}
-	for _, re := range []string{
-		`Download-File \(\$hf \+ \$modelInfo\.File\) \$modelFile \$modelInfo\.Sha256`,
-		`Download-File \(\$hf \+ 'chat_template\.jinja'\) \$templateFile \$modelInfo\.TemplateSha256`,
-		`resolve/\$\(\$modelInfo\.Revision\)/`,
-	} {
-		if !regexp.MustCompile(re).MatchString(s) {
-			t.Errorf("setup.ps1 does not match %s", re)
+	// Since Issue #152 setup.ps1 is a wrapper: the binary downloads, from
+	// the same pins (internal/models, compared against this file by
+	// TestCatalogMatchesSetupScript). The script itself must not download.
+	for _, banned := range []string{"Download-File", "Invoke-WebRequest", "Invoke-RestMethod"} {
+		if strings.Contains(s, banned) {
+			t.Errorf("setup.ps1 contains %s; downloads belong to the binary's setup subcommand", banned)
+		}
+	}
+	for _, want := range []string{"ClipboardTranslator.exe", "'setup'", "--backend", "--model"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("setup.ps1 does not forward to the binary's setup subcommand: lacks %q", want)
 		}
 	}
 	// Every model on offer needs a commit and two SHA-256 values.
@@ -199,5 +203,43 @@ func TestLlamaCppPinAgreesAcrossScripts(t *testing.T) {
 	}
 	if got := macAssets["x64"][0]; got != "llama-"+pinnedTag+"-bin-macos-x64.tar.gz" {
 		t.Errorf("setup-macos.sh x64 asset file is %q", got)
+	}
+
+	// The binary's own pin block (internal/setup/llama.go) is what setup
+	// actually installs since Issue #152; it must agree with the scripts.
+	goBytes, err := os.ReadFile("internal/setup/llama.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goSrc := string(goBytes)
+	for _, marker := range []string{
+		"// --- llama.cpp pinned release (managed by tools/bump_llama_pin.py) ---",
+		"// --- end llama.cpp pinned release ---",
+	} {
+		if !strings.Contains(goSrc, marker) {
+			t.Errorf("internal/setup/llama.go lacks marker %q", marker)
+		}
+	}
+	if m := regexp.MustCompile(`llamaTag = "([^"]+)"`).FindStringSubmatch(goSrc); len(m) < 2 || m[1] != pinnedTag {
+		t.Errorf("internal/setup/llama.go tag does not match the scripts' %q", pinnedTag)
+	}
+	goAssetRe := regexp.MustCompile(`"([\w/]+)":\s*\{File: "([^"]+)", Sha256: "([0-9a-fA-F]{64})"\}`)
+	goAssets := make(map[string][2]string)
+	for _, m := range goAssetRe.FindAllStringSubmatch(goSrc, -1) {
+		goAssets[m[1]] = [2]string{m[2], strings.ToLower(m[3])}
+	}
+	for goKey, want := range map[string][2]string{
+		"win/cpu":      psAssets["cpu"],
+		"win/cuda":     psAssets["cuda"],
+		"win/cudart":   psAssets["cudart"],
+		"win/vulkan":   psAssets["vulkan"],
+		"linux/cpu":    shAssets["cpu"],
+		"linux/vulkan": shAssets["vulkan"],
+		"darwin/arm64": macAssets["arm64"],
+		"darwin/x64":   macAssets["x64"],
+	} {
+		if got := goAssets[goKey]; got != want {
+			t.Errorf("internal/setup/llama.go %s = %v, scripts pin %v", goKey, got, want)
+		}
 	}
 }

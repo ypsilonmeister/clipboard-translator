@@ -25,6 +25,7 @@ const (
 	cmdSettings             = platform.FirstAppCommand + 8
 	cmdUnloadModel          = platform.FirstAppCommand + 10
 	cmdQuickstart           = platform.FirstAppCommand + 11
+	cmdRetryDesktop         = platform.FirstAppCommand + 12
 	cmdModelBase            = platform.FirstAppCommand + 100 // + index into models.Catalog
 	cmdHistoryBase          = platform.FirstAppCommand + 300 // translation; + index into history (newest first)
 	cmdHistorySourceBase    = cmdHistoryBase + historySize
@@ -56,7 +57,17 @@ func versionLabel() string {
 // menu opens, so availability and the update entry reflect the current state.
 func (a *app) buildMenu() []platform.MenuItem {
 	items := []platform.MenuItem{{ID: cmdSettings, Label: "Settings..."}, {ID: cmdQuickstart, Label: "Quick start"}}
-	if a.translating {
+	if s := a.desktopStatus(); s.Wayland {
+		label := "Wayland: waiting for desktop permissions"
+		if s.Ready {
+			label = "Wayland connected (manual paste)"
+		} else if s.Retry {
+			label = "Wayland permissions need attention"
+		}
+		items = append(items, platform.MenuItem{Label: label, Disabled: true})
+		items = append(items, platform.MenuItem{ID: cmdRetryDesktop, Label: "Retry Wayland permissions", Disabled: !s.Retry})
+	}
+	if a.translating || a.capturing != nil || a.pendingRead != nil || a.pendingResult != nil {
 		items = append(items, platform.MenuItem{ID: cmdCancel, Label: "Cancel translation"}, platform.MenuItem{Separator: true})
 	}
 	items = append(items, platform.MenuItem{ID: cmdUnloadModel, Label: "Unload model", Disabled: !a.canUnloadModel()})
@@ -112,6 +123,8 @@ func (a *app) buildMenu() []platform.MenuItem {
 // handleCommand runs one app-specific menu command. It runs on the UI thread.
 func (a *app) handleCommand(id int) {
 	switch {
+	case id == cmdRetryDesktop:
+		a.retryDesktop()
 	case id >= cmdHistoryBilingualBase && id < cmdHistoryBilingualBase+historySize:
 		a.copyHistoryText(id-cmdHistoryBilingualBase, "bilingual")
 	case id >= cmdHistorySourceBase && id < cmdHistorySourceBase+historySize:
@@ -200,12 +213,8 @@ func (a *app) copyHistoryText(i int, kind string) {
 	case "bilingual":
 		text = formatBilingual(items[i].Source, items[i].Translated)
 	}
-	if err := a.cb.Write(text); err != nil {
-		log.Printf("could not copy from history: %v", err)
-		a.tray.Notify("Clipboard Translator", "Could not copy to the clipboard: "+err.Error(), true)
-		return
-	}
-	a.tray.Notify("Clipboard Translator", "Copied. Paste with "+platform.PasteShortcut()+".", false)
+	a.abortTranslation() // an older translation must not overwrite this explicit copy
+	a.finishHistoryCopy(text)
 }
 
 // saveConfig writes changed keys to config.json and tells the user if that fails.

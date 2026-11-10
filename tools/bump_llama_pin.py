@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Manage the pinned llama.cpp release tag and asset hashes across setup scripts.
+"""Manage the pinned llama.cpp release tag and asset hashes.
+
+The pin lives in the setup scripts (for the checker tools that read them)
+and in the binary's own copy in internal/setup/llama.go, which is what
+setup actually installs since Issue #152. This tool rewrites and checks
+all of them.
 
 Usage:
     python3 tools/bump_llama_pin.py <tag>
@@ -15,6 +20,9 @@ import urllib.request
 
 START_MARKER = '# --- llama.cpp pinned release (managed by tools/bump_llama_pin.py) ---'
 END_MARKER = '# --- end llama.cpp pinned release ---'
+# internal/setup/llama.go carries the same block with Go comment markers.
+GO_START_MARKER = '// --- llama.cpp pinned release (managed by tools/bump_llama_pin.py) ---'
+GO_END_MARKER = '// --- end llama.cpp pinned release ---'
 
 RE_LLAMA_TAG = re.compile(r'^b[0-9]+$')
 RE_SHA256 = re.compile(r'^[0-9a-f]{64}$')
@@ -127,40 +135,70 @@ def generate_ps1_block(tag, assets, newline):
 
 
 def generate_sh_block(tag, assets, newline):
+    # Since Issue #152 the shell scripts only carry the pin as a comment
+    # record (the binary does the work), so every line is commented out.
     lines = [
-        START_MARKER,
-        f'LLAMA_TAG = \'{tag}\'',
-        'LLAMA_ASSETS = {',
-        '    \'cpu\': {',
-        f'        \'file\': \'{assets["linux_cpu"]["file"]}\',',
-        f'        \'sha256\': \'{assets["linux_cpu"]["sha256"]}\',',
-        '    },',
-        '    \'vulkan\': {',
-        f'        \'file\': \'{assets["linux_vulkan"]["file"]}\',',
-        f'        \'sha256\': \'{assets["linux_vulkan"]["sha256"]}\',',
-        '    },',
-        '}',
-        END_MARKER,
+        f'# LLAMA_TAG = \'{tag}\'',
+        '# LLAMA_ASSETS = {',
+        '#     \'cpu\': {',
+        f'#         \'file\': \'{assets["linux_cpu"]["file"]}\',',
+        f'#         \'sha256\': \'{assets["linux_cpu"]["sha256"]}\',',
+        '#     },',
+        '#     \'vulkan\': {',
+        f'#         \'file\': \'{assets["linux_vulkan"]["file"]}\',',
+        f'#         \'sha256\': \'{assets["linux_vulkan"]["sha256"]}\',',
+        '#     },',
+        '# }',
     ]
-    return newline.join(lines)
+    return newline.join([START_MARKER] + lines + [END_MARKER])
 
 
 def generate_macos_block(tag, assets, newline):
+    # Comment record only, like generate_sh_block.
     lines = [
-        START_MARKER,
-        f'LLAMA_TAG = \'{tag}\'',
-        'LLAMA_ASSETS = {',
-        '    \'arm64\': {',
-        f'        \'file\': \'{assets["macos_arm64"]["file"]}\',',
-        f'        \'sha256\': \'{assets["macos_arm64"]["sha256"]}\',',
-        '    },',
-        '    \'x64\': {',
-        f'        \'file\': \'{assets["macos_x64"]["file"]}\',',
-        f'        \'sha256\': \'{assets["macos_x64"]["sha256"]}\',',
-        '    },',
-        '}',
-        END_MARKER,
+        f'# LLAMA_TAG = \'{tag}\'',
+        '# LLAMA_ASSETS = {',
+        '#     \'arm64\': {',
+        f'#         \'file\': \'{assets["macos_arm64"]["file"]}\',',
+        f'#         \'sha256\': \'{assets["macos_arm64"]["sha256"]}\',',
+        '#     },',
+        '#     \'x64\': {',
+        f'#         \'file\': \'{assets["macos_x64"]["file"]}\',',
+        f'#         \'sha256\': \'{assets["macos_x64"]["sha256"]}\',',
+        '#     },',
+        '# }',
     ]
+    return newline.join([START_MARKER] + lines + [END_MARKER])
+
+
+# Order of the Go map literal in internal/setup/llama.go (gofmt-aligned).
+GO_ASSET_KEYS = [
+    ('win/cpu', 'win_cpu'),
+    ('win/cuda', 'win_cuda'),
+    ('win/cudart', 'win_cudart'),
+    ('win/vulkan', 'win_vulkan'),
+    ('linux/cpu', 'linux_cpu'),
+    ('linux/vulkan', 'linux_vulkan'),
+    ('darwin/arm64', 'macos_arm64'),
+    ('darwin/x64', 'macos_x64'),
+]
+
+
+def generate_go_block(tag, assets, newline):
+    lines = [
+        GO_START_MARKER,
+        f'const llamaTag = "{tag}"',
+        '',
+        'var llamaAssets = map[string]llamaAsset{',
+    ]
+    width = max(len(f'"{go_key}":') for go_key, _ in GO_ASSET_KEYS)
+    for go_key, asset_key in GO_ASSET_KEYS:
+        entry = assets[asset_key]
+        prefix = '\t' + f'"{go_key}":'.ljust(width + 1)
+        lines.append(f'{prefix}{{File: "{entry["file"]}", Sha256: "{entry["sha256"]}"}},')
+    lines.append('}')
+    lines.append('')  # gofmt separates the closing brace from the marker comment
+    lines.append(GO_END_MARKER)
     return newline.join(lines)
 
 
@@ -168,14 +206,14 @@ def detect_newline(content):
     return '\r\n' if '\r\n' in content else '\n'
 
 
-def replace_pin_block(content, new_block):
-    start = content.find(START_MARKER)
+def replace_pin_block(content, new_block, start_marker=START_MARKER, end_marker=END_MARKER):
+    start = content.find(start_marker)
     if start < 0:
-        raise ValueError(f'Start marker not found: {START_MARKER}')
-    end = content.find(END_MARKER, start)
+        raise ValueError(f'Start marker not found: {start_marker}')
+    end = content.find(end_marker, start)
     if end < 0:
-        raise ValueError(f'End marker not found: {END_MARKER}')
-    end += len(END_MARKER)
+        raise ValueError(f'End marker not found: {end_marker}')
+    end += len(end_marker)
     return content[:start] + new_block + content[end:]
 
 
@@ -189,31 +227,42 @@ def write_file_raw(path, content):
         f.write(content)
 
 
+def go_llama_path(root):
+    return root / 'internal' / 'setup' / 'llama.go'
+
+
 def rewrite_scripts(root_dir, tag, assets):
     root = Path(root_dir)
     targets = [
-        (root / 'setup.ps1', generate_ps1_block),
-        (root / 'setup.sh', generate_sh_block),
-        (root / 'setup-macos.sh', generate_macos_block),
+        (root / 'setup.ps1', generate_ps1_block, START_MARKER, END_MARKER),
+        (root / 'setup.sh', generate_sh_block, START_MARKER, END_MARKER),
+        (root / 'setup-macos.sh', generate_macos_block, START_MARKER, END_MARKER),
     ]
-    for path, gen in targets:
+    # The Go pin block is rewritten when the file is present (test fixtures
+    # with only the three scripts keep working without it).
+    go_path = go_llama_path(root)
+    if go_path.is_file():
+        targets.append((go_path, generate_go_block, GO_START_MARKER, GO_END_MARKER))
+    for path, gen, start_marker, end_marker in targets:
         text = read_file_raw(path)
         nl = detect_newline(text)
         block = gen(tag, assets, nl)
-        updated = replace_pin_block(text, block)
+        updated = replace_pin_block(text, block, start_marker, end_marker)
         write_file_raw(path, updated)
 
 
-def extract_script_pin(content):
-    start = content.find(START_MARKER)
+def extract_script_pin(content, start_marker=START_MARKER, end_marker=END_MARKER):
+    start = content.find(start_marker)
     if start < 0:
         return None
-    end = content.find(END_MARKER, start)
+    end = content.find(end_marker, start)
     if end < 0:
         return None
-    block = content[start:end + len(END_MARKER)]
+    block = content[start:end + len(end_marker)]
 
     tag_m = re.search(r"(?:Tag = |LLAMA_TAG = )'([^']+)'", block)
+    if not tag_m:
+        tag_m = re.search(r'llamaTag = "([^"]+)"', block)
     tag = tag_m.group(1) if tag_m else None
 
     entries = {}
@@ -233,6 +282,13 @@ def extract_script_pin(content):
     for m in py_pattern.finditer(block):
         entries[m.group(1)] = {'file': m.group(2), 'sha256': m.group(3).lower()}
 
+    # Go syntax: "name": {File: "...", Sha256: "..."},
+    go_pattern = re.compile(
+        r'"([\w/]+)":\s*\{File: "([^"]+)", Sha256: "([0-9a-fA-F]{64})"\}',
+    )
+    for m in go_pattern.finditer(block):
+        entries[m.group(1)] = {'file': m.group(2), 'sha256': m.group(3).lower()}
+
     return {'tag': tag, 'entries': entries, 'block': block}
 
 
@@ -240,44 +296,49 @@ def check_scripts(root_dir, expected_tag, expected_assets):
     root = Path(root_dir)
     errors = []
 
-    # Map expected asset keys to script-specific keys
+    # Map expected asset keys to file-specific keys. Each item is
+    # (path, label, expectations, start marker, end marker, required).
     script_expectations = [
-        (root / 'setup.ps1', {
+        (root / 'setup.ps1', 'setup.ps1', {
             'cpu': expected_assets['win_cpu'],
             'cuda': expected_assets['win_cuda'],
             'cudart': expected_assets['win_cudart'],
             'vulkan': expected_assets['win_vulkan'],
-        }),
-        (root / 'setup.sh', {
+        }, START_MARKER, END_MARKER, True),
+        (root / 'setup.sh', 'setup.sh', {
             'cpu': expected_assets['linux_cpu'],
             'vulkan': expected_assets['linux_vulkan'],
-        }),
-        (root / 'setup-macos.sh', {
+        }, START_MARKER, END_MARKER, True),
+        (root / 'setup-macos.sh', 'setup-macos.sh', {
             'arm64': expected_assets['macos_arm64'],
             'x64': expected_assets['macos_x64'],
-        }),
+        }, START_MARKER, END_MARKER, True),
+        (go_llama_path(root), 'internal/setup/llama.go', {
+            go_key: expected_assets[asset_key] for go_key, asset_key in GO_ASSET_KEYS
+        }, GO_START_MARKER, GO_END_MARKER, False),
     ]
 
-    for path, exp in script_expectations:
+    for path, label, exp, start_marker, end_marker, required in script_expectations:
         if not path.is_file():
-            errors.append(f'{path.name}: file not found')
+            if required:
+                errors.append(f'{label}: file not found')
             continue
         text = path.read_text(encoding='utf-8')
-        pin = extract_script_pin(text)
+        pin = extract_script_pin(text, start_marker, end_marker)
         if not pin or not pin['tag']:
-            errors.append(f'{path.name}: pinned block or tag missing')
+            errors.append(f'{label}: pinned block or tag missing')
             continue
         if pin['tag'] != expected_tag:
-            errors.append(f'{path.name}: tag is {pin["tag"]}, expected {expected_tag}')
+            errors.append(f'{label}: tag is {pin["tag"]}, expected {expected_tag}')
         for k, v in exp.items():
             entry = pin['entries'].get(k)
             if not entry:
-                errors.append(f'{path.name}: missing entry for {k}')
+                errors.append(f'{label}: missing entry for {k}')
                 continue
             if entry['file'] != v['file']:
-                errors.append(f'{path.name} {k}: file is {entry["file"]}, expected {v["file"]}')
+                errors.append(f'{label} {k}: file is {entry["file"]}, expected {v["file"]}')
             if entry['sha256'] != v['sha256']:
-                errors.append(f'{path.name} {k}: sha256 is {entry["sha256"]}, expected {v["sha256"]}')
+                errors.append(f'{label} {k}: sha256 is {entry["sha256"]}, expected {v["sha256"]}')
 
     return errors
 
@@ -386,7 +447,7 @@ def main(argv=None):
 
     print(f'Rewriting pin blocks in setup scripts for {expected_tag}...')
     rewrite_scripts(root_dir, expected_tag, expected_assets)
-    print(f'Successfully updated setup.ps1, setup.sh, and setup-macos.sh to {expected_tag}.')
+    print(f'Successfully updated setup.ps1, setup.sh, setup-macos.sh and internal/setup/llama.go to {expected_tag}.')
     return 0
 
 

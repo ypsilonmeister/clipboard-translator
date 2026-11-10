@@ -1,17 +1,22 @@
 package platform
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
 
+// ErrClipboardPending means a non-blocking backend is still transferring data.
+// Retry the same operation on a later UI tick; do not busy-wait in serve.
+var ErrClipboardPending = errors.New("the clipboard operation is still pending")
+
 type Clipboard interface {
 	Read() (string, error)
 	Write(string) error
-	// ReplaceIfUnchanged atomically compares the current clipboard text with
+	// ReplaceIfUnchanged compares the current clipboard text with
 	// expected, and replaces it with translated only when they match.
-	// Windows implementation holds OpenClipboard across compare and write.
+	// Windows holds OpenClipboard across compare/write; Linux is best effort.
 	ReplaceIfUnchanged(expected, translated string) (bool, error)
 	Close() error
 }
