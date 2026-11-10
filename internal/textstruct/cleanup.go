@@ -135,10 +135,13 @@ func isClosingPunctuation(r rune) bool {
 	}
 }
 
+// computeColumnMedian calculates the median width of substantial prose lines.
+// Lines shorter than 25 visual display width are excluded so that short lines
+// (lists, addresses, signatures, chat messages) never establish a column margin.
 func computeColumnMedian(infos []lineInfo) int {
 	var widths []int
 	for _, info := range infos {
-		if !info.isPreserved && info.width > 15 {
+		if !info.isPreserved && info.width >= 25 {
 			widths = append(widths, info.width)
 		}
 	}
@@ -147,6 +150,25 @@ func computeColumnMedian(infos []lineInfo) int {
 	}
 	sort.Ints(widths)
 	return widths[len(widths)/2]
+}
+
+// hasGeometricCorroboration verifies that cur is part of a column wrap.
+// Lines shorter than 25 visual width are explicit semantic breaks (items, addresses,
+// chat lines, poetry) that did not break because of page margin limits.
+func hasGeometricCorroboration(cur, next lineInfo, colMedian int) bool {
+	if cur.width < 25 {
+		return false
+	}
+	if colMedian >= 25 {
+		if cur.width >= colMedian-8 {
+			return true
+		}
+	}
+	// Standalone wrapped line (e.g. 2-line wrapped email paragraph)
+	if cur.width >= 35 {
+		return true
+	}
+	return false
 }
 
 func shouldJoin(cur, next lineInfo, colMedian int, lang string) (bool, string) {
@@ -197,6 +219,20 @@ func shouldJoin(cur, next lineInfo, colMedian int, lang string) (bool, string) {
 		}
 	}
 
+	// Geometric Corroboration Requirement:
+	// A soft break is ONLY considered spurious when geometric evidence indicates
+	// the line reached a column margin. Short lines (lists, addresses, chat logs)
+	// are never joined.
+	if !hasGeometricCorroboration(cur, next, colMedian) {
+		// Exception: in a multi-line column block (colMedian >= 25), if cur ends in sentence
+		// punctuation and next line is a full-width column continuation (next.width >= colMedian - 8):
+		if colMedian >= 25 && cur.endsSentence && next.width >= colMedian-8 {
+			sep := determineSeparator(lang, curLast, nextFirst)
+			return true, sep
+		}
+		return false, ""
+	}
+
 	// Positive Rule 1: Hyphenated wrap [a-zA-Z]-\n[a-zA-Z] -> preserve hyphen, remove newline
 	if cur.isHyphenated && unicode.IsLetter(nextFirst) {
 		return true, ""
@@ -205,33 +241,49 @@ func shouldJoin(cur, next lineInfo, colMedian int, lang string) (bool, string) {
 	// Positive Rule 2: Mid-sentence continuation in Latin / Western script
 	if !cur.endsSentence {
 		if unicode.IsLower(nextFirst) || unicode.IsDigit(nextFirst) || curLast == ',' || curLast == '%' {
-			if isCJK(curLast) && isCJK(nextFirst) {
-				return true, ""
-			}
-			return true, " "
+			sep := determineSeparator(lang, curLast, nextFirst)
+			return true, sep
 		}
 	}
 
 	// Positive Rule 3: Mid-sentence continuation in Japanese / CJK script
 	if !cur.endsSentence && (isCJK(curLast) || isCJK(nextFirst)) {
-		return true, ""
+		sep := determineSeparator(lang, curLast, nextFirst)
+		return true, sep
 	}
 
 	// Positive Rule 4: Uniform column wrap continuation across sentence end
 	if cur.endsSentence {
-		// Next line must be a substantial continuation line (not a short sign-off or heading)
 		if next.width >= 15 && !cur.isShortSignOff && !next.isShortSignOff {
-			if isCJK(curLast) && isCJK(nextFirst) {
-				return true, ""
-			}
-			if isLatin(curLast) || curLast == '.' || curLast == '!' || curLast == '?' {
-				if isLatin(nextFirst) {
-					return true, " "
-				}
-			}
+			sep := determineSeparator(lang, curLast, nextFirst)
+			return true, sep
 		}
 	}
 
 	// Default: when in doubt, preserve the newline (Asymmetry of Failure)
 	return false, ""
+}
+
+// determineSeparator chooses the joining string (" " vs "") based on language hint and script.
+func determineSeparator(lang string, curLast, nextFirst rune) string {
+	if lang != "" {
+		l := strings.ToLower(lang)
+		if l == "ja" || strings.HasPrefix(l, "zh") || l == "ko" {
+			if isLatin(curLast) && isLatin(nextFirst) {
+				return " "
+			}
+			return ""
+		}
+		if l == "en" || l == "de" || l == "fr" || l == "es" || l == "it" || l == "pt" || l == "ru" {
+			return " "
+		}
+	}
+
+	if isCJK(curLast) && isCJK(nextFirst) {
+		return ""
+	}
+	if isCJK(curLast) || isCJK(nextFirst) {
+		return ""
+	}
+	return " "
 }

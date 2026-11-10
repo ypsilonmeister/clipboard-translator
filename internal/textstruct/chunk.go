@@ -9,6 +9,15 @@ import (
 var (
 	// reParaSplit matches blank line paragraph boundaries (\n\s*\n)
 	reParaSplit = regexp.MustCompile(`\r?\n\s*\r?\n`)
+
+	abbreviations = map[string]bool{
+		"mr": true, "mrs": true, "ms": true, "dr": true, "prof": true,
+		"sr": true, "jr": true, "vs": true, "etc": true, "al": true,
+		"fig": true, "inc": true, "ltd": true, "corp": true, "co": true,
+		"approx": true, "dept": true, "est": true, "govt": true,
+		"jan": true, "feb": true, "mar": true, "apr": true, "jun": true,
+		"jul": true, "aug": true, "sep": true, "oct": true, "nov": true, "dec": true,
+	}
 )
 
 // ChunkText splits long text exceeding maxChunkChars into coherent semantic segments
@@ -71,9 +80,15 @@ func ChunkText(text string, maxChunkChars int) []string {
 				currentLen = 0
 			}
 
-			// Step 2: Split oversized paragraph into sentences
-			subChunks := chunkParagraph(para, maxChunkChars)
-			chunks = append(chunks, subChunks...)
+			// If paragraph is a code/structured block, split by lines rather than sentences
+			if isCodeBlock(para) {
+				subChunks := chunkCodeBlock(para, maxChunkChars)
+				chunks = append(chunks, subChunks...)
+			} else {
+				// Step 2: Split oversized paragraph into sentences
+				subChunks := chunkParagraph(para, maxChunkChars)
+				chunks = append(chunks, subChunks...)
+			}
 		}
 	}
 
@@ -81,6 +96,62 @@ func ChunkText(text string, maxChunkChars int) []string {
 		chunks = append(chunks, currentChunk.String())
 	}
 
+	return chunks
+}
+
+func isCodeBlock(para string) bool {
+	lines := strings.Split(para, "\n")
+	codeLines := 0
+	for _, l := range lines {
+		if isCodeLine(l) || isCodeFence(l) {
+			codeLines++
+		}
+	}
+	return codeLines > len(lines)/2
+}
+
+// chunkCodeBlock splits an oversized code block at line boundaries.
+func chunkCodeBlock(para string, maxChunkChars int) []string {
+	lines := strings.Split(para, "\n")
+	var chunks []string
+	var cur strings.Builder
+	curLen := 0
+
+	for _, line := range lines {
+		lRunes := len([]rune(line))
+		if lRunes <= maxChunkChars {
+			needed := lRunes
+			if curLen > 0 {
+				needed += 1 // "\n"
+			}
+			if curLen+needed <= maxChunkChars {
+				if curLen > 0 {
+					cur.WriteString("\n")
+				}
+				cur.WriteString(line)
+				curLen += needed
+			} else {
+				if cur.Len() > 0 {
+					chunks = append(chunks, cur.String())
+					cur.Reset()
+					curLen = 0
+				}
+				cur.WriteString(line)
+				curLen = lRunes
+			}
+		} else {
+			if cur.Len() > 0 {
+				chunks = append(chunks, cur.String())
+				cur.Reset()
+				curLen = 0
+			}
+			chunks = append(chunks, splitRuneBudget(line, maxChunkChars)...)
+		}
+	}
+
+	if cur.Len() > 0 {
+		chunks = append(chunks, cur.String())
+	}
 	return chunks
 }
 
@@ -161,6 +232,11 @@ func splitSentences(para string) []string {
 			}
 			isBoundary = true
 		} else if r == '.' || r == '!' || r == '?' {
+			// Check if this dot is part of a common abbreviation like "Mr.", "Dr.", "e.g.", "i.e."
+			if r == '.' && isAbbreviation(runes, i) {
+				continue
+			}
+
 			// Latin sentence boundary: followed by whitespace and uppercase/number
 			endIdx := i
 			for endIdx+1 < len(runes) && isClosingPunctuation(runes[endIdx+1]) {
@@ -189,6 +265,30 @@ func splitSentences(para string) []string {
 	}
 
 	return sentences
+}
+
+func isAbbreviation(runes []rune, dotIdx int) bool {
+	// Look backwards to extract the token before the period
+	start := dotIdx - 1
+	for start >= 0 && unicode.IsLetter(runes[start]) {
+		start--
+	}
+	word := strings.ToLower(string(runes[start+1 : dotIdx]))
+	if len(word) == 0 {
+		return false
+	}
+	// Single-letter initials (e.g. "J." in "J. Smith")
+	if len(word) == 1 {
+		return true
+	}
+	if abbreviations[word] {
+		return true
+	}
+	// Multi-part abbreviations with adjacent periods (e.g. second dot of "e.g.")
+	if start >= 1 && runes[start] == '.' {
+		return true
+	}
+	return false
 }
 
 // splitRuneBudget slices a string into chunks of at most maxChunkChars runes.

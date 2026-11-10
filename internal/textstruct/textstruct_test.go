@@ -144,6 +144,55 @@ important bug fixes and performance improvements.
 	}
 }
 
+// Negative Fixtures: Short lines where meaningful breaks MUST be preserved (Asymmetry of Failure)
+func TestNegativeFixtures_ShortLinesNeverFlattened(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		lang  string
+	}{
+		{
+			name: "Unmarked English List",
+			input: `apples
+oranges
+pears
+bananas`,
+			lang: "en",
+		},
+		{
+			name: "Japanese Noun List",
+			input: `りんご
+みかん
+バナナ
+ぶどう`,
+			lang: "ja",
+		},
+		{
+			name: "Street Address",
+			input: `John Smith
+123 Main Street
+Apt 4B
+New York, NY 10001`,
+			lang: "en",
+		},
+		{
+			name: "Short Chat / Dialogue Lines",
+			input: `no way
+home now`,
+			lang: "en",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := CleanSpuriousNewlines(tc.input, tc.lang)
+			if got != tc.input {
+				t.Errorf("negative fixture flattened:\nGOT:\n%s\nWANT:\n%s", got, tc.input)
+			}
+		})
+	}
+}
+
 // Edge Cases for CleanSpuriousNewlines
 func TestCleanSpuriousNewlines_EdgeCases(t *testing.T) {
 	if got := CleanSpuriousNewlines("", ""); got != "" {
@@ -211,6 +260,25 @@ func TestChunkText_OversizedParagraphSentences(t *testing.T) {
 	}
 }
 
+func TestChunkText_AbbreviationNotSplit(t *testing.T) {
+	s1 := "Mr. Smith went to Washington with Dr. Jones to discuss policy."
+	s2 := "After the meeting, they returned to New York."
+	input := s1 + " " + s2
+
+	// Set budget to fit s1 exactly, ensuring it splits at the true sentence boundary
+	budget := len([]rune(s1)) + 5
+	chunks := ChunkText(input, budget)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d: %v", len(chunks), chunks)
+	}
+	if chunks[0] != s1 {
+		t.Errorf("chunk[0] split at abbreviation:\nGOT:  %q\nWANT: %q", chunks[0], s1)
+	}
+	if chunks[1] != s2 {
+		t.Errorf("chunk[1] mismatch:\nGOT:  %q\nWANT: %q", chunks[1], s2)
+	}
+}
+
 func TestChunkText_JapaneseSentences(t *testing.T) {
 	s1 := "これは最初の文であり、背景を説明しています。"
 	s2 := "これは二番目の文であり、詳細な実験結果を述べています。"
@@ -227,6 +295,30 @@ func TestChunkText_JapaneseSentences(t *testing.T) {
 	}
 	if chunks[1] != s3 {
 		t.Errorf("chunk[1] mismatch:\nGOT: %q\nWANT: %q", chunks[1], s3)
+	}
+}
+
+func TestChunkText_CodeBlockSplitAtLineBoundaries(t *testing.T) {
+	code := `func example() {
+	x := "hello world"
+	y := "this is a long string that must not be split in half"
+	return x + y
+}`
+	lines := strings.Split(code, "\n")
+	budget := len([]rune(lines[0])) + len([]rune(lines[1])) + 2
+
+	chunks := ChunkText(code, budget)
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d: %v", len(chunks), chunks)
+	}
+	// Check that line boundaries are respected, no mid-line slice
+	for _, chunk := range chunks {
+		for _, line := range strings.Split(chunk, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" && !strings.Contains(code, trimmed) {
+				t.Errorf("code chunk corrupted or sliced mid-line: %q", line)
+			}
+		}
 	}
 }
 
