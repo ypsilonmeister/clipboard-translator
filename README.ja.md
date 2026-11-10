@@ -372,7 +372,7 @@ CI では隔離した Xvfb 環境で入力、PRIMARY／CLIPBOARD、貼り付け�
 トレイメニューの「Settings...」で、ブラウザに開きます(提供のしかたは「プライバシーとネットワーク」を見てください)。
 次の設定ができます。
 
-- **ホットキー**(キー、言語のペアまたは翻訳先の言語、および**出力形式**(「Replace with the translation」/「Keep the original, then the translation」)。`config.json` の `profiles`)、**自動貼り付け**、**完了通知**(`notify_on_complete`)、
+- **ホットキー**(キー、言語のペアまたは翻訳先の言語、**テキストの取得元**(選択範囲／クリップボード。`input`)、および**出力形式**(「Replace with the translation」/「Keep the original, then the translation」)。`config.json` の `profiles`)、**自動貼り付け**、**完了通知**(`notify_on_complete`)、
   **翻訳する文字数の上限**(`max_chars`)。これらは「Save」で反映されます。
 - **翻訳モデル**: 「Download」で、まだ持っていないサイズを取得します(進捗表示と「Cancel」つき。31B は選べません)。
   「Use this model」で、導入済みのモデルへ切り替えます。切り替えでは `llama-server` を起動し直すので、少し時間が

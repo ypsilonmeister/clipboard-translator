@@ -26,7 +26,7 @@ func putModel(t *testing.T, dir string, e models.Entry) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.Truncate(e.MinBytes); err != nil {
+	if err := truncateSparse(f, e.MinBytes); err != nil {
 		f.Close()
 		t.Fatal(err)
 	}
