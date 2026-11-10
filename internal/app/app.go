@@ -414,15 +414,38 @@ func (a *app) registerExtraHotkeys() {
 
 // hotkeySummary lists the working hotkeys with what each one does, for the
 // start-up message. With a single profile that is just the hotkey.
+// Portal shortcuts may differ from the requested key in config.json.
+func (a *app) hotkeyLabel(index int) string {
+	var hk platform.Hotkey
+	if index == 0 {
+		hk = a.hotkey
+	} else {
+		for _, e := range a.extras {
+			if e.profile == index {
+				hk = e.hk
+				break
+			}
+		}
+	}
+	if described, ok := hk.(interface{ TriggerDescription() string }); ok {
+		return described.TriggerDescription()
+	}
+	return a.conf.Profiles[index].Hotkey
+}
+
 func (a *app) hotkeySummary() string {
 	var parts []string
 	add := func(i int) {
 		p := a.conf.Profiles[i]
-		if len(a.conf.Profiles) == 1 {
-			parts = append(parts, p.Hotkey)
+		label := a.hotkeyLabel(i)
+		if label == "" {
 			return
 		}
-		parts = append(parts, p.Hotkey+" ("+p.Label()+")")
+		if len(a.conf.Profiles) == 1 {
+			parts = append(parts, label)
+			return
+		}
+		parts = append(parts, label+" ("+p.Label()+")")
 	}
 	if !a.hasNoHotkey() {
 		add(0)

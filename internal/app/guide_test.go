@@ -85,3 +85,31 @@ func TestGuideInSettingsState(t *testing.T) {
 		t.Fatalf("guide in state = %+v", st.Guide)
 	}
 }
+
+type describedHotkey struct {
+	fakeHotkey
+	actual string
+}
+
+func (h describedHotkey) TriggerDescription() string { return h.actual }
+func TestGuideAndSettingsShowActualPortalShortcut(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	a.hotkey = describedHotkey{actual: "Control + Alt + F9"}
+	if sum := a.hotkeySummary(); sum != "Control + Alt + F9" {
+		t.Fatalf("summary=%q", sum)
+	}
+	if guide := a.quickstartGuide(); !strings.Contains(strings.Join(guide.Steps, " "), "Control + Alt + F9") {
+		t.Fatal("guide did not use the compositor binding")
+	}
+	st := a.settingsState()
+	if len(st.ActualHotkeys) != 1 || st.ActualHotkeys[0] != "Control + Alt + F9" {
+		t.Fatalf("actual shortcuts=%v", st.ActualHotkeys)
+	}
+	if st.Profiles[0].Key != "E" {
+		t.Fatal("actual shortcut must not overwrite requested configuration")
+	}
+	a.hotkey = describedHotkey{}
+	if sum := a.hotkeySummary(); sum != "" {
+		t.Fatal("pending/denied portal binding must not show requested trigger as active")
+	}
+}

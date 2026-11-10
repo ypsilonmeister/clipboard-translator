@@ -250,6 +250,10 @@
       h('h3', { text: 'Hotkey ' + (i + 1) }),
       h('span', { class: 'spacer' }), remove));
 
+    const actual = state.actual_hotkeys && state.actual_hotkeys[i];
+    card.append(h('p', { class: 'hint actual-hotkey', 'data-index': String(i), hidden: !actual,
+      text: actual ? 'Currently active shortcut: ' + actual : '' }));
+
     const keyRow = h('div', { class: 'row' }, h('span', { class: 'label', text: 'Keys' }));
     for (const [id, name] of mods) {
       keyRow.append(h('label', { class: 'chip' },
@@ -643,6 +647,11 @@
     renderModels();
     renderEngines();
     renderBusy();
+    for (const el of document.querySelectorAll('.actual-hotkey')) {
+      const actual = state.actual_hotkeys && state.actual_hotkeys[Number(el.getAttribute('data-index'))];
+      el.textContent = actual ? 'Currently active shortcut: ' + actual : '';
+      el.hidden = !actual;
+    }
   }
 
   // Take new data from the app without touching what is being edited.

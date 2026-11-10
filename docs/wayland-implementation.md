@@ -22,6 +22,7 @@ not a claim that the application already supports Wayland.
 - W1: portal connection, app desktop registration, session lifecycle and private restore-token storage.
   Implemented as an opt-in foundation in this change; the application entry point is not wired yet.
 - W2: GlobalShortcuts sessions, profile bindings and actual trigger display.
+  Implemented as an opt-in registry; production backend activation remains W4.
 - W3: RemoteDesktop/Clipboard, asynchronous capture and disabled Wayland auto-paste.
 - W4: capability/consent recovery UX and real shortcut descriptions in Settings and the guide.
 - W5: user documentation and a manual Wayland test sheet.
@@ -87,3 +88,30 @@ API references:
 - https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html
 - https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html
 - https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Session.html
+
+## W2 boundaries
+
+`portal_shortcuts_linux.go` coalesces profile registration into one BindShortcuts call.
+The returned objects implement Hotkey and expose TriggerDescription from the compositor,
+not from the requested config key. The preferred trigger maps Win/Super to LOGO.
+Activated fires its own profile once until Deactivated. ShortcutsChanged updates the
+actual descriptions without replacing unrelated entries. Missing bindings remain inactive.
+
+When profiles change, the registry closes/recreates only the shortcuts session and binds
+its complete replacement set. The RemoteDesktop session remains alive. Old-session signals
+and obsolete dialog replies cannot activate a newly reused profile id. Refusal and timeout
+clear active bindings; timeout also closes the pending Request and session.
+
+The app summary/guide can read the optional TriggerDescription interface. Settings exposes
+an output-only actual_hotkeys list, shown as "Currently active shortcut" without modifying
+requested config values. This prepares real-trigger display, while W4 still supplies
+production backend selection, asynchronous readiness/status refresh and consent recovery.
+
+Native GNOME test (explicitly designated, unlocked test desktop only):
+`CT_TEST_PORTAL_W2=1 CT_TEST_PORTAL_PRESS=1 go test -tags portaltest -run '^TestPortalNativeShortcutBindings$' -v -timeout 5m ./internal/platform`.
+The maintainer accepts the dialog, then presses Ctrl+Shift+F9 and Ctrl+Shift+F10 once.
+Do not use Ctrl+Alt+function-key chords: they may switch Linux virtual terminals.
+The test does not inject input, translate, or access the clipboard. It closes its sessions,
+removes the temporary .W2Test desktop entry and removes only that test id's GNOME shortcut
+settings/permission-store entry, preserving other applications. This optional test requires
+python3, gsettings, dconf and gdbus for scoped cleanup; CI runs the fake-wire tests instead.

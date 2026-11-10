@@ -10,14 +10,14 @@ struct CTPortal {
     GDBusConnection *bus;
     GCancellable *cancel;
     GQueue events;
-    guint response_sub, session_sub, owner_sub;
+    guint response_sub, session_sub, owner_sub, shortcut_sub;
     gulong closed_handler;
     char *request_prefix, *session_prefix;
 };
 typedef struct { CTPortal *p; int registered; char *token; } Call;
 
 static void retain(CTPortal *p) { p->refs++; }
-void ct_portal_event_free(CTPortalEvent *e) { g_free(e->token); g_free(e->session); }
+void ct_portal_event_free(CTPortalEvent *e) { g_free(e->token); g_free(e->session); g_free(e->id); if (e->bindings) g_variant_unref(e->bindings); }
 static void release(CTPortal *p) {
     if (--p->refs) return;
     while (!g_queue_is_empty(&p->events)) {
@@ -27,11 +27,11 @@ static void release(CTPortal *p) {
     g_object_unref(p->cancel); g_object_unref(p->bus);
     g_free(p->request_prefix); g_free(p->session_prefix); g_free(p);
 }
-static void enqueue(CTPortal *p, int kind, const char *token, const char *session, guint32 code) {
-    if (p->closed) return;
+static CTPortalEvent *enqueue(CTPortal *p, int kind, const char *token, const char *session, guint32 code) {
+    if (p->closed) return NULL;
     CTPortalEvent *e = g_new0(CTPortalEvent, 1);
     e->kind=kind; e->token=g_strdup(token); e->session=g_strdup(session); e->code=code;
-    g_queue_push_tail(&p->events,e);
+    g_queue_push_tail(&p->events,e);return e;
 }
 static void response(GDBusConnection *bus, const gchar *sender, const gchar *path,
                      const gchar *iface, const gchar *name, GVariant *args, gpointer data) {
@@ -45,7 +45,8 @@ static void response(GDBusConnection *bus, const gchar *sender, const gchar *pat
     if (handle && (g_variant_is_of_type(handle,G_VARIANT_TYPE_STRING) || g_variant_is_of_type(handle,G_VARIANT_TYPE_OBJECT_PATH))) session=g_variant_get_string(handle,NULL);
     if (session && (!g_variant_is_object_path(session) || !g_str_has_prefix(session,p->session_prefix))) { session=NULL; code=2; }
     const char *token=strrchr(path,'/');
-    enqueue(p,2,token ? token+1 : "",session,code);
+    CTPortalEvent *e=enqueue(p,2,token ? token+1 : "",session,code);
+    if (e) e->bindings=g_variant_lookup_value(results,"shortcuts",G_VARIANT_TYPE("a(sa{sv})"));
     if (handle) g_variant_unref(handle);
     g_variant_unref(results);
 }
@@ -53,6 +54,22 @@ static void session_closed(GDBusConnection *bus, const gchar *sender, const gcha
                            const gchar *iface, const gchar *name, GVariant *args, gpointer data) {
     CTPortal *p=data;
     if (g_str_has_prefix(path,p->session_prefix)) enqueue(p,3,NULL,path,0);
+}
+static void shortcut_signal(GDBusConnection *bus, const gchar *sender, const gchar *path,
+                            const gchar *iface, const gchar *name, GVariant *args, gpointer data) {
+    CTPortal *p=data; const char *session,*id; GVariant *value; guint64 timestamp;
+    if (!strcmp(name,"ShortcutsChanged") && g_variant_is_of_type(args,G_VARIANT_TYPE("(oa(sa{sv}))"))) {
+        g_variant_get(args,"(&o@a(sa{sv}))",&session,&value);
+        CTPortalEvent *e=NULL;
+        if (g_str_has_prefix(session,p->session_prefix)) e=enqueue(p,7,NULL,session,0);
+        if (e) e->bindings=value; else g_variant_unref(value);
+    } else if ((!strcmp(name,"Activated") || !strcmp(name,"Deactivated")) && g_variant_is_of_type(args,G_VARIANT_TYPE("(osta{sv})"))) {
+        g_variant_get(args,"(&o&st@a{sv})",&session,&id,&timestamp,&value);
+        CTPortalEvent *e=NULL;
+        if (g_str_has_prefix(session,p->session_prefix)) e=enqueue(p,!strcmp(name,"Activated") ? 5 : 6,NULL,session,0);
+        if (e) e->id=g_strdup(id);
+        g_variant_unref(value);
+    }
 }
 static void owner_changed(GDBusConnection *bus, const gchar *sender, const gchar *path,
                           const gchar *iface, const gchar *name, GVariant *args, gpointer data) {
@@ -93,6 +110,7 @@ CTPortal *ct_portal_open(void) {
     p->response_sub=g_dbus_connection_signal_subscribe(bus,DEST,"org.freedesktop.portal.Request","Response",NULL,NULL,0,response,p,NULL);
     p->session_sub=g_dbus_connection_signal_subscribe(bus,DEST,"org.freedesktop.portal.Session","Closed",NULL,NULL,0,session_closed,p,NULL);
     p->owner_sub=g_dbus_connection_signal_subscribe(bus,"org.freedesktop.DBus","org.freedesktop.DBus","NameOwnerChanged","/org/freedesktop/DBus",DEST,0,owner_changed,p,NULL);
+    p->shortcut_sub=g_dbus_connection_signal_subscribe(bus,DEST,"org.freedesktop.portal.GlobalShortcuts",NULL,PATH,NULL,0,shortcut_signal,p,NULL);
     p->closed_handler=g_signal_connect(bus,"closed",G_CALLBACK(connection_closed),p);
     return p;
 }
@@ -113,6 +131,40 @@ void ct_portal_create_session(CTPortal *p, const char *iface, const char *token,
     g_variant_builder_add(&opts,"{sv}","session_handle_token",g_variant_new_string(session));
     call(p,iface,"CreateSession",g_variant_new("(a{sv})",&opts),G_VARIANT_TYPE("(o)"),0,token);
 }
+void ct_portal_bind_shortcuts(CTPortal *p, const char *session, const char *token, CTShortcut *items, int count) {
+    GVariantBuilder shortcuts,opts;
+    g_variant_builder_init(&shortcuts,G_VARIANT_TYPE("a(sa{sv})"));
+    for (int i=0;i<count;i++) {
+        GVariantBuilder properties;g_variant_builder_init(&properties,G_VARIANT_TYPE_VARDICT);
+        g_variant_builder_add(&properties,"{sv}","description",g_variant_new_string(items[i].description));
+        g_variant_builder_add(&properties,"{sv}","preferred_trigger",g_variant_new_string(items[i].trigger));
+        g_variant_builder_add(&shortcuts,"(sa{sv})",items[i].id,&properties);
+    }
+    g_variant_builder_init(&opts,G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&opts,"{sv}","handle_token",g_variant_new_string(token));
+    call(p,"org.freedesktop.portal.GlobalShortcuts","BindShortcuts",g_variant_new("(oa(sa{sv})sa{sv})",session,&shortcuts,"",&opts),G_VARIANT_TYPE("(o)"),0,token);
+}
+void ct_portal_close_session(CTPortal *p, const char *session) {
+    if (!p->closed && g_str_has_prefix(session,p->session_prefix)) g_dbus_connection_call(p->bus,DEST,session,"org.freedesktop.portal.Session","Close",NULL,NULL,0,10000,NULL,NULL,NULL);
+}
+void ct_portal_close_request(CTPortal *p, const char *token) {
+    char *path=g_strconcat(p->request_prefix,token,NULL);
+    if (!p->closed && g_variant_is_object_path(path)) g_dbus_connection_call(p->bus,DEST,path,"org.freedesktop.portal.Request","Close",NULL,NULL,0,10000,NULL,NULL,NULL);
+    g_free(path);
+}
+int ct_portal_binding_count(CTPortalEvent *e) { return e->bindings ? (int)g_variant_n_children(e->bindings) : 0; }
+static const char *binding_field(CTPortalEvent *e, int index, int trigger) {
+    if (index<0 || index>=ct_portal_binding_count(e)) return g_strdup("");
+    GVariant *tuple=g_variant_get_child_value(e->bindings,index), *properties;
+    const char *id,*text="";
+    g_variant_get(tuple,"(&s@a{sv})",&id,&properties);
+    if (trigger) g_variant_lookup(properties,"trigger_description","&s",&text); else text=id;
+    char *copy=g_strdup(text);
+    g_variant_unref(properties);g_variant_unref(tuple);
+    return copy;
+}
+const char *ct_portal_binding_id(CTPortalEvent *e,int index) { return binding_field(e,index,0); }
+const char *ct_portal_binding_trigger(CTPortalEvent *e,int index) { return binding_field(e,index,1); }
 void ct_portal_dispatch(void) {
     for (int i=0;i<64 && g_main_context_pending(NULL);i++) g_main_context_iteration(NULL,FALSE);
 }
@@ -128,6 +180,7 @@ void ct_portal_close(CTPortal *p) {
     g_dbus_connection_signal_unsubscribe(p->bus,p->response_sub);
     g_dbus_connection_signal_unsubscribe(p->bus,p->session_sub);
     g_dbus_connection_signal_unsubscribe(p->bus,p->owner_sub);
+    g_dbus_connection_signal_unsubscribe(p->bus,p->shortcut_sub);
     g_signal_handler_disconnect(p->bus,p->closed_handler);
     g_cancellable_cancel(p->cancel);
     // Disconnecting the private peer releases all portal sessions, including ones
