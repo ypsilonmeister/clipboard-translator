@@ -2,6 +2,7 @@ package setup
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -11,11 +12,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // The tests never contact the real hosts: a stub transport serves fixture
@@ -117,17 +120,57 @@ func fixtureTar(t *testing.T, unsafe bool) []byte {
 	return buf.Bytes()
 }
 
-// fixturePins points the linux llama assets at archive and returns a restore function.
+// fixturePins replaces all OS pins; the fixture archive matches the runner OS.
 func fixturePins(t *testing.T, archive []byte) func() {
 	t.Helper()
-	oldCPU, oldVulkan := llamaAssets["linux/cpu"], llamaAssets["linux/vulkan"]
-	pin := llamaAsset{File: "llama-fixture.tar.gz", Sha256: sha256Hex(archive)}
-	llamaAssets["linux/cpu"] = pin
-	llamaAssets["linux/vulkan"] = pin
-	return func() {
-		llamaAssets["linux/cpu"] = oldCPU
-		llamaAssets["linux/vulkan"] = oldVulkan
+	old := make(map[string]llamaAsset)
+	file := "llama-fixture.tar.gz"
+	if runtime.GOOS == "windows" {
+		file = "llama-fixture.zip"
 	}
+	for key, asset := range llamaAssets {
+		old[key] = asset
+		llamaAssets[key] = llamaAsset{File: file, Sha256: sha256Hex(archive)}
+	}
+	return func() {
+		for key, asset := range old {
+			llamaAssets[key] = asset
+		}
+	}
+}
+
+func fixtureArchive(t *testing.T, unsafe bool) []byte {
+	if runtime.GOOS != "windows" {
+		return fixtureTar(t, unsafe)
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	name := "llama-fixture/llama-server.exe"
+	if unsafe {
+		name = "../escaped"
+	}
+	for _, entry := range []string{name, "llama-fixture/ggml.dll", "llama-fixture/cudart64_fixture.dll", "llama-fixture/cublas64_fixture.dll"} {
+		w, err := zw.Create(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = w.Write([]byte("fixture")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+func fixtureServerFile(backend string) string {
+	return "runtime/" + backend + "/" + platform.ServerBinaryName()
+}
+func fixtureAlternateBackend() string {
+	if runtime.GOOS == "darwin" {
+		return "metal"
+	}
+	return "vulkan"
 }
 
 func fixtureTransport(archive []byte) *stubTransport {
@@ -181,6 +224,9 @@ func writeConfigMap(t *testing.T, root string, cfg map[string]any) {
 
 func runOK(t *testing.T, root string, tr http.RoundTripper, opt Options) {
 	t.Helper()
+	if opt.Backend == "" {
+		opt.Backend = "cpu"
+	}
 	opt.Root = root
 	opt.Transport = tr
 	opt.Out = io.Discard
@@ -191,31 +237,34 @@ func runOK(t *testing.T, root string, tr http.RoundTripper, opt Options) {
 
 func TestRunFreshInstallAndIdempotentRerun(t *testing.T) {
 	defer fixtureCatalog(t)()
-	archive := fixtureTar(t, false)
+	archive := fixtureArchive(t, false)
 	defer fixturePins(t, archive)()
 	tr := fixtureTransport(archive)
 	root := t.TempDir()
 	writeConfigMap(t, root, map[string]any{"hotkey": "Ctrl+Alt+T", "future_key": map[string]any{"keep": true}})
 
-	runOK(t, root, tr, Options{})
+	runOK(t, root, tr, Options{Backend: "cpu"})
 
-	server := filepath.Join(root, "runtime", "cpu", "llama-server")
+	server := filepath.Join(root, "runtime", "cpu", platform.ServerBinaryName())
 	info, err := os.Stat(server)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode()&0o111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		t.Error("llama-server is not executable")
 	}
-	link, err := os.Lstat(filepath.Join(root, "runtime", "cpu", "libggml.so"))
-	if err != nil || link.Mode()&os.ModeSymlink == 0 {
-		t.Errorf("library symlink not preserved: %v %v", link, err)
+	if runtime.GOOS != "windows" {
+		link, err := os.Lstat(filepath.Join(root, "runtime", "cpu", "libggml.so"))
+		if err != nil || link.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("library symlink not preserved: %v %v", link, err)
+		}
+		if b, err := os.ReadFile(filepath.Join(root, "runtime", "cpu", "libggml.so")); err != nil || string(b) != "fixture" {
+			t.Errorf("symlink target content: %q %v", b, err)
+		}
 	}
-	if b, err := os.ReadFile(filepath.Join(root, "runtime", "cpu", "libggml.so")); err != nil || string(b) != "fixture" {
-		t.Errorf("symlink target content: %q %v", b, err)
-	}
+
 	cfg := readConfigMap(t, root)
-	if cfg["server_file"] != "runtime/cpu/llama-server" || cfg["fallback_server_file"] != "runtime/cpu/llama-server" || cfg["gpu_layers"] != float64(0) {
+	if cfg["server_file"] != fixtureServerFile("cpu") || cfg["fallback_server_file"] != fixtureServerFile("cpu") || cfg["gpu_layers"] != float64(0) {
 		t.Errorf("engine config: %v", cfg)
 	}
 	if cfg["hotkey"] != "Ctrl+Alt+T" {
@@ -230,7 +279,7 @@ func TestRunFreshInstallAndIdempotentRerun(t *testing.T) {
 
 	before, _ := os.ReadFile(filepath.Join(root, "config.json"))
 	calls := tr.callCount()
-	runOK(t, root, tr, Options{})
+	runOK(t, root, tr, Options{Backend: "cpu"})
 	if got := tr.callCount(); got != calls {
 		t.Errorf("an installed setup contacted the network on re-run (%d extra calls)", got-calls)
 	}
@@ -242,15 +291,15 @@ func TestRunFreshInstallAndIdempotentRerun(t *testing.T) {
 
 func TestRunFreshInstallWithoutConfigWritesOnlyEngineKeys(t *testing.T) {
 	defer fixtureCatalog(t)()
-	archive := fixtureTar(t, false)
+	archive := fixtureArchive(t, false)
 	defer fixturePins(t, archive)()
 	tr := fixtureTransport(archive)
 	root := t.TempDir()
 
-	runOK(t, root, tr, Options{})
+	runOK(t, root, tr, Options{Backend: "cpu"})
 	cfg := readConfigMap(t, root)
 	want := map[string]any{
-		"server_file": "runtime/cpu/llama-server", "fallback_server_file": "runtime/cpu/llama-server",
+		"server_file": fixtureServerFile("cpu"), "fallback_server_file": fixtureServerFile("cpu"),
 		"gpu_layers": float64(0),
 	}
 	if len(cfg) != len(want) {
@@ -265,14 +314,14 @@ func TestRunFreshInstallWithoutConfigWritesOnlyEngineKeys(t *testing.T) {
 
 func TestRunExplicitModelAndBackendAreKept(t *testing.T) {
 	defer fixtureCatalog(t)()
-	archive := fixtureTar(t, false)
+	archive := fixtureArchive(t, false)
 	defer fixturePins(t, archive)()
 	tr := fixtureTransport(archive)
 	root := t.TempDir()
 
-	runOK(t, root, tr, Options{Backend: "vulkan", ExplicitBackend: true, Model: "0.8b"})
+	runOK(t, root, tr, Options{Backend: fixtureAlternateBackend(), ExplicitBackend: true, Model: "0.8b"})
 	cfg := readConfigMap(t, root)
-	if cfg["server_file"] != "runtime/vulkan/llama-server" || cfg["gpu_layers"] != float64(99) {
+	if cfg["server_file"] != fixtureServerFile(fixtureAlternateBackend()) || cfg["gpu_layers"] != float64(99) {
 		t.Errorf("explicit backend not written: %v", cfg)
 	}
 	if cfg["model_file"] != "models/fixture-0.8b.gguf" || cfg["template_file"] != "models/chat_template.0.8b.jinja" {
@@ -280,12 +329,12 @@ func TestRunExplicitModelAndBackendAreKept(t *testing.T) {
 	}
 	// A later plain run keeps both choices and downloads nothing.
 	calls := tr.callCount()
-	runOK(t, root, tr, Options{})
+	runOK(t, root, tr, Options{Backend: "cpu"})
 	cfg = readConfigMap(t, root)
 	if cfg["model_file"] != "models/fixture-0.8b.gguf" {
 		t.Errorf("model choice lost on re-run: %v", cfg)
 	}
-	if cfg["server_file"] != "runtime/vulkan/llama-server" || cfg["gpu_layers"] != float64(99) {
+	if cfg["server_file"] != fixtureServerFile(fixtureAlternateBackend()) || cfg["gpu_layers"] != float64(99) {
 		t.Errorf("engine choice lost on re-run: %v", cfg)
 	}
 	if got := tr.callCount(); got != calls {
@@ -295,7 +344,7 @@ func TestRunExplicitModelAndBackendAreKept(t *testing.T) {
 
 func TestRunConfiguredModelIsFetchedAndHashChecked(t *testing.T) {
 	defer fixtureCatalog(t)()
-	archive := fixtureTar(t, false)
+	archive := fixtureArchive(t, false)
 	defer fixturePins(t, archive)()
 	tr := fixtureTransport(archive)
 	// Serve wrong bytes for the 8b model: setup must refuse them.
@@ -310,7 +359,7 @@ func TestRunConfiguredModelIsFetchedAndHashChecked(t *testing.T) {
 	// A Windows-style path in config.json still names the model.
 	writeConfigMap(t, root, map[string]any{"model_file": `models\fixture-8b.gguf`})
 
-	opt := Options{Root: root, Transport: tr, Out: io.Discard}
+	opt := Options{Backend: "cpu", Root: root, Transport: tr, Out: io.Discard}
 	if code := Run(opt); code == 0 {
 		t.Fatal("setup accepted a model with a bad SHA-256")
 	}
@@ -333,12 +382,12 @@ func TestRunConfiguredModelIsFetchedAndHashChecked(t *testing.T) {
 
 func TestRunUnsafeArchiveIsRejected(t *testing.T) {
 	defer fixtureCatalog(t)()
-	archive := fixtureTar(t, true)
+	archive := fixtureArchive(t, true)
 	defer fixturePins(t, archive)()
 	tr := fixtureTransport(archive)
 	root := t.TempDir()
 
-	opt := Options{Root: root, Transport: tr, Out: io.Discard}
+	opt := Options{Backend: "cpu", Root: root, Transport: tr, Out: io.Discard}
 	if code := Run(opt); code == 0 {
 		t.Fatal("setup accepted an archive with a ../ member")
 	}
@@ -359,7 +408,7 @@ func TestRunUnsafeArchiveIsRejected(t *testing.T) {
 
 func TestRunChecksumMismatchIsRejected(t *testing.T) {
 	defer fixtureCatalog(t)()
-	archive := fixtureTar(t, false)
+	archive := fixtureArchive(t, false)
 	defer fixturePins(t, archive)()
 	tr := fixtureTransport(archive)
 	orig := tr.handler
@@ -370,7 +419,7 @@ func TestRunChecksumMismatchIsRejected(t *testing.T) {
 		return orig(url)
 	}
 	root := t.TempDir()
-	opt := Options{Root: root, Transport: tr, Out: io.Discard}
+	opt := Options{Backend: "cpu", Root: root, Transport: tr, Out: io.Discard}
 	if code := Run(opt); code == 0 {
 		t.Fatal("setup accepted a runtime archive with a bad SHA-256")
 	}
@@ -379,9 +428,9 @@ func TestRunChecksumMismatchIsRejected(t *testing.T) {
 	}
 }
 
-func TestRunPartialRuntimeIsNotOverwritten(t *testing.T) {
+func TestRunPartialRuntimePolicyByPlatform(t *testing.T) {
 	defer fixtureCatalog(t)()
-	archive := fixtureTar(t, false)
+	archive := fixtureArchive(t, false)
 	defer fixturePins(t, archive)()
 	tr := fixtureTransport(archive)
 	root := t.TempDir()
@@ -393,7 +442,19 @@ func TestRunPartialRuntimeIsNotOverwritten(t *testing.T) {
 	if err := os.WriteFile(sentinel, []byte("keep me"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	opt := Options{Root: root, Transport: tr, Out: io.Discard}
+	opt := Options{Backend: "cpu", Root: root, Transport: tr, Out: io.Discard}
+	if runtime.GOOS == "windows" {
+		if code := Run(opt); code != 0 {
+			t.Fatalf("Windows should replace an incomplete backend after staging: %d", code)
+		}
+		if p, _ := currentPlatform(); !p.backendComplete(root, "cpu") {
+			t.Fatal("repaired backend is incomplete")
+		}
+		if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+			t.Fatal("old partial backend was not replaced")
+		}
+		return
+	}
 	if code := Run(opt); code == 0 {
 		t.Fatal("setup overwrote an incomplete runtime directory")
 	}
@@ -404,7 +465,7 @@ func TestRunPartialRuntimeIsNotOverwritten(t *testing.T) {
 
 func TestRunTooSmallModelIsRejected(t *testing.T) {
 	defer fixtureCatalog(t)()
-	archive := fixtureTar(t, false)
+	archive := fixtureArchive(t, false)
 	defer fixturePins(t, archive)()
 	tr := fixtureTransport(archive)
 	root := t.TempDir()
@@ -417,7 +478,7 @@ func TestRunTooSmallModelIsRejected(t *testing.T) {
 	if err := os.WriteFile(modelPath, fixtureModel8, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	opt := Options{Root: root, Transport: tr, Out: io.Discard, Model: "8b"}
+	opt := Options{Backend: "cpu", Root: root, Transport: tr, Out: io.Discard, Model: "8b"}
 	if code := Run(opt); code == 0 {
 		t.Fatal("setup accepted a too-small model file")
 	}

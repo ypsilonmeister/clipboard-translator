@@ -10,6 +10,7 @@
 package setup
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -189,7 +190,7 @@ func readConfig(root string) (map[string]any, bool, error) {
 		return nil, false, err
 	}
 	cfg := map[string]any{}
-	if err := json.Unmarshal(b, &cfg); err != nil {
+	if err := json.Unmarshal(bytes.TrimPrefix(b, []byte{0xef, 0xbb, 0xbf}), &cfg); err != nil {
 		return nil, false, fmt.Errorf("config.json is not valid JSON: %w", err)
 	}
 	return cfg, true, nil

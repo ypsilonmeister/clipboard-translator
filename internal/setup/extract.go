@@ -39,18 +39,46 @@ func memberPath(dest, name string) (string, error) {
 	return target, nil
 }
 
-// checkParentLinks refuses to write through a symlink an earlier member
-// planted if the real location of dir leaves dest.
+// Archive entries must never be written through an earlier member's symlink.
+// Even an internal alias can change how a later relative link is resolved.
 func checkParentLinks(dest, dir string) error {
-	if dir == dest {
+	if !withinDir(dest, dir) {
+		return fmt.Errorf("archive member parent is outside the destination")
+	}
+	rel, err := filepath.Rel(dest, dir)
+	if err != nil {
+		return err
+	}
+	cur := dest
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "." {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		st, err := os.Lstat(cur)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("archive member parent %q is not a regular directory", cur)
+		}
+	}
+	return nil
+}
+
+func checkRegularTarget(target string) error {
+	st, err := os.Lstat(target)
+	if os.IsNotExist(err) {
 		return nil
 	}
-	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return nil // the parent does not exist yet as a link; MkdirAll is safe
+		return err
 	}
-	if !withinDir(dest, real) && real != dest {
-		return fmt.Errorf("archive member path %q escapes through a symbolic link", dir)
+	if !st.Mode().IsRegular() {
+		return fmt.Errorf("archive member %q would overwrite a link or nonregular file", target)
 	}
 	return nil
 }
@@ -70,9 +98,20 @@ func extractTarGz(archivePath, dest string) error {
 		return err
 	}
 	tr := tar.NewReader(gz)
+	var links []string
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
+			realDest, err := filepath.EvalSymlinks(dest)
+			if err != nil {
+				return err
+			}
+			for _, link := range links {
+				real, err := filepath.EvalSymlinks(link)
+				if err != nil || !withinDir(realDest, real) {
+					return fmt.Errorf("archive link %q does not resolve inside the destination", link)
+				}
+			}
 			return nil
 		}
 		if err != nil {
@@ -84,14 +123,23 @@ func extractTarGz(archivePath, dest string) error {
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
+			if err := checkParentLinks(dest, target); err != nil {
+				return err
+			}
 			if err := os.MkdirAll(target, fsMode(hdr)); err != nil {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
+			if err := checkParentLinks(dest, filepath.Dir(target)); err != nil {
+				return err
+			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
 			if err := checkParentLinks(dest, filepath.Dir(target)); err != nil {
+				return err
+			}
+			if err := checkRegularTarget(target); err != nil {
 				return err
 			}
 			w, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, fsMode(hdr))
@@ -107,11 +155,17 @@ func extractTarGz(archivePath, dest string) error {
 			}
 		case tar.TypeSymlink, tar.TypeLink:
 			linkTarget, err := linkTargetPath(target, hdr.Linkname)
+			if hdr.Typeflag == tar.TypeLink {
+				linkTarget, err = memberPath(dest, hdr.Linkname)
+			}
 			if err != nil {
 				return err
 			}
 			if !withinDir(dest, linkTarget) {
 				return fmt.Errorf("archive member %q links outside the destination", hdr.Name)
+			}
+			if err := checkParentLinks(dest, filepath.Dir(target)); err != nil {
+				return err
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
@@ -121,7 +175,18 @@ func extractTarGz(archivePath, dest string) error {
 				if err := os.Symlink(hdr.Linkname, target); err != nil {
 					return err
 				}
+				links = append(links, target)
 			} else {
+				if err := checkParentLinks(dest, filepath.Dir(linkTarget)); err != nil {
+					return err
+				}
+				st, err := os.Lstat(linkTarget)
+				if err != nil {
+					return err
+				}
+				if !st.Mode().IsRegular() {
+					return fmt.Errorf("archive hard link target is not a regular file")
+				}
 				if err := os.Link(linkTarget, target); err != nil {
 					return err
 				}
@@ -160,10 +225,16 @@ func extractZip(archivePath, dest string) error {
 			return err
 		}
 		if entry.FileInfo().IsDir() {
+			if err := checkParentLinks(dest, target); err != nil {
+				return err
+			}
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return err
 			}
 			continue
+		}
+		if err := checkParentLinks(dest, filepath.Dir(target)); err != nil {
+			return err
 		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
@@ -174,6 +245,9 @@ func extractZip(archivePath, dest string) error {
 		mode := entry.Mode() & 0o777
 		if mode == 0 {
 			mode = 0o644
+		}
+		if err := checkRegularTarget(target); err != nil {
+			return err
 		}
 		w, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 		if err != nil {

@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"os"
 	"path/filepath"
 	"testing"
@@ -53,7 +54,7 @@ func engineFixtureRoot(t *testing.T, backends ...string) string {
 	t.Helper()
 	root := t.TempDir()
 	for _, b := range backends {
-		p := filepath.Join(root, "runtime", b, "llama-server")
+		p := filepath.Join(root, "runtime", b, platform.ServerBinaryName())
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +68,7 @@ func engineFixtureRoot(t *testing.T, backends ...string) string {
 func TestEngineUpdatesPreservesUserEngine(t *testing.T) {
 	root := engineFixtureRoot(t, "cpu", "vulkan")
 	cfg := map[string]any{
-		"server_file": "runtime/vulkan/llama-server", "fallback_server_file": "runtime/cpu/llama-server",
+		"server_file": fixtureServerFile("vulkan"), "fallback_server_file": fixtureServerFile("cpu"),
 		"gpu_layers": float64(17),
 	}
 	set := engineUpdates(engineState{
@@ -81,13 +82,13 @@ func TestEngineUpdatesPreservesUserEngine(t *testing.T) {
 
 func TestEngineUpdatesExplicitBackendReplaces(t *testing.T) {
 	root := engineFixtureRoot(t, "cpu", "vulkan")
-	cfg := map[string]any{"server_file": "runtime/vulkan/llama-server", "gpu_layers": float64(17)}
+	cfg := map[string]any{"server_file": fixtureServerFile("vulkan"), "gpu_layers": float64(17)}
 	set := engineUpdates(engineState{
 		root: root, cfg: cfg, backend: "cpu", explicitBackend: true,
 		serverPresentAtStart: true, backendCompleteAtStart: true,
 	})
 	want := map[string]any{
-		"server_file": "runtime/cpu/llama-server", "fallback_server_file": "runtime/cpu/llama-server",
+		"server_file": fixtureServerFile("cpu"), "fallback_server_file": fixtureServerFile("cpu"),
 		"gpu_layers": 0,
 	}
 	for k, v := range want {
@@ -105,7 +106,7 @@ func TestEngineUpdatesMissingServerIsReplaced(t *testing.T) {
 			root: root, cfg: cfg, backend: "cpu",
 			serverPresentAtStart: false, backendCompleteAtStart: true,
 		})
-		if set["server_file"] != "runtime/cpu/llama-server" || set["gpu_layers"] != 0 {
+		if set["server_file"] != fixtureServerFile("cpu") || set["gpu_layers"] != 0 {
 			t.Errorf("server %v: set = %v", server, set)
 		}
 	}
@@ -116,7 +117,7 @@ func TestEngineUpdatesFillsDefaultsWithoutSwitching(t *testing.T) {
 	for _, backend := range []string{"cpu", "vulkan"} {
 		cfg := map[string]any{
 			// The Windows-style spelling, as the Python test uses.
-			"server_file":          "runtime\\" + backend + "\\llama-server",
+			"server_file":          "runtime\\" + backend + "\\" + platform.ServerBinaryName(),
 			"gpu_layers":           nil,
 			"fallback_server_file": "missing",
 		}
@@ -131,7 +132,7 @@ func TestEngineUpdatesFillsDefaultsWithoutSwitching(t *testing.T) {
 		if set["gpu_layers"] != wantGPU {
 			t.Errorf("%s: gpu_layers = %v, want %d (set %v)", backend, set["gpu_layers"], wantGPU, set)
 		}
-		if set["fallback_server_file"] != "runtime/cpu/llama-server" {
+		if set["fallback_server_file"] != fixtureServerFile("cpu") {
 			t.Errorf("%s: fallback = %v (set %v)", backend, set["fallback_server_file"], set)
 		}
 		if _, changed := set["server_file"]; changed {
@@ -142,7 +143,7 @@ func TestEngineUpdatesFillsDefaultsWithoutSwitching(t *testing.T) {
 
 func TestEngineUpdatesNewlyInstalledBackendUpdatesEngine(t *testing.T) {
 	root := engineFixtureRoot(t, "cpu")
-	custom := filepath.Join(root, "custom", "llama-server")
+	custom := filepath.Join(root, "custom", platform.ServerBinaryName())
 	if err := os.MkdirAll(filepath.Dir(custom), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +155,7 @@ func TestEngineUpdatesNewlyInstalledBackendUpdatesEngine(t *testing.T) {
 		root: root, cfg: cfg, backend: "cpu",
 		serverPresentAtStart: true, backendCompleteAtStart: false, // cpu was installed by this run
 	})
-	if set["server_file"] != "runtime/cpu/llama-server" {
+	if set["server_file"] != fixtureServerFile("cpu") {
 		t.Errorf("set = %v", set)
 	}
 }
