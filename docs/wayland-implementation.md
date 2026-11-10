@@ -26,6 +26,7 @@ not a claim that the application already supports Wayland.
 - W3: RemoteDesktop/Clipboard, asynchronous capture and disabled Wayland auto-paste.
   Implemented as an opt-in controller; application integration remains W4.
 - W4: capability/consent recovery UX and real shortcut descriptions in Settings and the guide.
+  Implemented in the production platform API; automatic paste remains disabled.
 - W5: user documentation and a manual Wayland test sheet.
 - W6: measure KDE Plasma and a wlroots compositor before extending support.
 - W7: optional StatusNotifierItem/dbusmenu tray.
@@ -178,3 +179,54 @@ integration, translation inference, physical held modifiers, KDE or wlroots.
 API references:
 - https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.RemoteDesktop.html
 - https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Clipboard.html
+
+## W4 integration
+
+W0-W3's disabled-backend notes describe those stages; W4 now enables the Wayland
+backend. GTK is explicitly initialized with the Wayland backend, and no X11 init,
+focus, hotkey pump, selection or input function is called on this path. Initialization
+after the single-instance lock installs the desktop entry and private token store.
+The portal connection probes interface versions and available keyboard support before
+registration/session creation. Missing capabilities or a disconnected bus leave the
+app alive with an actionable status and Retry Wayland permissions menu command.
+
+Local hotkey handles survive a connection retry. A remote-only refusal/revocation
+retries only that session; a shortcut refusal retries binding without closing remote
+access. Consent starts after the initial profile set has been bound or refused, so the
+initial shortcut and keyboard/clipboard dialogs are sequential. GTK pumping continues
+even if a hotkey reports an error. The fallback control window retains the latest status
+when it appears; closing it still quits the application.
+
+The optional Clipboard DesktopSession interface supplies status to the control menu,
+Settings and Quick start. Actual triggers refresh as portal replies arrive without
+overwriting requested configuration. The guide is not marked shown while consent is
+pending. Settings disables the automatic-paste control on Wayland, while retaining its
+saved preference for other sessions. Both the platform SendPaste path and app result
+handler independently refuse automatic paste on Wayland.
+
+The application retries clipboard-input reads, translation compare/write and history
+copies from UI ticks, with deadlines. New requests/abort invalidate pending results by
+generation; history copy cancels an older translation. Pending writes do not notify
+success or add duplicate history. A stalled result transfer keeps the translation in
+history. A portal compare/write remains best effort, and requests already submitted to
+the compositor cannot be undone by a later generation change.
+
+Wayland's login launcher uses the portal application id. Both the older X11 launcher
+and the application-id launcher are recognized across session changes; disabling startup
+removes only entries that match this executable, avoiding duplicate owned launchers and
+preserving entries for other installations.
+
+Fake tests cover capability failure, retry with retained hotkey handles, sequential
+consent, remote refusal without shortcut loss, pending result completion/cancellation,
+timeouts, history-copy completion, clipboard-read abort, and status/guide/Settings.
+Native API smoke test on an explicitly designated disposable Wayland desktop:
+`CT_TEST_PORTAL_W4=1 go test -tags portaltest -run '^TestPortalNativeDesktopRuntime$' -v -timeout 6m ./internal/platform`.
+Accept W4Test shortcuts and keyboard/clipboard control; click Start in the reusable W3
+fixture, then press Ctrl+Shift+F9 once and release the modifiers. It establishes known
+clipboard contents before reading, exercises NewHotkey/NewClipboard/BeginSelectionCapture,
+compares/replaces the known source, and explicitly pastes into the guarded fixture.
+The test closes sessions and removes only .W4Test desktop/shortcut/permission state.
+The maintainer's Ubuntu 26.04 / GNOME 50.1 VM (100.78.89.32) passed this test. This
+verifies the production platform API; translation inference, the complete packaged-app
+workflow, physical long-held modifiers, alternative layouts and other compositors remain
+manual validation items for W5/W6.

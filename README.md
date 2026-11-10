@@ -230,8 +230,15 @@ manual testing. Cross-compilation with `CGO_ENABLED=0` only verifies portable lo
 The details below explain each part.
 
 Linux support is the first phase of [#13](https://github.com/ypsilonmeister/clipboard-translator/issues/13).
-**Wayland sessions, including XWayland, are not supported**;
-select an Xorg/X11 session when logging in.
+Wayland support is experimental, initially targeting GNOME 48+ with current
+GlobalShortcuts, RemoteDesktop keyboard and Clipboard portals. Accept the shortcut
+and keyboard/clipboard permission dialogs, then release the hotkey modifiers after
+pressing. Translations go to the clipboard; **automatic paste is disabled on Wayland**.
+The desktop chooses the actual shortcuts, shown in Settings and Quick start. If access
+is denied or revoked, use **Retry Wayland permissions** in the control-window menu.
+Without a tray host, keep the control window open (closing it quits the app).
+Older desktops without these portals still need an Xorg/X11 session. KDE and wlroots
+have not been verified. Only the GNOME 50.1 test VM has been measured so far.
 
 On Ubuntu 24.04, install the runtime dependencies:
 

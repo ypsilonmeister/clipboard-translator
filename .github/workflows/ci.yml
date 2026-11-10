@@ -58,6 +58,8 @@ jobs:
       - run: go test ./...
       - name: Test with the race detector
         run: go test -race -count=1 ./...
+      - name: Compile opt-in Wayland fixtures and run fake portal tests
+        run: go test -tags portaltest -run '^TestPortal' ./internal/platform
       - name: Test the X11 desktop in an isolated virtual display
         run: env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 CT_TEST_X11=1 xvfb-run -a go test -tags x11test -run '^TestX11' -v -timeout 60s ./internal/platform
       - name: Check setup and package scripts

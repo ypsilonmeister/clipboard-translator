@@ -109,6 +109,10 @@ func Run(opts Options) {
 		fatal("another instance or conflicting port is running: ", err)
 	}
 	defer instance.Close()
+	if err := platform.InitializeDesktop(dir); err != nil {
+		fatal("desktop initialization: ", err)
+	}
+	defer platform.CloseDesktop()
 	// We are the only instance, so a STOP file is left over from an earlier run
 	// (e.g. Stop.cmd after a crash). Without this the app would quit immediately.
 	_ = os.Remove(filepath.Join(dir, "STOP"))

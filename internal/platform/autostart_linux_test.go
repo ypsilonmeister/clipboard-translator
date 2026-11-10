@@ -8,6 +8,8 @@ import (
 )
 
 func TestLinuxAutostart(t *testing.T) {
+	t.Setenv("XDG_SESSION_TYPE", "x11")
+	t.Setenv("WAYLAND_DISPLAY", "")
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	if linuxAutostartEnabled() {
@@ -28,6 +30,56 @@ func TestLinuxAutostart(t *testing.T) {
 	}
 	if linuxAutostartEnabled() {
 		t.Fatal("entry not removed")
+	}
+}
+
+func TestLinuxWaylandAutostart(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_SESSION_TYPE", "wayland")
+	t.Setenv("WAYLAND_DISPLAY", "wayland-0")
+	path, err := linuxAutostartPath()
+	if err != nil || filepath.Base(path) != waylandAppID+".desktop" {
+		t.Fatal("Wayland autostart must share the portal app id")
+	}
+	if err := toggleLinuxAutostart(); err != nil {
+		t.Fatal(err)
+	}
+	if !linuxAutostartEnabled() {
+		t.Fatal("Wayland autostart was not enabled")
+	}
+	if err := toggleLinuxAutostart(); err != nil {
+		t.Fatal(err)
+	}
+	if linuxAutostartEnabled() {
+		t.Fatal("Wayland autostart was not removed")
+	}
+}
+
+func TestLinuxAutostartAcrossSessionsPreservesOtherInstallations(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_SESSION_TYPE", "x11")
+	t.Setenv("WAYLAND_DISPLAY", "")
+	if err := toggleLinuxAutostart(); err != nil {
+		t.Fatal(err)
+	}
+	old, _ := linuxAutostartPath()
+	t.Setenv("XDG_SESSION_TYPE", "wayland")
+	if !linuxAutostartEnabled() {
+		t.Fatal("old launcher must remain recognized")
+	}
+	current, _ := linuxAutostartPath()
+	foreign, _ := linuxDesktopEntry("/tmp/another-installation/translator")
+	if err := os.WriteFile(current, []byte(foreign), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := toggleLinuxAutostart(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatal("owned old launcher remains")
+	}
+	if got, err := os.ReadFile(current); err != nil || string(got) != foreign {
+		t.Fatal("other installation was changed")
 	}
 }
 

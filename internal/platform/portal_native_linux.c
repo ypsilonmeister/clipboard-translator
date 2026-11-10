@@ -165,6 +165,26 @@ void ct_portal_register(CTPortal *p, const char *id) {
     GVariantBuilder opts;g_variant_builder_init(&opts,G_VARIANT_TYPE_VARDICT);
     call(p,"org.freedesktop.host.portal.Registry","Register",g_variant_new("(sa{sv})",id,&opts),G_VARIANT_TYPE_UNIT,1,NULL);
 }
+static void probe_done(GObject *obj,GAsyncResult *result,gpointer data) {
+    Call *c=data;GError *error=NULL;
+    GVariant *reply=g_dbus_connection_call_finish(G_DBUS_CONNECTION(obj),result,&error);
+    guint32 version=0,devices=0;
+    if (reply) {
+        GVariant *props;g_variant_get(reply,"(@a{sv})",&props);
+        g_variant_lookup(props,"version","u",&version);
+        g_variant_lookup(props,"AvailableDeviceTypes","u",&devices);
+        g_variant_unref(props);g_variant_unref(reply);
+    }
+    CTPortalEvent *e=enqueue(c->p,13,NULL,NULL,version);
+    if (e) {e->id=g_strdup(c->token);e->devices=devices;}
+    g_clear_error(&error);release(c->p);g_free(c->token);g_free(c);
+}
+void ct_portal_probe(CTPortal *p,const char *iface) {
+    if (p->closed) return;
+    Call *c=g_new0(Call,1);c->p=p;c->token=g_strdup(iface);retain(p);
+    g_dbus_connection_call(p->bus,DEST,PATH,"org.freedesktop.DBus.Properties","GetAll",
+        g_variant_new("(s)",iface),G_VARIANT_TYPE("(a{sv})"),0,10000,p->cancel,probe_done,c);
+}
 void ct_portal_create_session(CTPortal *p, const char *iface, const char *token, const char *session) {
     GVariantBuilder opts;g_variant_builder_init(&opts,G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&opts,"{sv}","handle_token",g_variant_new_string(token));

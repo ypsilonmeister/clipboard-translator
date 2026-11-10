@@ -220,8 +220,17 @@ CI は Apple Silicon／Intel の両方で、AppKit、クリップボード、Car
 以下に、それぞれの詳細を説明します。
 
 [#13](https://github.com/ypsilonmeister/clipboard-translator/issues/13) の最初の段階として Linux に対応しています。
-**Wayland セッション（XWayland を含む）は非対応**です。
-ログイン時に Xorg／X11 セッションを選んでください。
+Wayland は実験的対応で、最初の対象は GNOME 48+ と、対応する最新の
+GlobalShortcuts・RemoteDesktop キーボード・Clipboard portal です。
+ショートカットとキーボード・クリップボード操作の許可画面を許可し、ホットキーを
+押した後は修飾キーを離してください。翻訳結果はクリップボードに入ります。
+**Wayland では自動貼り付けを無効にしています**。
+実際のショートカットはデスクトップ側が決定し、Settings と Quick start に表示します。
+許可を拒否・取り消した場合は、操作ウィンドウのメニューから
+**Retry Wayland permissions** を選んでください。トレイがない環境では操作ウィンドウを
+開いたまま使います（閉じるとアプリが終了します）。必要な portal がない古いデスクトップ
+では Xorg／X11 セッションが必要です。KDE と wlroots は未検証で、実機確認済みなのは
+GNOME 50.1 のテスト VM です。
 
 Ubuntu 24.04 では、実行に必要なパッケージを入れます。
 

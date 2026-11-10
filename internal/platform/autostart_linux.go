@@ -15,7 +15,11 @@ func linuxAutostartPath() (string, error) {
 	if !filepath.IsAbs(dir) {
 		return "", errors.New("XDG_CONFIG_HOME must be an absolute path")
 	}
-	return filepath.Join(dir, "autostart", "clipboard-translator.desktop"), nil
+	name := "clipboard-translator.desktop"
+	if backend, _ := selectLinuxBackend(os.Getenv("DISPLAY"), os.Getenv("XDG_SESSION_TYPE"), os.Getenv("WAYLAND_DISPLAY")); backend == linuxBackendWayland {
+		name = waylandAppID + ".desktop"
+	}
+	return filepath.Join(dir, "autostart", name), nil
 }
 
 func linuxDesktopEntry(exe string) (string, error) {
@@ -41,8 +45,20 @@ func linuxAutostartEnabled() bool {
 	if err != nil {
 		return false
 	}
-	got, err := os.ReadFile(path)
-	return err == nil && string(got) == want
+	for _, candidate := range linuxAutostartCandidates(path) {
+		got, err := os.ReadFile(candidate)
+		if err == nil && string(got) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// Recognize our older X11 entry across desktop-session changes, and avoid
+// creating two login launchers. Never remove an entry for another executable.
+func linuxAutostartCandidates(path string) []string {
+	dir := filepath.Dir(path)
+	return []string{filepath.Join(dir, "clipboard-translator.desktop"), filepath.Join(dir, waylandAppID+".desktop")}
 }
 
 func toggleLinuxAutostart() error {
@@ -51,7 +67,23 @@ func toggleLinuxAutostart() error {
 		return err
 	}
 	if linuxAutostartEnabled() {
-		return os.Remove(path)
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		want, err := linuxDesktopEntry(exe)
+		if err != nil {
+			return err
+		}
+		for _, candidate := range linuxAutostartCandidates(path) {
+			got, err := os.ReadFile(candidate)
+			if err == nil && string(got) == want {
+				if err := os.Remove(candidate); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
 	exe, err := os.Executable()
 	if err != nil {

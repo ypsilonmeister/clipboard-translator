@@ -51,8 +51,9 @@ python3 tools/test_linux_setup.py
 26.04 has only Wayland): without it GTK may pick the Wayland socket in
 `XDG_RUNTIME_DIR` and `TestX11Desktop` fails with "could not initialize GTK 3".
 
-`CGO_ENABLED=0` builds only the portable logic/stubs on Linux. Wayland is
-explicitly rejected at runtime. `internal/platform/native_linux.c` owns the backend-neutral GTK UI/event loop;
+`CGO_ENABLED=0` builds only the portable logic/stubs on Linux. Wayland requires
+GlobalShortcuts, RemoteDesktop keyboard and Clipboard portals (initial target GNOME 48+).
+`internal/platform/native_linux.c` owns the backend-neutral GTK UI/event loop;
 `native_x11_linux.c` owns XGrabKey, XTest input and the X11 clipboard.
 `desktop_linux.go` connects them to Go; `backend_linux.go` selects the session backend. `autostart_linux.go`
 manages an XDG autostart Desktop Entry. The opt-in Wayland foundation is in
@@ -60,8 +61,11 @@ manages an XDG autostart Desktop Entry. The opt-in Wayland foundation is in
 `portal_shortcuts_linux.go` (profile binding/activation), `portal_remote_linux.go` /
 `portal_clipboard_linux.go` / `portal_capture_linux.go` (asynchronous authorization,
 FD clipboard and selection capture), and `portal_state_linux.go`
-(desktop registration/private tokens); it is not yet
-connected to the application entry point. See `docs/wayland-implementation.md`.
+(desktop registration/private tokens). `portal_desktop_linux.go` connects the platform
+API to `portal_runtime_linux.go`, which owns capability checks, startup and retry.
+`internal/app/app_desktop.go` retries pending clipboard operations on UI ticks and
+refreshes consent/shortcut status. Wayland always disables automatic paste.
+See `docs/wayland-implementation.md` for the opt-in VM test and boundaries.
 GTK supplies a control-window fallback
 if no tray host is present. X11 clipboard compare/write is best effort, not
 atomic like the Windows implementation.

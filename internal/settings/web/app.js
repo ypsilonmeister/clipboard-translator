@@ -630,6 +630,14 @@
 
   function renderBusy() {
     if (closed) return;
+    const desktop = $('desktop-status');
+    if (desktop) {
+      desktop.textContent = state.desktop_status || '';
+      if (state.wayland) desktop.textContent += ' Retry Wayland permissions is available in the control window when access needs attention.';
+      desktop.hidden = !state.desktop_status;
+    }
+    const autoPaste = $('auto-paste');
+    if (autoPaste) autoPaste.disabled = !!state.wayland;
     const bar = $('busybar');
     if (bar) bar.hidden = !appBusy();
     const busyText = $('busytext');

@@ -15,6 +15,12 @@ import (
 type linuxClipboard struct{}
 
 func NewClipboard() (Clipboard, error) {
+	if linuxWayland {
+		if activePortalDesktop == nil {
+			return nil, errors.New("Wayland desktop was not initialized")
+		}
+		return activePortalDesktop, nil
+	}
 	if C.ct_init() == 0 {
 		return nil, errors.New("X11 clipboard is unavailable")
 	}
