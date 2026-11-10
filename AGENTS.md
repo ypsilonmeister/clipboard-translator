@@ -55,7 +55,11 @@ python3 tools/test_linux_setup.py
 explicitly rejected at runtime. `internal/platform/native_linux.c` owns the backend-neutral GTK UI/event loop;
 `native_x11_linux.c` owns XGrabKey, XTest input and the X11 clipboard.
 `desktop_linux.go` connects them to Go; `backend_linux.go` selects the session backend. `autostart_linux.go`
-manages an XDG autostart Desktop Entry. GTK supplies a control-window fallback
+manages an XDG autostart Desktop Entry. The opt-in Wayland foundation is in
+`portal_linux.go` (lifecycle), `portal_gio_linux.go` / `portal_native_linux.c` (GDBus),
+and `portal_state_linux.go` (desktop registration/private tokens); it is not yet
+connected to the application entry point. See `docs/wayland-implementation.md`.
+GTK supplies a control-window fallback
 if no tray host is present. X11 clipboard compare/write is best effort, not
 atomic like the Windows implementation.
 
