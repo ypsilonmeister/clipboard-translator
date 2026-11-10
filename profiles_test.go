@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 func TestLoadConfigProfiles(t *testing.T) {
@@ -131,7 +132,7 @@ func TestExtraHotkeysRegisterAndReportFailures(t *testing.T) {
 		Profile{Hotkey: "Ctrl+Alt+D", Target: "de"},
 		Profile{Hotkey: "Ctrl+Alt+F", Target: "fr"})
 	a.hotkeyLimit = 3 // profile 4 is beyond what this "OS" can hold
-	a.newHotkey = func(spec string) (Hotkey, error) {
+	a.newHotkey = func(spec string) (platform.Hotkey, error) {
 		if spec == "Ctrl+Alt+D" {
 			return nil, errors.New("already registered")
 		}
@@ -162,7 +163,7 @@ func TestSecondProfileWorksWhenFirstHotkeyIsTaken(t *testing.T) {
 	a := profilesApp(t,
 		Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}},
 		Profile{Hotkey: "Ctrl+Alt+K", Target: "ko"})
-	a.newHotkey = func(spec string) (Hotkey, error) {
+	a.newHotkey = func(spec string) (platform.Hotkey, error) {
 		if spec == "Ctrl+Alt+E" {
 			return nil, errors.New("already registered")
 		}
@@ -224,7 +225,7 @@ func TestEachProfileTranslatesWithItsOwnLanguages(t *testing.T) {
 	a.cb = &testClipboard{text: "Hello"}
 	a.foreground = func() uintptr { return 1 }
 	a.paste = func(uintptr) error { return nil }
-	a.capture = func(Clipboard, uintptr) (string, bool, error) { return "Hello", true, nil }
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return "Hello", true, nil }
 
 	for _, idx := range []int{0, 1} {
 		a.startTranslation(idx)
@@ -261,7 +262,7 @@ func TestEachProfileTranslatesWithItsOwnOutputMode(t *testing.T) {
 
 	// Profile 0 (replace mode)
 	a.cb = &testClipboard{text: "Hello\r\n"}
-	a.capture = func(Clipboard, uintptr) (string, bool, error) { return "Hello\r\n", true, nil }
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return "Hello\r\n", true, nil }
 	a.startTranslation(0)
 	select {
 	case res := <-a.results:
@@ -275,7 +276,7 @@ func TestEachProfileTranslatesWithItsOwnOutputMode(t *testing.T) {
 
 	// Profile 1 (bilingual mode)
 	a.cb = &testClipboard{text: "Hello\r\n"}
-	a.capture = func(Clipboard, uintptr) (string, bool, error) { return "Hello\r\n", true, nil }
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return "Hello\r\n", true, nil }
 	a.startTranslation(1)
 	select {
 	case res := <-a.results:
@@ -308,7 +309,7 @@ func TestClipboardInputProfileDoesNotCapture(t *testing.T) {
 	a.conf.AutoPaste = true
 
 	captures := 0
-	a.capture = func(Clipboard, uintptr) (string, bool, error) {
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) {
 		captures++
 		return "Selected text", true, nil
 	}
@@ -356,7 +357,7 @@ func TestClipboardInputProfileDoesNotCapture(t *testing.T) {
 func TestClipboardInputProfileEmptyClipboardIsSkipped(t *testing.T) {
 	a := profilesApp(t, Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}, Input: InputClipboard})
 	a.foreground = func() uintptr { return 1 }
-	a.capture = func(Clipboard, uintptr) (string, bool, error) {
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) {
 		t.Error("capture must not be called for a clipboard profile")
 		return "", false, nil
 	}

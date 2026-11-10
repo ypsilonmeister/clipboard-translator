@@ -10,6 +10,7 @@ import (
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // Issue #60: a settings page save that changes neither hotkeys nor languages
@@ -28,7 +29,7 @@ func settingsOnlySave(t *testing.T, edit func(*settingsForm)) *app {
 	}
 	a.registerStartupHotkey()
 	regs := 0
-	a.newHotkey = func(spec string) (Hotkey, error) { regs++; return fakeHotkey{spec}, nil }
+	a.newHotkey = func(spec string) (platform.Hotkey, error) { regs++; return fakeHotkey{spec}, nil }
 
 	form := a.settingsState().settingsForm
 	edit(&form)
@@ -248,7 +249,7 @@ func TestRetryingTheConfiguredGPUWorksOnceItCanStart(t *testing.T) {
 	// The GPU problem goes away (a driver update, memory freed): the vulkan
 	// build is now the working fake server. Remove first so the new file gets
 	// the executable mode.
-	vulkan := filepath.Join(a.dir, "runtime", "vulkan", serverBinaryName())
+	vulkan := filepath.Join(a.dir, "runtime", "vulkan", platform.ServerBinaryName())
 	os.Remove(vulkan)
 	self, _ := os.Executable()
 	copyFile(t, self, vulkan)

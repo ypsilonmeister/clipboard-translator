@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 func TestGuideShowsConfiguredHotkey(t *testing.T) {
@@ -20,8 +22,8 @@ func TestGuideShowsConfiguredHotkey(t *testing.T) {
 	if !strings.Contains(joined, "Ctrl+Shift+Y") || strings.Contains(joined, "Ctrl+Alt+E") {
 		t.Fatalf("the steps must show the configured hotkey: %s", joined)
 	}
-	if !strings.Contains(joined, pasteShortcut()) {
-		t.Fatalf("the steps must name the paste shortcut %s: %s", pasteShortcut(), joined)
+	if !strings.Contains(joined, platform.PasteShortcut()) {
+		t.Fatalf("the steps must name the paste shortcut %s: %s", platform.PasteShortcut(), joined)
 	}
 	if !strings.Contains(g.Extras, "optional") {
 		t.Fatalf("extras must present more settings as optional: %q", g.Extras)

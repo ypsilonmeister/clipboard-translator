@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // uxApp is an app wired for translation-flow tests: a fake clipboard, a fake
@@ -100,7 +101,7 @@ func TestHandleResultAutoPaste(t *testing.T) {
 	if !strings.Contains(tray.lastNote(), "could not be pasted") || cb.text != "D" {
 		t.Fatalf("note=%q clipboard=%q", tray.lastNote(), cb.text)
 	}
-	wantStatus := "Clipboard Translator - translation ready (" + pasteShortcut() + ")"
+	wantStatus := "Clipboard Translator - translation ready (" + platform.PasteShortcut() + ")"
 	if tray.status != wantStatus {
 		t.Fatalf("failed auto-paste status = %q, want %q", tray.status, wantStatus)
 	}
@@ -231,7 +232,7 @@ func TestHandleResultNotifyOnComplete(t *testing.T) {
 	a, tray, cb, pastes, fg := uxApp(t)
 	a.conf.NotifyOnComplete = true
 
-	wantTitle, wantBody := completionNotification()
+	wantTitle, wantBody := platform.CompletionNotification()
 	if wantTitle == "" || wantBody == "" {
 		t.Fatal("completion notification must not be empty")
 	}
@@ -368,7 +369,7 @@ func TestHandleResultNotifyOnComplete(t *testing.T) {
 
 func TestHistoryMenuCopiesAndClears(t *testing.T) {
 	a, tray, cb, _, _ := uxApp(t)
-	find := func(label string) []MenuItem {
+	find := func(label string) []platform.MenuItem {
 		for _, it := range a.buildMenu() {
 			if strings.HasPrefix(it.Label, label) {
 				return it.Sub
@@ -497,7 +498,7 @@ func TestStartTranslationTooLongNotificationAndThrottle(t *testing.T) {
 	a, tray, _, _, _ := uxApp(t)
 	a.conf.MaxChars = 10
 	longText := "123456789012" // 12 chars > 10 limit
-	a.capture = func(Clipboard, uintptr) (string, bool, error) {
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) {
 		return longText, true, nil
 	}
 	currentTime := time.Date(2026, 11, 9, 10, 0, 0, 0, time.UTC)
@@ -555,7 +556,7 @@ func TestStartTranslationRoutineSkips(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, tray, _, _, _ := uxApp(t)
-			a.capture = func(Clipboard, uintptr) (string, bool, error) {
+			a.capture = func(platform.Clipboard, uintptr) (string, bool, error) {
 				return tc.text, true, nil
 			}
 			a.startTranslation(0)
@@ -740,7 +741,7 @@ func TestHandleResultAutoPasteFailureLeavesReadyStatus(t *testing.T) {
 		window:        100,
 		fromSelection: true,
 	})
-	wantStatus := "Clipboard Translator - translation ready (" + pasteShortcut() + ")"
+	wantStatus := "Clipboard Translator - translation ready (" + platform.PasteShortcut() + ")"
 	if tray.status != wantStatus {
 		t.Fatalf("status = %q, want %q", tray.status, wantStatus)
 	}
@@ -777,7 +778,7 @@ func TestStartTranslationSupersedingDoesNotShowCancelled(t *testing.T) {
 	tray.status = "Clipboard Translator - translating... (1s)"
 
 	var statusDuringCapture string
-	a.capture = func(cb Clipboard, win uintptr) (string, bool, error) {
+	a.capture = func(cb platform.Clipboard, win uintptr) (string, bool, error) {
 		statusDuringCapture = tray.status
 		return "second text to translate", true, nil
 	}
@@ -831,7 +832,7 @@ func TestCaptureFailureDisarmsTransientTimer(t *testing.T) {
 	a.setTransientStatus("Clipboard Translator - text is too long")
 
 	// Set capture to fail
-	a.capture = func(cb Clipboard, win uintptr) (string, bool, error) {
+	a.capture = func(cb platform.Clipboard, win uintptr) (string, bool, error) {
 		return "", false, errors.New("cannot capture focus changed")
 	}
 	a.conf.Profiles = []Profile{{Languages: []string{"ja", "en"}}}

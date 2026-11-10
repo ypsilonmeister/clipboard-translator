@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // errQuit is returned by supervisor.start when the user chose "Quit" while the
@@ -96,7 +98,7 @@ func (s *supervisor) start(binary string, gpuLayers int, label string) error {
 	defer func() { s.starting = false }()
 	// Without the VC++ runtime every llama.cpp build dies at once with no output,
 	// so say so instead of starting a process that cannot work.
-	if !vcRuntimeAvailable(filepath.Dir(binary)) {
+	if !platform.VCRuntimeAvailable(filepath.Dir(binary)) {
 		log.Printf("not starting %s: vcruntime140_1.dll was not found", binary)
 		return &dllNotFoundError{binary: filepath.Base(binary), vcMissing: true}
 	}
@@ -109,13 +111,13 @@ func (s *supervisor) start(binary string, gpuLayers int, label string) error {
 	cmd.Dir = filepath.Dir(binary)
 	cmd.Env = serverEnv(os.Environ(), key)
 	cmd.Stdout, cmd.Stderr = s.logOut, s.logOut
-	hideConsole(cmd)
+	platform.HideConsole(cmd)
 	log.Printf("starting %s (gpu_layers=%d)", binary, gpuLayers)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	bindToParentLifetime(cmd)
-	recordChild(s.pidFile, cmd)
+	platform.BindToParentLifetime(cmd)
+	platform.RecordChild(s.pidFile, cmd)
 	done := make(chan struct{})
 	var waitErr error                                 // read only after done is closed
 	go func() { waitErr = cmd.Wait(); close(done) }() // the only Wait on this child
@@ -145,12 +147,12 @@ wait:
 	if err != nil {
 		_ = cmd.Process.Kill()
 		<-done
-		forgetChild(s.pidFile)
+		platform.ForgetChild(s.pidFile)
 		if quit {
 			return errQuit
 		}
 		if isDLLNotFound(waitErr) {
-			return &dllNotFoundError{binary: filepath.Base(binary), vcMissing: !vcRuntimeAvailable(filepath.Dir(binary))}
+			return &dllNotFoundError{binary: filepath.Base(binary), vcMissing: !platform.VCRuntimeAvailable(filepath.Dir(binary))}
 		}
 		return err
 	}
@@ -220,7 +222,7 @@ func (s *supervisor) Stop() {
 	}
 	_ = s.cmd.Process.Kill()
 	<-s.done
-	forgetChild(s.pidFile)
+	platform.ForgetChild(s.pidFile)
 	s.cmd, s.done, s.apiKey = nil, nil, ""
 }
 

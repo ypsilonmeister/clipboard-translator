@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 func freePort(t *testing.T) int {
@@ -49,10 +50,10 @@ func newTestApp(t *testing.T) (*app, *fakeTray, *[]string) {
 	dir := t.TempDir()
 	self, _ := os.Executable()
 	for _, b := range []string{"cpu", "cuda"} {
-		copyFile(t, self, filepath.Join(dir, "runtime", b, serverBinaryName()))
+		copyFile(t, self, filepath.Join(dir, "runtime", b, platform.ServerBinaryName()))
 	}
 	os.MkdirAll(filepath.Join(dir, "runtime", "vulkan"), 0o755)
-	os.WriteFile(filepath.Join(dir, "runtime", "vulkan", serverBinaryName()), []byte("not an executable"), 0o644)
+	os.WriteFile(filepath.Join(dir, "runtime", "vulkan", platform.ServerBinaryName()), []byte("not an executable"), 0o644)
 	os.MkdirAll(filepath.Join(dir, "models"), 0o755)
 	os.WriteFile(filepath.Join(dir, "models", "m.gguf"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(dir, "models", "t.jinja"), []byte("x"), 0o644)
@@ -70,7 +71,7 @@ func newTestApp(t *testing.T) (*app, *fakeTray, *[]string) {
 	a := newApp(dir, conf, paths, tray, io.Discard)
 	var errs []string
 	a.showErr = func(msg string) { errs = append(errs, msg) }
-	a.newHotkey = func(spec string) (Hotkey, error) { return fakeHotkey{spec}, nil }
+	a.newHotkey = func(spec string) (platform.Hotkey, error) { return fakeHotkey{spec}, nil }
 	a.fallbackEditor = func(path string) error { return errors.New("fallback disabled in tests") }
 	a.askYesNo = func(msg string) bool { return false }
 	// Tests script the capture through a.capture (or set beginCapture
@@ -152,7 +153,7 @@ func TestSwitchBackend(t *testing.T) {
 			a.conf.ServerFile, a.conf.GPULayers, healthy(a), tray.notes)
 	}
 	c, err := loadConfig(a.dir)
-	if err != nil || c.ServerFile != "runtime/cuda/"+serverBinaryName() || c.GPULayers != 99 {
+	if err != nil || c.ServerFile != "runtime/cuda/"+platform.ServerBinaryName() || c.GPULayers != 99 {
 		t.Fatalf("the choice must be saved: %+v, %v", c, err)
 	}
 
@@ -162,7 +163,7 @@ func TestSwitchBackend(t *testing.T) {
 	if currentBackend(a.conf.ServerFile) != "cuda" || !healthy(a) {
 		t.Fatalf("a failed switch must keep cuda: server_file=%q healthy=%v", a.conf.ServerFile, healthy(a))
 	}
-	if c, _ := loadConfig(a.dir); c.ServerFile != "runtime/cuda/"+serverBinaryName() {
+	if c, _ := loadConfig(a.dir); c.ServerFile != "runtime/cuda/"+platform.ServerBinaryName() {
 		t.Fatalf("a failed switch must not be saved, config has %q", c.ServerFile)
 	}
 	if !strings.Contains(tray.lastNote(), "keeping the previous engine") {
@@ -183,7 +184,7 @@ func TestChangeHotkey(t *testing.T) {
 	}
 
 	// A hotkey another program owns: keep the old one, save nothing.
-	a.newHotkey = func(spec string) (Hotkey, error) {
+	a.newHotkey = func(spec string) (platform.Hotkey, error) {
 		if spec == "Ctrl+Alt+T" {
 			return nil, errors.New("already registered")
 		}
@@ -206,7 +207,7 @@ func TestChangeHotkey(t *testing.T) {
 
 func TestBuildMenu(t *testing.T) {
 	a, _, _ := newTestApp(t)
-	find := func(items []MenuItem, label string) *MenuItem {
+	find := func(items []platform.MenuItem, label string) *platform.MenuItem {
 		for i := range items {
 			if items[i].Label == label || strings.HasPrefix(items[i].Label, label) {
 				return &items[i]
@@ -235,8 +236,8 @@ func TestBuildMenu(t *testing.T) {
 	}
 	// All command IDs must be unique and in the app range.
 	seen := map[int]bool{}
-	var walk func([]MenuItem)
-	walk = func(m []MenuItem) {
+	var walk func([]platform.MenuItem)
+	walk = func(m []platform.MenuItem) {
 		for _, it := range m {
 			if len(it.Sub) > 0 {
 				walk(it.Sub)
@@ -245,7 +246,7 @@ func TestBuildMenu(t *testing.T) {
 			if it.Separator || it.Disabled {
 				continue
 			}
-			if it.ID < firstAppCommand || seen[it.ID] {
+			if it.ID < platform.FirstAppCommand || seen[it.ID] {
 				t.Errorf("bad or duplicate command id %d (%q)", it.ID, it.Label)
 			}
 			seen[it.ID] = true
@@ -300,7 +301,7 @@ func TestBuildMenuExactLabels(t *testing.T) {
 					a.registerStartupHotkey()
 					if engines == 1 {
 						for _, b := range []string{"cuda", "vulkan"} {
-							if err := os.Remove(filepath.Join(a.dir, "runtime", b, serverBinaryName())); err != nil {
+							if err := os.Remove(filepath.Join(a.dir, "runtime", b, platform.ServerBinaryName())); err != nil {
 								t.Fatal(err)
 							}
 						}

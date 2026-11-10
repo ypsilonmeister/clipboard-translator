@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"github.com/ypsilonmeister/clipboard-translator/internal/testsupport"
 )
 
@@ -14,13 +15,10 @@ import (
 // the real model.
 func TestMain(m *testing.M) {
 	testsupport.MaybeRunFakeServer()
-	if runPlatformSmokeTests() {
-		return
-	}
 	// No test may download a real model: model downloads only reach loopback.
 	models.DownloadTransport = testsupport.LoopbackOnly()
 	// The fake server is a Go program: it does not need the VC++ runtime, whether or not the machine has it.
-	vcRuntimeAvailable = func(string) bool { return true }
+	platform.VCRuntimeAvailable = func(string) bool { return true }
 	os.Exit(m.Run())
 }
 
@@ -33,7 +31,7 @@ type fakeTray struct {
 	titles   []string
 	errs     []bool
 	cmds     []int
-	build    func() []MenuItem
+	build    func() []platform.MenuItem
 }
 
 func (f *fakeTray) QuitRequested() bool { return f.quit }
@@ -46,7 +44,7 @@ func (f *fakeTray) Notify(title, msg string, isError bool) {
 	f.notes = append(f.notes, msg)
 	f.errs = append(f.errs, isError)
 }
-func (f *fakeTray) SetMenu(b func() []MenuItem) { f.build = b }
+func (f *fakeTray) SetMenu(b func() []platform.MenuItem) { f.build = b }
 func (f *fakeTray) NextCommand() (int, bool) {
 	if len(f.cmds) == 0 {
 		return 0, false

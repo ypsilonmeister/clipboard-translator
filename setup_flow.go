@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // embeddedSetup is the setup.ps1 of this version, carried inside the exe so a
@@ -26,7 +27,7 @@ func setupContents() []byte {
 	if runtime.GOOS == "darwin" {
 		return embeddedMacSetup
 	}
-	if setupScriptName() == "setup.sh" {
+	if platform.SetupScriptName() == "setup.sh" {
 		return embeddedLinuxSetup
 	}
 	return embeddedSetup
@@ -49,7 +50,7 @@ var embeddedMacSetup []byte
 // copy when it is missing. An existing file (possibly edited by the user) is
 // left alone.
 func ensureSetupScript(dir string) error {
-	script := filepath.Join(dir, setupScriptName())
+	script := filepath.Join(dir, platform.SetupScriptName())
 	if err := checkFile(script); err == nil {
 		return nil
 	}
@@ -154,21 +155,21 @@ func ensureInstalled(dir string, conf Config) (Config, bool) {
 		}
 		list := strings.Join(missing, "\n")
 		if attempt > 0 {
-			fatal("required file missing:\n", list, "\nRun ", setupScriptName(), " first.")
+			fatal("required file missing:\n", list, "\nRun ", platform.SetupScriptName(), " first.")
 		}
 		log.Printf("missing files: %v", missing)
-		if !askYesNo("Clipboard Translator needs the PLaMo translation model and llama.cpp, which are not installed yet:\n\n" +
+		if !platform.AskYesNo("Clipboard Translator needs the PLaMo translation model and llama.cpp, which are not installed yet:\n\n" +
 			list + "\n\nDownload them now? (" + setupProgressDescription() + ")") {
 			log.Print("setup declined; quitting")
 			return conf, false
 		}
 		// Only now, so declining leaves the folder untouched.
 		if err := ensureSetupScript(dir); err != nil {
-			fatal("required file missing:\n", list, "\n", setupScriptName(), " could not be written to the app folder: ", err)
+			fatal("required file missing:\n", list, "\n", platform.SetupScriptName(), " could not be written to the app folder: ", err)
 		}
-		log.Print("running ", setupScriptName())
-		if err := runSetup(dir); err != nil {
-			fatal("Setup failed: ", err, "\nRun ", setupScriptName(), " to see the details.")
+		log.Print("running ", platform.SetupScriptName())
+		if err := platform.RunSetup(dir); err != nil {
+			fatal("Setup failed: ", err, "\nRun ", platform.SetupScriptName(), " to see the details.")
 		}
 		if conf, err = loadConfig(dir); err != nil {
 			fatal("config: ", err)

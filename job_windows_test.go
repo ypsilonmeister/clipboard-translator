@@ -13,15 +13,14 @@ import (
 	"syscall"
 	"testing"
 	"time"
-	"unsafe"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 const (
 	synchronize                    = 0x00100000
 	processQueryLimitedInformation = 0x1000
 )
-
-var isProcessInJob = kernel32.NewProc("IsProcessInJob")
 
 // waitPidGone waits for process pid to end. A pid that cannot be opened any
 // more counts as gone.
@@ -35,55 +34,16 @@ func waitPidGone(pid int, d time.Duration) bool {
 	return ev == syscall.WAIT_OBJECT_0
 }
 
-func TestKillOnCloseJobTerminatesChild(t *testing.T) {
-	job, err := newKillOnCloseJob()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("ping.exe", "-n", "120", "127.0.0.1")
-	hideConsole(cmd)
-	if err := cmd.Start(); err != nil {
-		syscall.CloseHandle(job)
-		t.Fatal(err)
-	}
-	waited := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(waited) }()
-	t.Cleanup(func() { _ = cmd.Process.Kill() })
-	if err := assignPidToJob(job, cmd.Process.Pid); err != nil {
-		syscall.CloseHandle(job)
-		t.Fatal(err)
-	}
-	select {
-	case <-waited:
-		t.Fatal("the child must still be running before the job closes")
-	case <-time.After(300 * time.Millisecond):
-	}
-	syscall.CloseHandle(job) // what the OS does for us when the parent dies
-	select {
-	case <-waited:
-	case <-time.After(10 * time.Second):
-		t.Fatal("closing the job must terminate its processes")
-	}
-}
-
 func TestSupervisorTiesServerToJob(t *testing.T) {
 	a, _, _ := newTestApp(t)
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
-	if jobErr != nil {
-		t.Fatalf("job object unavailable: %v", jobErr)
-	}
-	ph, err := syscall.OpenProcess(processQueryLimitedInformation, false, uint32(a.sup.cmd.Process.Pid))
+	in, err := platform.ProcessInKillOnCloseJob(a.sup.cmd.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.CloseHandle(ph)
-	var in int32
-	if r, _, err := isProcessInJob.Call(uintptr(ph), uintptr(jobHandle), uintptr(unsafe.Pointer(&in))); r == 0 {
-		t.Fatalf("IsProcessInJob: %v", err)
-	}
-	if in == 0 {
+	if !in {
 		t.Fatal("llama-server must be assigned to the kill-on-close job")
 	}
 }

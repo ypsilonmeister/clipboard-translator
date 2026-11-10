@@ -8,21 +8,22 @@ import (
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // Command IDs of the app-specific tray menu items.
 const (
-	cmdCheckUpdate  = firstAppCommand + 1
-	cmdDoUpdate     = firstAppCommand + 2
-	cmdOpenConfig   = firstAppCommand + 3
-	cmdPlamoLicense = firstAppCommand + 4
-	cmdCancel       = firstAppCommand + 5
-	cmdHistoryClear = firstAppCommand + 7
-	cmdSettings     = firstAppCommand + 8
-	cmdUnloadModel  = firstAppCommand + 10
-	cmdQuickstart   = firstAppCommand + 11
-	cmdModelBase    = firstAppCommand + 100 // + index into models.Catalog
-	cmdHistoryBase  = firstAppCommand + 300 // + index into history (newest first)
+	cmdCheckUpdate  = platform.FirstAppCommand + 1
+	cmdDoUpdate     = platform.FirstAppCommand + 2
+	cmdOpenConfig   = platform.FirstAppCommand + 3
+	cmdPlamoLicense = platform.FirstAppCommand + 4
+	cmdCancel       = platform.FirstAppCommand + 5
+	cmdHistoryClear = platform.FirstAppCommand + 7
+	cmdSettings     = platform.FirstAppCommand + 8
+	cmdUnloadModel  = platform.FirstAppCommand + 10
+	cmdQuickstart   = platform.FirstAppCommand + 11
+	cmdModelBase    = platform.FirstAppCommand + 100 // + index into models.Catalog
+	cmdHistoryBase  = platform.FirstAppCommand + 300 // + index into history (newest first)
 )
 
 func backendLabel(name string) string {
@@ -48,19 +49,19 @@ func versionLabel() string {
 
 // buildMenu is the app-specific part of the tray menu. It runs each time the
 // menu opens, so availability and the update entry reflect the current state.
-func (a *app) buildMenu() []MenuItem {
-	items := []MenuItem{{ID: cmdSettings, Label: "Settings..."}, {ID: cmdQuickstart, Label: "Quick start"}}
+func (a *app) buildMenu() []platform.MenuItem {
+	items := []platform.MenuItem{{ID: cmdSettings, Label: "Settings..."}, {ID: cmdQuickstart, Label: "Quick start"}}
 	if a.translating {
-		items = append(items, MenuItem{ID: cmdCancel, Label: "Cancel translation"}, MenuItem{Separator: true})
+		items = append(items, platform.MenuItem{ID: cmdCancel, Label: "Cancel translation"}, platform.MenuItem{Separator: true})
 	}
-	items = append(items, MenuItem{ID: cmdUnloadModel, Label: "Unload model", Disabled: !a.canUnloadModel()})
-	var modelSub []MenuItem
+	items = append(items, platform.MenuItem{ID: cmdUnloadModel, Label: "Unload model", Disabled: !a.canUnloadModel()})
+	var modelSub []platform.MenuItem
 	modelBusy := a.busy()
 	for i, m := range models.Catalog {
 		if !m.Installed(a.dir) {
 			continue
 		}
-		modelSub = append(modelSub, MenuItem{
+		modelSub = append(modelSub, platform.MenuItem{
 			ID:       cmdModelBase + i,
 			Label:    m.Name + " (" + m.SizeLabel + ")",
 			Checked:  a.isModelActive(m),
@@ -68,33 +69,33 @@ func (a *app) buildMenu() []MenuItem {
 		})
 	}
 	if len(modelSub) >= 2 {
-		items = append(items, MenuItem{Label: "Translation model", Sub: modelSub})
+		items = append(items, platform.MenuItem{Label: "Translation model", Sub: modelSub})
 	}
-	var recent []MenuItem
+	var recent []platform.MenuItem
 	for i, e := range a.hist.Items() {
-		recent = append(recent, MenuItem{ID: cmdHistoryBase + i, Label: historyLabel(e)})
+		recent = append(recent, platform.MenuItem{ID: cmdHistoryBase + i, Label: historyLabel(e)})
 	}
 	if len(recent) == 0 {
-		recent = []MenuItem{{Label: "(nothing yet)", Disabled: true}}
+		recent = []platform.MenuItem{{Label: "(nothing yet)", Disabled: true}}
 	} else {
-		recent = append(recent, MenuItem{Separator: true}, MenuItem{ID: cmdHistoryClear, Label: "Clear history"})
+		recent = append(recent, platform.MenuItem{Separator: true}, platform.MenuItem{ID: cmdHistoryClear, Label: "Clear history"})
 	}
-	items = append(items, MenuItem{Label: "Recent translations (click to copy)", Sub: recent})
+	items = append(items, platform.MenuItem{Label: "Recent translations (click to copy)", Sub: recent})
 
-	items = append(items, MenuItem{Separator: true})
+	items = append(items, platform.MenuItem{Separator: true})
 	switch {
 	case a.checking:
-		items = append(items, MenuItem{Label: "Checking for updates...", Disabled: true})
+		items = append(items, platform.MenuItem{Label: "Checking for updates...", Disabled: true})
 	case a.latest.Tag != "" && isNewerVersion(a.latest.Tag, version):
-		items = append(items, MenuItem{ID: cmdDoUpdate, Label: "Update to " + a.latest.Tag + "..."})
+		items = append(items, platform.MenuItem{ID: cmdDoUpdate, Label: "Update to " + a.latest.Tag + "..."})
 	default:
-		items = append(items, MenuItem{ID: cmdCheckUpdate, Label: "Check for updates"})
+		items = append(items, platform.MenuItem{ID: cmdCheckUpdate, Label: "Check for updates"})
 	}
 	items = append(items,
-		MenuItem{ID: cmdOpenConfig, Label: "Open config.json"},
-		MenuItem{Separator: true},
-		MenuItem{ID: cmdPlamoLicense, Label: "Built with PLaMo (license)"},
-		MenuItem{Label: versionLabel(), Disabled: true},
+		platform.MenuItem{ID: cmdOpenConfig, Label: "Open config.json"},
+		platform.MenuItem{Separator: true},
+		platform.MenuItem{ID: cmdPlamoLicense, Label: "Built with PLaMo (license)"},
+		platform.MenuItem{Label: versionLabel(), Disabled: true},
 	)
 	return items
 }
@@ -185,7 +186,7 @@ func (a *app) copyFromHistory(i int) {
 		a.tray.Notify("Clipboard Translator", "Could not copy to the clipboard: "+err.Error(), true)
 		return
 	}
-	a.tray.Notify("Clipboard Translator", "Copied. Paste with "+pasteShortcut()+".", false)
+	a.tray.Notify("Clipboard Translator", "Copied. Paste with "+platform.PasteShortcut()+".", false)
 }
 
 // saveConfig writes changed keys to config.json and tells the user if that fails.
@@ -341,18 +342,24 @@ func (a *app) startUpdate() {
 	tag := a.latest.Tag
 	ask := a.askYesNo
 	if ask == nil {
-		ask = askYesNo
+		ask = platform.AskYesNo
 	}
-	switch detectInstallKind(a.dir, recordedInstallLocation()) {
+	switch detectInstallKind(a.dir, platform.RecordedInstallLocation()) {
 	case kindInstaller:
 		if !ask("Update to " + tag + "?\n\nThis downloads the new version, closes Clipboard Translator and starts it again.") {
 			return
 		}
-		if err := runInstaller(a.dir, tag); err != nil {
+		// The tag is checked here, where the release rules live; the platform
+		// code only runs the script at the URL it is given.
+		url, err := installScriptURL(tag)
+		if err == nil {
+			err = platform.RunInstaller(a.dir, tag, url)
+		}
+		if err != nil {
 			a.tray.Notify("Clipboard Translator", "Could not start the update: "+err.Error(), true)
 		}
 	case kindScoop:
-		showInfo("This copy was installed with Scoop. To update, run this in a terminal:\n\nscoop update clipboard-translator")
+		platform.ShowInfo("This copy was installed with Scoop. To update, run this in a terminal:\n\nscoop update clipboard-translator")
 	default:
 		if ask("This copy was not installed with the installer, so it cannot update itself.\n\nOpen the releases page to download " + tag + "?") {
 			if err := a.openURL(releasesPage); err != nil {

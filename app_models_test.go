@@ -10,6 +10,7 @@ import (
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models/modeltest"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // putModel creates a (sparse) file big enough to count as the model's installed file.
@@ -923,7 +924,7 @@ func TestModelDeleteRefusesNonRegularFile(t *testing.T) {
 	}
 }
 
-func findMenuItem(items []MenuItem, label string) *MenuItem {
+func findMenuItem(items []platform.MenuItem, label string) *platform.MenuItem {
 	for i := range items {
 		if items[i].Label == label || strings.HasPrefix(items[i].Label, label) {
 			return &items[i]

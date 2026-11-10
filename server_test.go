@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 func TestRestartBackoff(t *testing.T) {
@@ -140,9 +142,9 @@ func TestStartServerReportsMissingDLL(t *testing.T) {
 // without launching a process and without trying the CPU build.
 func TestStartServerWithoutVCRuntime(t *testing.T) {
 	a, _, _ := newTestApp(t)
-	old := vcRuntimeAvailable
-	vcRuntimeAvailable = func(string) bool { return false }
-	t.Cleanup(func() { vcRuntimeAvailable = old })
+	old := platform.VCRuntimeAvailable
+	platform.VCRuntimeAvailable = func(string) bool { return false }
+	t.Cleanup(func() { platform.VCRuntimeAvailable = old })
 	err := a.startServer()
 	var dnf *dllNotFoundError
 	if !errors.As(err, &dnf) || !dnf.vcMissing {

@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 type result struct {
@@ -286,7 +287,7 @@ func (i ignoreWriteErrors) Write(p []byte) (int, error) {
 func fatal(v ...any) {
 	msg := fmt.Sprint(v...)
 	log.Print(msg)
-	showError(msg)
+	platform.ShowError(msg)
 	os.Exit(1)
 }
 
@@ -295,7 +296,7 @@ func main() {
 	// Native desktop APIs must be initialized and serviced on this thread.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	if err := platformRuntimeError(); err != nil {
+	if err := platform.PlatformRuntimeError(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -306,7 +307,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	dir, err = writableAppDir(dir)
+	dir, err = platform.WritableAppDir(dir)
 	if err != nil {
 		fatal("app data folder: ", err)
 	}
@@ -314,7 +315,7 @@ func main() {
 	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		showError(err.Error())
+		platform.ShowError(err.Error())
 		os.Exit(1)
 	}
 	defer logf.Close()
@@ -336,7 +337,7 @@ func main() {
 	_ = os.Remove(filepath.Join(dir, "STOP"))
 	// Likewise a recorded llama-server still running was left by a run that died
 	// (macOS only; Windows and Linux stop it with the app).
-	stopLeftoverServer(childRecordPath(dir, conf.Port))
+	platform.StopLeftoverServer(platform.ChildRecordPath(dir, conf.Port))
 
 	conf, ok := ensureInstalled(dir, conf)
 	if !ok {
@@ -346,7 +347,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	if err := checkServerPort(conf.Port); err != nil {
+	if err := platform.CheckServerPort(conf.Port); err != nil {
 		fatal(err)
 	}
 
@@ -357,13 +358,13 @@ func main() {
 	defer serverLog.Close()
 
 	// The tray exists from here on so the user sees the app while the model loads.
-	tray := newTray(logPath)
+	tray := platform.NewTray(logPath)
 	defer tray.Close()
 	newApp(dir, conf, paths, tray, serverLog).run()
 }
 
 // applyTranslation never replaces unrelated clipboard contents.
-func applyTranslation(cb Clipboard, original, replacement string) (bool, error) {
+func applyTranslation(cb platform.Clipboard, original, replacement string) (bool, error) {
 	if replacement == original {
 		return false, nil
 	}

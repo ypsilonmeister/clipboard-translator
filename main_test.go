@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 func TestDetectDirection(t *testing.T) {
@@ -111,7 +112,7 @@ func (c *testClipboard) ReplaceIfUnchanged(expected, translated string) (bool, e
 	if c.err != nil {
 		return false, c.err
 	}
-	if !sameClipboardText(c.text, expected) {
+	if !platform.SameClipboardText(c.text, expected) {
 		return false, nil
 	}
 	c.text = translated

@@ -2,87 +2,14 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
-
-// The job itself never sleeps: the app steps it and keeps pumping messages in
-// between. A copy that takes 1.5 s is still picked up as a fresh selection.
-func TestCaptureJobStepsWithoutSleeping(t *testing.T) {
-	clk := newFakeClock()
-	start := clk.time()
-	clip := &testClipboard{text: "old"}
-	seq := uint32(0)
-	held := 3 // the hotkey's modifiers are up after three checks
-	copied := false
-	ops := captureOps{
-		foreground:  func() uintptr { return 7 },
-		modifiersUp: func() bool { held--; return held < 0 },
-		sequence: func() uint32 {
-			if copied && clk.time().Sub(start) >= 1500*time.Millisecond && seq == 0 {
-				seq, clip.text = 1, "slow page selection"
-			}
-			return seq
-		},
-		sendCopy:        func() error { copied = true; return nil },
-		modifierTimeout: 900 * time.Millisecond,
-		copyTimeout:     2 * time.Second,
-		settleTime:      80 * time.Millisecond,
-		now:             clk.time,
-		sleep:           func(time.Duration) { t.Fatal("a capture job must not sleep") },
-	}
-	j := newCaptureJob(clip, 7, ops)
-	for steps := 0; ; steps++ {
-		if steps > 1000 {
-			t.Fatal("the capture never finished")
-		}
-		done, text, fresh, err := j.step()
-		if done {
-			if err != nil || text != "slow page selection" || !fresh {
-				t.Fatalf("text=%q fresh=%v err=%v", text, fresh, err)
-			}
-			break
-		}
-		w := j.wait()
-		if w <= 0 || w > capturePollStep {
-			t.Fatalf("wait() = %v, want a short positive poll step", w)
-		}
-		clk.now = clk.now.Add(w)
-	}
-	if got := clk.time().Sub(start); got < 1580*time.Millisecond || got > 1700*time.Millisecond {
-		t.Fatalf("finished after %v, want just after the copy settled (~1.58 s)", got)
-	}
-}
-
-func TestCaptureJobModifiersHeldTimesOutWithoutSleeping(t *testing.T) {
-	clk := newFakeClock()
-	clip := &testClipboard{text: "stale"}
-	copies := 0
-	j := newCaptureJob(clip, 7, captureOps{
-		foreground:      func() uintptr { return 7 },
-		modifiersUp:     func() bool { return false },
-		sequence:        func() uint32 { return 0 },
-		sendCopy:        func() error { copies++; return nil },
-		modifierTimeout: 900 * time.Millisecond,
-		copyTimeout:     2 * time.Second,
-		now:             clk.time,
-		sleep:           func(time.Duration) { t.Fatal("a capture job must not sleep") },
-	})
-	for {
-		done, text, _, err := j.step()
-		if done {
-			if !errors.Is(err, errCaptureModifiersHeld) || text != "" || copies != 0 {
-				t.Fatalf("text=%q err=%v copies=%d", text, err, copies)
-			}
-			return
-		}
-		clk.now = clk.now.Add(j.wait())
-	}
-}
 
 // scriptedCapture is a capture that finishes when done() says so.
 type scriptedCapture struct {
@@ -93,7 +20,7 @@ type scriptedCapture struct {
 	err   error
 }
 
-func (c *scriptedCapture) step() (bool, string, bool, error) {
+func (c *scriptedCapture) Step() (bool, string, bool, error) {
 	c.steps++
 	if c.done != nil && !c.done() {
 		return false, "", false, nil
@@ -101,7 +28,7 @@ func (c *scriptedCapture) step() (bool, string, bool, error) {
 	return true, c.text, c.fresh, c.err
 }
 
-func (c *scriptedCapture) wait() time.Duration { return time.Millisecond }
+func (c *scriptedCapture) Wait() time.Duration { return time.Millisecond }
 
 func translateStub(t *testing.T, out string) *httptest.Server {
 	t.Helper()
@@ -120,8 +47,8 @@ func TestPendingCaptureReturnsAtOnceAndTranslatesWhenDone(t *testing.T) {
 	cb.text = "old clipboard"
 	ready := false
 	task := &scriptedCapture{done: func() bool { return ready }, text: "Hello", fresh: true}
-	a.beginCapture = func(Clipboard, uintptr) captureTask { return task }
-	a.capture = func(Clipboard, uintptr) (string, bool, error) {
+	a.beginCapture = func(platform.Clipboard, uintptr) platform.CaptureTask { return task }
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) {
 		t.Fatal("the blocking capture must not be used when a capture task exists")
 		return "", false, nil
 	}
@@ -160,7 +87,9 @@ func TestPendingCaptureReturnsAtOnceAndTranslatesWhenDone(t *testing.T) {
 func TestCaptureDoneOnFirstStepTranslatesAtOnce(t *testing.T) {
 	a, tray, _, _, _ := uxApp(t)
 	a.endpoint = translateStub(t, "こんにちは").URL
-	a.beginCapture = func(Clipboard, uintptr) captureTask { return &scriptedCapture{text: "Hello", fresh: true} }
+	a.beginCapture = func(platform.Clipboard, uintptr) platform.CaptureTask {
+		return &scriptedCapture{text: "Hello", fresh: true}
+	}
 	a.startTranslation(0)
 	if a.capturing != nil || !a.translating {
 		t.Fatalf("capturing=%v translating=%v", a.capturing != nil, a.translating)
@@ -185,7 +114,7 @@ func TestNewHotkeyDropsPendingCapture(t *testing.T) {
 	a.foreground = func() uintptr { return 1 }
 	a.cb = &testClipboard{text: "Copied by hand"}
 	first := &scriptedCapture{done: func() bool { return false }, text: "never", fresh: true}
-	a.beginCapture = func(Clipboard, uintptr) captureTask { return first }
+	a.beginCapture = func(platform.Clipboard, uintptr) platform.CaptureTask { return first }
 
 	a.startTranslation(0)
 	if a.capturing == nil {
@@ -215,7 +144,7 @@ func TestAbortDropsPendingCapture(t *testing.T) {
 	a, tray, _, _, _ := uxApp(t)
 	now := time.Unix(1000, 0)
 	a.now = func() time.Time { return now }
-	a.beginCapture = func(Clipboard, uintptr) captureTask {
+	a.beginCapture = func(platform.Clipboard, uintptr) platform.CaptureTask {
 		return &scriptedCapture{done: func() bool { return false }}
 	}
 	a.startTranslation(0)
@@ -282,7 +211,7 @@ func TestServeKeepsPollingWhileCopyIsPending(t *testing.T) {
 		cb.text = "Hello" // what the page's late Ctrl+C put on the clipboard
 		return true
 	}, text: "Hello", fresh: true}
-	a.beginCapture = func(Clipboard, uintptr) captureTask { return task }
+	a.beginCapture = func(platform.Clipboard, uintptr) platform.CaptureTask { return task }
 
 	a.serve(cb)
 

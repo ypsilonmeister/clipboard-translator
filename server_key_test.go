@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"github.com/ypsilonmeister/clipboard-translator/internal/testsupport"
 )
 
@@ -41,7 +42,7 @@ func TestNewAPIKeyIsRandomHex(t *testing.T) {
 func TestHideConsoleKeepsTheServerKey(t *testing.T) {
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = serverEnv(os.Environ(), "the-key")
-	hideConsole(cmd)
+	platform.HideConsole(cmd)
 	found := false
 	for _, kv := range cmd.Env {
 		found = found || kv == "LLAMA_API_KEY=the-key"
@@ -165,7 +166,7 @@ func TestAppTranslationUsesTheServerKey(t *testing.T) {
 	a.cb = cb
 	a.foreground = func() uintptr { return 1 }
 	a.paste = func(uintptr) error { return nil }
-	a.capture = func(Clipboard, uintptr) (string, bool, error) { return "Hello", true, nil }
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return "Hello", true, nil }
 
 	a.startTranslation(0)
 	select {

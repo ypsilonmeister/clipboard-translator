@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // app ties the tray, the llama-server supervisor, the clipboard and the hotkey
@@ -25,7 +26,7 @@ type app struct {
 	conf     Config
 	endpoint string
 	paths    appPaths
-	tray     Tray
+	tray     platform.Tray
 	sup      *supervisor
 	limiter  restartLimiter
 	readyTip string
@@ -42,9 +43,9 @@ type app struct {
 
 	activeBackend string // last known working backend ("cpu", "cuda", ...)
 
-	hotkey    Hotkey                            // profile 0
-	newHotkey func(spec string) (Hotkey, error) // newHotkey, replaceable in tests
-	showErr   func(msg string)                  // showError, replaceable in tests
+	hotkey    platform.Hotkey                            // profile 0
+	newHotkey func(spec string) (platform.Hotkey, error) // newHotkey, replaceable in tests
+	showErr   func(msg string)                           // showError, replaceable in tests
 	// extras are the hotkeys of profiles 1.., in order; hk is nil when that
 	// profile's hotkey could not be registered (the reason is in why).
 	extras      []extraHotkey
@@ -69,7 +70,7 @@ type app struct {
 	checking bool
 	latest   releaseInfo // newest release seen by "Check for updates"
 
-	cb             Clipboard
+	cb             platform.Clipboard
 	results        chan result
 	generation     uint64 // bumped by every new request; older results are ignored
 	cancelCurrent  context.CancelFunc
@@ -77,11 +78,11 @@ type app struct {
 	translateStart time.Time
 	lastTranslSec  int
 	hist           history
-	foreground     func() uintptr                                        // foregroundWindow, replaceable in tests
-	paste          func(target uintptr) error                            // pasteIntoForeground, replaceable in tests
-	capture        func(cb Clipboard, win uintptr) (string, bool, error) // captureSelectedText, replaceable in tests
-	beginCapture   func(cb Clipboard, win uintptr) captureTask           // beginSelectionCapture; nil (or a nil task) uses capture
-	capturing      *pendingCapture                                       // a selection copy the serve loop is still waiting for
+	foreground     func() uintptr                                                 // foregroundWindow, replaceable in tests
+	paste          func(target uintptr) error                                     // pasteIntoForeground, replaceable in tests
+	capture        func(cb platform.Clipboard, win uintptr) (string, bool, error) // captureSelectedText, replaceable in tests
+	beginCapture   func(cb platform.Clipboard, win uintptr) platform.CaptureTask  // beginSelectionCapture; nil (or a nil task) uses capture
+	capturing      *pendingCapture                                                // a selection copy the serve loop is still waiting for
 
 	statusResetAt  time.Time
 	lastSkipReason skipReason
@@ -92,7 +93,7 @@ type app struct {
 // pendingCapture is a hotkey press whose selection is still being copied. The
 // profile is a copy, so a Settings change meanwhile does not move it.
 type pendingCapture struct {
-	task    captureTask
+	task    platform.CaptureTask
 	profile Profile
 	win     uintptr
 	started time.Time
@@ -105,11 +106,11 @@ const copyingNoteAfter = 300 * time.Millisecond
 
 type extraHotkey struct {
 	profile int // index into conf.Profiles
-	hk      Hotkey
+	hk      platform.Hotkey
 	why     string // why hk is nil
 }
 
-func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Writer) *app {
+func newApp(dir string, conf Config, paths appPaths, tray platform.Tray, serverLog io.Writer) *app {
 	conf.normalizeProfiles()
 	a := &app{
 		confRevision:        1,
@@ -117,12 +118,12 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 		autoPasteRev:        1,
 		notifyOnCompleteRev: 1,
 		maxCharsRev:         1,
-		hotkeyLimit:         hotkeyLimit(),
+		hotkeyLimit:         platform.HotkeyLimit(),
 		settingsReqs:        make(chan settingsRequest, 8),
 		dl:                  models.NewManager(dir, version),
-		openURL:             openTarget,
-		fallbackEditor:      startFallbackEditor,
-		askYesNo:            askYesNo,
+		openURL:             platform.OpenTarget,
+		fallbackEditor:      platform.StartFallbackEditor,
+		askYesNo:            platform.AskYesNo,
 		dir:                 dir,
 		conf:                conf,
 		endpoint:            fmt.Sprintf("http://127.0.0.1:%d", conf.Port),
@@ -131,14 +132,14 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 		limiter:             restartLimiter{max: 3, window: 10 * time.Minute},
 		readyTip:            "Clipboard Translator - ready (" + conf.Hotkey + ")",
 
-		newHotkey:    newHotkey,
-		showErr:      showError,
+		newHotkey:    platform.NewHotkey,
+		showErr:      platform.ShowError,
 		updates:      make(chan updateResult, 1),
 		results:      make(chan result, 16),
-		foreground:   foregroundWindow,
+		foreground:   platform.ForegroundWindow,
 		paste:        pasteIntoForeground,
-		capture:      captureSelectedText,
-		beginCapture: beginSelectionCapture,
+		capture:      platform.CaptureSelectedText,
+		beginCapture: platform.BeginSelectionCapture,
 		now:          time.Now,
 	}
 	tray.SetMenu(a.buildMenu)
@@ -148,7 +149,7 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 		logOut:         serverLog,
 		onStarted:      a.serverStarted,
 		startupTimeout: time.Duration(conf.StartupTimeoutSec) * time.Second,
-		pidFile:        childRecordPath(dir, conf.Port),
+		pidFile:        platform.ChildRecordPath(dir, conf.Port),
 	}
 	lastSec := time.Duration(-1)
 	a.sup.ui = func(label string, elapsed time.Duration) bool {
@@ -157,10 +158,10 @@ func newApp(dir string, conf Config, paths appPaths, tray Tray, serverLog io.Wri
 				*a.pendingDuringLoad = profile
 			}
 			if a.hotkey == nil {
-				pumpMessages()
+				platform.PumpMessages()
 			}
 		} else {
-			pumpMessages()
+			platform.PumpMessages()
 		}
 		if a.quitRequested() {
 			return true
@@ -296,7 +297,7 @@ func (a *app) sleepPumping(d time.Duration) bool {
 	defer t.Stop()
 	for time.Now().Before(end) {
 		<-t.C
-		pumpMessages()
+		platform.PumpMessages()
 		a.serviceSettingsWhileBusy("restarting the translation server")
 		if a.tray.QuitRequested() {
 			return true
@@ -363,7 +364,7 @@ func (a *app) run() {
 		return
 	}
 
-	cb, err := newClipboard()
+	cb, err := platform.NewClipboard()
 	if err != nil {
 		log.Printf("clipboard initialization failed: %v", err)
 		a.showErr(fmt.Sprintf("Clipboard initialization failed: %v", err))
@@ -472,7 +473,7 @@ func (a *app) updateReadyTip() {
 	}
 }
 
-func (a *app) serve(cb Clipboard) {
+func (a *app) serve(cb platform.Clipboard) {
 	a.cb = cb
 	tray := a.tray
 	tray.SetStatus(a.readyTip)
@@ -513,7 +514,7 @@ func (a *app) serve(cb Clipboard) {
 		// instead of blocking this thread until the copy is done.
 		var captureDue <-chan time.Time
 		if a.capturing != nil {
-			captureDue = time.After(a.capturing.task.wait())
+			captureDue = time.After(a.capturing.task.Wait())
 		}
 		select {
 		case <-captureDue:
@@ -722,7 +723,7 @@ func (a *app) stepCapture() {
 	if p == nil {
 		return
 	}
-	done, source, fromSelection, err := p.task.step()
+	done, source, fromSelection, err := p.task.Step()
 	if !done {
 		if !p.noted && a.timeNow().Sub(p.started) >= copyingNoteAfter {
 			p.noted = true
@@ -745,7 +746,7 @@ func (a *app) translateCaptured(profile Profile, win uintptr, source string, fro
 		}
 		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
-		if errors.Is(err, errCaptureModifiersHeld) || errors.Is(err, errCaptureFocusChanged) {
+		if errors.Is(err, platform.ErrCaptureModifiersHeld) || errors.Is(err, platform.ErrCaptureFocusChanged) {
 			// Say so: translating the old clipboard text instead would be a silent wrong answer.
 			a.tray.Notify("Clipboard Translator", "Nothing was translated: "+err.Error()+". Release the keys and press the hotkey again.", true)
 		}
@@ -876,7 +877,7 @@ func (a *app) handleResult(res result) {
 			if !res.capturedAt.IsZero() {
 				elapsed = a.timeNow().Sub(res.capturedAt)
 			}
-			log.Printf("clipboard change diagnostics: %s", classifyClipboardDiff(res.original, current, elapsed))
+			log.Printf("clipboard change diagnostics: %s", platform.ClassifyClipboardDiff(res.original, current, elapsed))
 		}
 		a.tray.SetStatus(a.readyTip)
 		a.tray.Notify("Clipboard Translator", "The clipboard changed while translating, so the result was dropped and the new clipboard text was kept.", false)
@@ -890,22 +891,22 @@ func (a *app) handleResult(res result) {
 		// target pasteWithFocus must still find in front right before Ctrl+V.
 		if err := a.paste(res.window); err != nil {
 			log.Printf("auto-paste failed: %v", err)
-			a.tray.SetStatus("Clipboard Translator - translation ready (" + pasteShortcut() + ")")
-			a.tray.Notify("Clipboard Translator", "Translation ready, but it could not be pasted ("+err.Error()+"). Press "+pasteShortcut()+".", true)
+			a.tray.SetStatus("Clipboard Translator - translation ready (" + platform.PasteShortcut() + ")")
+			a.tray.Notify("Clipboard Translator", "Translation ready, but it could not be pasted ("+err.Error()+"). Press "+platform.PasteShortcut()+".", true)
 			return
 		}
 		log.Print("translation pasted")
 		a.tray.SetStatus("Clipboard Translator - translation pasted")
 	case pasteWindowChanged:
 		log.Print("translation ready; the active window changed, so it was not pasted")
-		a.tray.Notify("Clipboard Translator", "Translation ready in the clipboard. The active window changed, so it was not pasted. Press "+pasteShortcut()+".", false)
-		a.tray.SetStatus("Clipboard Translator - translation ready (" + pasteShortcut() + ")")
+		a.tray.Notify("Clipboard Translator", "Translation ready in the clipboard. The active window changed, so it was not pasted. Press "+platform.PasteShortcut()+".", false)
+		a.tray.SetStatus("Clipboard Translator - translation ready (" + platform.PasteShortcut() + ")")
 	default:
-		log.Print("translation ready in clipboard (", pasteShortcut(), " to paste)")
-		a.tray.SetStatus("Clipboard Translator - translation ready (" + pasteShortcut() + ")")
+		log.Print("translation ready in clipboard (", platform.PasteShortcut(), " to paste)")
+		a.tray.SetStatus("Clipboard Translator - translation ready (" + platform.PasteShortcut() + ")")
 	}
 	if a.conf.NotifyOnComplete && action == pasteNone {
-		title, msg := completionNotification()
+		title, msg := platform.CompletionNotification()
 		a.tray.Notify(title, msg, false)
 	}
 }
@@ -913,7 +914,7 @@ func (a *app) handleResult(res result) {
 // pasteIntoForeground waits for the hotkey's modifiers to be released and then
 // types Ctrl+V into target, but only if target is still the window in front.
 func pasteIntoForeground(target uintptr) error {
-	return pasteWithFocus(target, foregroundWindow, waitModifiersReleased, sendPaste)
+	return pasteWithFocus(target, platform.ForegroundWindow, platform.WaitModifiersReleased, platform.SendPaste)
 }
 
 // pasteWithFocus sends Ctrl+V only if target (the window the selection came
