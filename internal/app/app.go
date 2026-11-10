@@ -161,12 +161,9 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 			if pressed, profile, err := a.pollHotkeys(); err == nil && pressed {
 				*a.pendingDuringLoad = profile
 			}
-			if a.hotkey == nil {
-				platform.PumpMessages()
-			}
-		} else {
-			platform.PumpMessages()
 		}
+		// noHotkey does not pump messages, so always service the UI here.
+		platform.PumpMessages()
 		if a.quitRequested() {
 			return true
 		}
@@ -303,7 +300,7 @@ func (a *app) sleepPumping(d time.Duration) bool {
 		<-t.C
 		platform.PumpMessages()
 		a.serviceSettingsWhileBusy("restarting the translation server")
-		if a.tray.QuitRequested() {
+		if a.quitRequested() {
 			return true
 		}
 	}

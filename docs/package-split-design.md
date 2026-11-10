@@ -1,14 +1,11 @@
 # Package split — design pass (Issue #104, step 1)
 
-> **Status: proposal, no code moved.** This document is the deliverable of step 1
-> of Issue #104. It settles nothing by itself: every layout choice below is a
-> proposal for the maintainer, and the decisions that need an owner are collected
-> in [Open questions](#6-open-questions). Existing explicit requirements in
-> `AGENTS.md` (one UI thread, generation counter, clipboard safety, no network on
-> its own, dependency-free `go.mod`) still apply to every step.
+> **Status: implemented in #123–#132; #104 is complete.** The design pass
+> below is retained as the historical proposal. See `AGENTS.md` for the current
+> package map and working requirements.
 
-The repository root is one `package main`. At the commit this was written against
-it holds 106 Go files (54 non-test, 52 test) and 5 native files
+At the commit this design was written against, the repository root was one
+`package main` holding 106 Go files (54 non-test, 52 test) and 5 native files
 (`native_linux.c`, `native_linux.h`, `native_darwin.m`, `native_darwin.h`,
 `native_darwin_testbridge.m`). The Issue quotes 92 files (49 + 43); `main` has
 grown since, which does not change the conclusions.

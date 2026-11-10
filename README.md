@@ -398,7 +398,7 @@ Set **Unload model after idle** (`idle_unload_minutes`) and click *Save* to enab
 use* for how it is served). It edits:
 
 - the **hotkeys**, each with its keys, either a language pair or one target
-  language, and the **output format** ("Replace with the translation" / "Keep the original, then the translation") (as `profiles` in `config.json`), **auto-paste**, **notification on complete** (`notify_on_complete`), and the **longest
+  language, the **text source** (selection or clipboard; `input`), and the **output format** ("Replace with the translation" / "Keep the original, then the translation") (as `profiles` in `config.json`), **auto-paste**, **notification on complete** (`notify_on_complete`), and the **longest
   text** (`max_chars`). These are applied with *Save*.
 - the **translation model**: *Download* fetches a size you do not have yet (with
   progress and *Cancel*; the 31B model is not offered), *Use this model* switches

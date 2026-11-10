@@ -93,7 +93,7 @@ function Download-File([string]$url, [string]$dest, [string]$sha256 = '') {
     $partial = "$dest.partial"
     if (Test-Path $partial) { Remove-Item $partial -Force }
     try {
-        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $partial -Headers @{ 'User-Agent' = 'PortableClipboardTranslator/0.3.2' } -MaximumRedirection 10
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $partial -Headers @{ 'User-Agent' = 'ClipboardTranslatorSetup' } -MaximumRedirection 10
         if ((Get-Item $partial).Length -eq 0) { throw "Download empty: $url" }
         # Verify before the file gets its final name: a bad file left at $dest would be skipped on every later run.
         if ($sha256) { Assert-FileSha256 $partial $sha256 (Split-Path -Leaf $dest) }
