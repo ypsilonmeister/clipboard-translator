@@ -52,8 +52,9 @@ python3 tools/test_linux_setup.py
 `XDG_RUNTIME_DIR` and `TestX11Desktop` fails with "could not initialize GTK 3".
 
 `CGO_ENABLED=0` builds only the portable logic/stubs on Linux. Wayland is
-explicitly rejected at runtime. `internal/platform/desktop_linux.go` / `native_linux.c` own the
-GTK event loop, XGrabKey, XTest input and X11 clipboard. `autostart_linux.go`
+explicitly rejected at runtime. `internal/platform/native_linux.c` owns the backend-neutral GTK UI/event loop;
+`native_x11_linux.c` owns XGrabKey, XTest input and the X11 clipboard.
+`desktop_linux.go` connects them to Go; `backend_linux.go` selects the session backend. `autostart_linux.go`
 manages an XDG autostart Desktop Entry. GTK supplies a control-window fallback
 if no tray host is present. X11 clipboard compare/write is best effort, not
 atomic like the Windows implementation.

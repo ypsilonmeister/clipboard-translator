@@ -1,6 +1,8 @@
 #ifndef CLIPBOARD_TRANSLATOR_LINUX_H
 #define CLIPBOARD_TRANSLATOR_LINUX_H
 #include <stdint.h>
+int ct_gtk_init(void);
+// X11 initialization; never call from a Wayland backend.
 int ct_init(void);
 void ct_pump(void);
 int ct_keysym_to_keycode(unsigned long keysym);

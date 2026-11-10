@@ -12,7 +12,8 @@ func TestX11EnvironmentValidation(t *testing.T) {
 		{":1", "x11", "", true}, {":1", "", "", true},
 		{"", "x11", "", false}, {":1", "wayland", "", false}, {":1", "x11", "wayland-0", false},
 	} {
-		if err := x11EnvironmentError(tc.display, tc.session, tc.wayland); (err == nil) != tc.ok {
+		backend, err := selectLinuxBackend(tc.display, tc.session, tc.wayland)
+		if (err == nil && backend == linuxBackendX11) != tc.ok {
 			t.Errorf("%+v: %v", tc, err)
 		}
 	}
