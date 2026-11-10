@@ -22,10 +22,12 @@ type portalWire interface {
 }
 
 type portalEvent struct {
-	kind    string // registered, response, closed, failed
-	token   string
-	session string
-	code    uint32
+	kind     string // registered, response, closed, failed
+	token    string
+	session  string
+	code     uint32
+	id       string
+	bindings []portalBinding
 }
 
 type portalClient struct {
@@ -37,6 +39,7 @@ type portalClient struct {
 	deadline time.Time
 	now      func() time.Time
 	err      error
+	onEvent  func(portalEvent) bool
 }
 
 func startPortalClient(w portalWire, appID string, now func() time.Time) *portalClient {
@@ -71,6 +74,9 @@ func (p *portalClient) Step() {
 		e, ok := p.wire.Poll()
 		if !ok {
 			break
+		}
+		if p.onEvent != nil && p.onEvent(e) {
+			continue
 		}
 		switch e.kind {
 		case "registered":
@@ -108,10 +114,21 @@ func (p *portalClient) Step() {
 				p.phase = "ready"
 			}
 		case "closed":
-			// The wire only delivers this peer's sessions. Closure may precede Response.
-			p.fail("a Wayland portal session was closed; reconnect to use translation shortcuts")
-			return
+			relevant := p.phase == "creating"
+			for _, session := range p.sessions {
+				relevant = relevant || session == e.session
+			}
+			if relevant {
+				p.fail("a Wayland portal session was closed; reconnect to use translation shortcuts")
+				return
+			}
 		case "failed":
+			// A retired extension request may complete after it was canceled.
+			if e.token != "" {
+				if _, ok := p.pending[e.token]; !ok {
+					continue
+				}
+			}
 			p.fail("the Wayland portal connection failed; check that the desktop portal service is running and try again")
 			return
 		}

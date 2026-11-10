@@ -87,12 +87,23 @@ func (w *gioPortalWire) Poll() (portalEvent, bool) {
 		return portalEvent{}, false
 	}
 	defer C.ct_portal_event_free(&e)
-	kinds := []string{"", "registered", "response", "closed", "failed"}
+	kinds := []string{"", "registered", "response", "closed", "failed", "activated", "deactivated", "shortcuts-changed"}
 	kind := "failed"
 	if int(e.kind) > 0 && int(e.kind) < len(kinds) {
 		kind = kinds[int(e.kind)]
 	}
-	return portalEvent{kind: kind, token: C.GoString(e.token), session: C.GoString(e.session), code: uint32(e.code)}, true
+	event := portalEvent{kind: kind, token: C.GoString(e.token), session: C.GoString(e.session), code: uint32(e.code), id: C.GoString(e.id)}
+	count := int(C.ct_portal_binding_count(&e))
+	if count > maxHotkeys {
+		return portalEvent{kind: "failed"}, true
+	}
+	for i := 0; i < count; i++ {
+		id, trigger := C.ct_portal_binding_id(&e, C.int(i)), C.ct_portal_binding_trigger(&e, C.int(i))
+		event.bindings = append(event.bindings, portalBinding{id: C.GoString(id), trigger: C.GoString(trigger)})
+		C.free(unsafe.Pointer(id))
+		C.free(unsafe.Pointer(trigger))
+	}
+	return event, true
 }
 func (w *gioPortalWire) Close() {
 	if w.native != nil {
@@ -102,3 +113,38 @@ func (w *gioPortalWire) Close() {
 }
 
 func pumpPortalCallbacks() { C.ct_portal_dispatch() }
+
+func (w *gioPortalWire) BindShortcuts(session, token string, bindings []portalBinding) {
+	if w.native == nil {
+		return
+	}
+	a, b := C.CString(session), C.CString(token)
+	defer C.free(unsafe.Pointer(a))
+	defer C.free(unsafe.Pointer(b))
+	storage := C.calloc(C.size_t(len(bindings)), C.size_t(C.sizeof_CTShortcut))
+	defer C.free(storage)
+	items := unsafe.Slice((*C.CTShortcut)(storage), len(bindings))
+	for i, x := range bindings {
+		items[i].id = C.CString(x.id)
+		items[i].description = C.CString(x.description)
+		items[i].trigger = C.CString(x.trigger)
+		defer C.free(unsafe.Pointer(items[i].id))
+		defer C.free(unsafe.Pointer(items[i].description))
+		defer C.free(unsafe.Pointer(items[i].trigger))
+	}
+	C.ct_portal_bind_shortcuts(w.native, a, b, (*C.CTShortcut)(storage), C.int(len(bindings)))
+}
+func (w *gioPortalWire) CloseSession(session string) {
+	if w.native != nil {
+		p := C.CString(session)
+		defer C.free(unsafe.Pointer(p))
+		C.ct_portal_close_session(w.native, p)
+	}
+}
+func (w *gioPortalWire) CloseRequest(token string) {
+	if w.native != nil {
+		p := C.CString(token)
+		defer C.free(unsafe.Pointer(p))
+		C.ct_portal_close_request(w.native, p)
+	}
+}
