@@ -78,33 +78,26 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 
 ## Code map
 
-| File | Role |
+| Path | Role |
 | --- | --- |
-| `main.go` | `main()`, `fatal`, `applyTranslation`, the `version` string |
-| `internal/languages/` | The 53 model languages, `Validate`, and `DirectionFor`: the script of the text picks the direction of a language pair (URLs are skipped). Standard library only; the first package split out of `main` (Issue #104) |
-| `app.go` | `app` struct and the main loop `serve`: hotkeys (one per profile), tray commands, update results, translation results, Settings-page requests, download results. `startTranslation` / `handleResult` / `abortTranslation` |
-| `app_menu.go`, `app_idle.go` | Daily tray commands (Settings first, cancel, unload, model switch when multiple are installed, history, updates, config and license); configuration is edited in Settings; UI-thread idle timer and intentional unload/reload state |
-| `internal/platform/capture.go` | `captureJob`: the ordering rules of selection capture (modifiers released, focus unchanged, clipboard sequence) over per-OS pieces, so they are tested without a desktop. `serve` steps the job (`stepCapture`) every ~15 ms instead of sleeping, so a slow copy never blocks the UI thread |
-| `internal/settings/` (`server.go`, `web/`), `app_settings.go` | The Settings page: `server.go` serves it on 127.0.0.1 while it is open (token, Host/Origin checks, CSP) and never touches app state; `app_settings.go` answers its requests on the UI thread and applies hotkeys, auto-paste, notifications, `max_chars` and `idle_unload_minutes`; `web/` is the embedded HTML/CSS/JS (embedded from `internal/settings`; the JSON field names of `State` and `Form` are the page's contract) |
-| `internal/models/` (`models.go`, `modeldl.go`), `app_models.go` | `models.go` is the model catalog (pinned revision and SHA-256, kept equal to `setup.ps1`, `setup.sh` and `setup-macos.sh`; tests compare them); `modeldl.go` is the download manager (resume, SHA-256 check, cancel; owned by `app`, not by the settings server; the only code that contacts the model host); `internal/models/modeltest` is a fake model host for tests and `internal/testsupport` holds the loopback-only transport; `app_models.go` switches model and engine for the page, answers it while the server loads, and deletes unused models or partials |
-| `internal/llamaserver/` | `Supervisor` for `llama-server` (`server.go`: start, stop, exit detection), `RestartLimiter` (max 3 per 10 min) and backoff, and the loopback HTTP client (`client.go`: `WaitReady`, `Translate`). Its fields, `Start` and `Stop` belong to the UI thread; `Supervisor.APIKey` is never logged |
-| `setup_flow.go` | Checks the model/runtime exist (using `config.ResolvePaths`), offers to run `setup.ps1` (embedded in the exe with `//go:embed`) |
-| `internal/platform/` | Everything that differs per OS (tray, hotkeys, clipboard, selection capture, autostart, child-process lifetime, data directory, the native cgo files). One package; per-OS files are selected by file suffix and build tags. The app reaches it through exported names (`platform.NewHotkey`, `platform.NewTray`, ...) and keeps its test seams as fields of `app`. Its tests have their own `TestMain` (fake server, mac harness). `assets/` embeds `icon.png` for the Linux tray |
-| `internal/hotkeyspec/` | The hotkey syntax (`Ctrl+Alt+E`): one parser shared by the config check and the per-OS hotkey code; no OS dependency |
+| `main.go`, `embed.go`, `resource_windows_amd64.syso` | The `main` package: `main()` locks the OS thread and calls `app.Run`; `embed.go` embeds `setup.ps1`, `setup.sh` and `setup-macos.sh` (they must stay in the repository root) and `main.go` holds the `version` string that `-X main.version` stamps. The `.syso` (icon, version info, DPI manifest) is linked into this package, so its tests (`resources_windows_test.go`) live here too |
+| `internal/app/` | The program: `Run` (`run.go`; startup and shutdown, `fatal`, `applyTranslation`), the `app` struct and its main loop `serve` (`app.go`: hotkeys, one per profile, tray commands, update results, translation results, Settings-page requests, download results; `startTranslation` / `handleResult` / `abortTranslation`), the tray commands (`app_menu.go`), the UI-thread idle timer and intentional unload/reload state (`app_idle.go`), the app's side of the Settings page (`app_settings.go`), the model switch and delete for the page (`app_models.go`), the quick start guide (`guide.go`), the last 10 translations in memory and `decidePaste` for auto-paste (`history.go`), and checking that the model/runtime exist and offering to run the setup script (`setup_flow.go`). Almost all tests are here: they drive `*app` through its seams (`newHotkey`, `capture`, `paste`, `foreground`, `openURL`, `showErr`, ...), with `fakeTray` and a `TestMain` that turns the test binary into a fake `llama-server` |
+| `internal/platform/` | Everything that differs per OS (tray, hotkeys, clipboard, selection capture, autostart, child-process lifetime, data directory, the native cgo files). One package; per-OS files are selected by file suffix and build tags. The app reaches it through exported names (`platform.NewHotkey`, `platform.NewTray`, ...). `capture.go` is `captureJob`: the ordering rules of selection capture (modifiers released, focus unchanged, clipboard sequence) over per-OS pieces, so they are tested without a desktop; `serve` steps the job (`stepCapture`) every ~15 ms instead of sleeping, so a slow copy never blocks the UI thread. `psscript.go` holds the PowerShell command lines that run `setup.ps1` / `install.ps1` and keep the failure prompt open; `update_windows.go` runs the installer. Its tests have their own `TestMain` (fake server, mac harness); `assets/` embeds `icon.png` for the Linux tray |
 | `internal/config/` | `Config` + validation (`config.go`); order-preserving in-place `config.json` edits with a `.bak` and backend detection (`settings.go`); `Profile` and what one hotkey translates, skip reasons and messages (`profile.go`); `PathWithin`, `ResolvePaths`, `CheckFile` (`paths.go`) |
-| `internal/update/`, `internal/platform/update_windows.go` | "Check for updates" (GitHub API, only on click), version compare, install-kind detection (installer / Scoop / portable); the release-tag check and the `install.ps1` URL are in `internal/update` (`InstallScriptURL`), `update_windows.go` only runs the script it is given |
-| `history.go` | Last 10 translations (memory only) and `decidePaste` for auto-paste |
-| `internal/platform/tray.go` (+ `_windows`/`_other`) | `Tray` interface; Windows impl is a hidden window + `Shell_NotifyIconW` |
-| `internal/platform/hotkey_windows.go`, `clipboard_windows.go` | `RegisterHotKey` (one id per hotkey), simulated Ctrl+C (`CaptureSelectedText`), clipboard access, Ctrl+V |
-| `internal/platform/desktop_linux.go` + `native_linux.c`, `desktop_darwin.go` + `native_darwin.m`, `hotkey_nonwindows.go`, `clipboard_*.go`, `autostart_*.go` | Tray, hotkey, clipboard and autostart on Linux (GTK/X11/XTest) and macOS (AppKit/Carbon); the non-cgo stubs. Details under Commands |
-| `internal/platform/platform.go`, `proc_*.go`, `data_*.go`, `leftover*.go` | Per-OS facts: server binary name, hotkey limit, hiding the console, child-process lifetime, where data lives |
-| `internal/platform/psscript.go` | The PowerShell command lines that run `setup.ps1` / `install.ps1` and keep the failure prompt open |
+| `internal/hotkeyspec/` | The hotkey syntax (`Ctrl+Alt+E`): one parser shared by the config check and the per-OS hotkey code; no OS dependency |
+| `internal/languages/` | The 53 model languages, `Validate`, and `DirectionFor`: the script of the text picks the direction of a language pair (URLs are skipped). Standard library only |
+| `internal/llamaserver/` | `Supervisor` for `llama-server` (`server.go`: start, stop, exit detection), `RestartLimiter` (max 3 per 10 min) and backoff, and the loopback HTTP client (`client.go`: `WaitReady`, `Translate`). Its fields, `Start` and `Stop` belong to the UI thread; `Supervisor.APIKey` is never logged. `llama_smoke_test.go` is the real-binary smoke test (`//go:build llamasmoke`): it starts `llama-server` through `Supervisor` and tests translation with the real model |
+| `internal/models/` | `models.go` is the model catalog (pinned revision and SHA-256, kept equal to `setup.ps1`, `setup.sh` and `setup-macos.sh`; tests compare them); `modeldl.go` is the download manager (resume, SHA-256 check, cancel; owned by `app`, not by the Settings server; the only code that contacts the model host); `modeltest/` is a fake model host for tests |
+| `internal/settings/` | The Settings page: `server.go` serves it on 127.0.0.1 while it is open (token, Host/Origin checks, CSP) and never touches app state; `web/` is the embedded HTML/CSS/JS. The JSON field names of `State` and `Form` are the page's contract |
+| `internal/update/` | "Check for updates" (GitHub API, only on click), version compare, install-kind detection (installer / Scoop / portable), the release-tag check and the `install.ps1` URL |
+| `internal/testsupport/` | Test-only helpers shared by several packages: the fake `llama-server` and the loopback-only transport |
 | `setup.ps1`, `install.ps1` | Downloads model + llama.cpp; the one-line installer. Must parse on Windows PowerShell 5.1 *and* PowerShell 7 |
-| `internal/llamaserver/llama_smoke_test.go` | Real-binary smoke test (`//go:build llamasmoke`): starts `llama-server` through `Supervisor` and tests translation with real model |
 | `tools/bump_llama_pin.py` | Bumps, checks, and inspects (`--show`) the pinned llama.cpp release tag and asset SHA-256 hashes across `setup.ps1`, `setup.sh` and `setup-macos.sh` |
 | `tools/print_model_pin.py` | Prints pinned model URLs and SHA-256 digests from `internal/models/models.go` for workflow and scripts |
 | `bucket/clipboard-translator.json` | Scoop manifest (this repo is also the bucket) |
 | `tools/mksyso`, `tools/mkicon` | Generate `resource_windows_amd64.syso` (icon, version info, DPI manifest) and `assets/icon.*` |
+
+Package dependencies point downwards: `main` -> `app` -> `settings`, `llamaserver`, `update`, `models`, `config`, `platform` -> `hotkeyspec`, `languages`. Nothing under `internal/` imports `app`, and `internal/models` imports no other package of the module (it is the only code that talks to the model host). The split is described in `docs/package-split-design.md` (Issue #104).
 
 ## Things that bite
 
@@ -157,12 +150,12 @@ The build is a GUI-subsystem exe (`-H=windowsgui`): there is no stdout, so use
 ## Tests
 
 - The test binary doubles as a fake `llama-server` (`TestMain` in
-  `helper_test.go` calls `testsupport.MaybeRunFakeServer`, env
+  `internal/app/helper_test.go` calls `testsupport.MaybeRunFakeServer`, env
   `CT_TEST_FAKE_SERVER=1`), so crash recovery and engine
   switching are tested without the real model. Seams like `newHotkey`,
   `showErr`, `foreground`, `paste`, `capture` and `openURL` on `app` are
   replaceable in tests; `fakeTray` records tray calls. Model downloads in tests
-  only reach loopback (`downloadTransport` is set in `TestMain`).
+  only reach loopback (`models.DownloadTransport` is set in `TestMain`).
 - Behaviour that needs a real desktop (live hotkey, real selection, Ctrl+V into
   another app, the look of the tray menu) is not covered by `go test`. Say so
   when you could not check it. Do not inject keystrokes into, or take screenshots

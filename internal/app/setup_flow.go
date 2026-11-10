@@ -1,7 +1,6 @@
 package app
 
 import (
-	_ "embed"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,15 +11,11 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
-// embeddedSetup is the setup.ps1 of this version, carried inside the exe so a
-// bare exe (for example one installed by winget, which does not copy the other
-// files of the zip) can still download the model and llama.cpp.
-//
-//go:embed setup.ps1
-var embeddedSetup []byte
-
-//go:embed setup.sh
-var embeddedLinuxSetup []byte
+// The setup scripts of this version, carried inside the exe so a bare exe (for
+// example one installed by winget, which does not copy the other files of the
+// zip) can still download the model and llama.cpp. The main package embeds
+// them (embed.go) and passes them to Run in Options.
+var embeddedSetup, embeddedLinuxSetup, embeddedMacSetup []byte
 
 func setupContents() []byte {
 	if runtime.GOOS == "darwin" {
@@ -41,9 +36,6 @@ func setupProgressDescription() string {
 	}
 	return "over 1 GB; setup progress is displayed in the terminal"
 }
-
-//go:embed setup-macos.sh
-var embeddedMacSetup []byte
 
 // ensureSetupScript makes sure setup.ps1 exists in dir, writing the embedded
 // copy when it is missing. An existing file (possibly edited by the user) is

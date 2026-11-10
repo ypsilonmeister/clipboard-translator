@@ -1,14 +1,12 @@
 package app
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -17,9 +15,17 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
-// version is the release this binary was built from. release.yml sets it with
-// -ldflags "-X main.version=<tag without v>"; a local build stays "dev".
+// version is the release this binary was built from, set by Run from
+// Options.Version (the root package's -X main.version stamp); "dev" in tests
+// and local builds.
 var version = "dev"
+
+// Options is what the main package hands to Run: the version string and the
+// setup scripts it embeds (go:embed cannot reach the repository root from here).
+type Options struct {
+	Version                            string
+	SetupWindows, SetupLinux, SetupMac []byte
+}
 
 type result struct {
 	original, translated string
@@ -59,11 +65,14 @@ func fatal(v ...any) {
 	os.Exit(1)
 }
 
-func main() {
-	flag.Parse()
-	// Native desktop APIs must be initialized and serviced on this thread.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
+// Run is the program: it returns when the user quits (or has declined setup).
+// It must be called on the process's main goroutine, which the caller has
+// locked to its OS thread: the tray window and the hotkeys belong to it.
+func Run(opts Options) {
+	if opts.Version != "" {
+		version = opts.Version
+	}
+	embeddedSetup, embeddedLinuxSetup, embeddedMacSetup = opts.SetupWindows, opts.SetupLinux, opts.SetupMac
 	if err := platform.PlatformRuntimeError(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

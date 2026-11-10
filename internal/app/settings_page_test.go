@@ -205,11 +205,11 @@ func TestSettingsServerHeadersAndAssets(t *testing.T) {
 	}
 	// An author rule like display:flex beats the hidden attribute; this one restores it
 	// (the busy bar once stayed on screen because of that).
-	css, _ := os.ReadFile("internal/settings/web/app.css")
+	css, _ := os.ReadFile("../settings/web/app.css")
 	if !strings.Contains(string(css), "[hidden] { display: none !important; }") {
 		t.Error("app.css must make the hidden attribute win over author display rules")
 	}
-	js, _ := os.ReadFile("internal/settings/web/app.js")
+	js, _ := os.ReadFile("../settings/web/app.js")
 	for _, bad := range []string{"innerHTML", "outerHTML", "document.write", "eval("} {
 		if strings.Contains(string(js), bad) {
 			t.Errorf("app.js uses %s", bad)
@@ -226,7 +226,7 @@ func TestSettingsServerHeadersAndAssets(t *testing.T) {
 // The page logic is not run by go test, so these pin the three rules that keep a
 // stale save from slipping through (found in review of #85).
 func TestSettingsPageKeepsStaleSaveGuards(t *testing.T) {
-	b, err := os.ReadFile("internal/settings/web/app.js")
+	b, err := os.ReadFile("../settings/web/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestSettingsPageKeepsStaleSaveGuards(t *testing.T) {
 	if nodePath, err := exec.LookPath("node"); err == nil {
 		cmd := exec.Command(nodePath, "-e", `
 const fs = require('fs');
-const js = fs.readFileSync('internal/settings/web/app.js', 'utf8');
+const js = fs.readFileSync('../settings/web/app.js', 'utf8');
 const match = js.match(/function isSaveNeeded\([^)]*\)\s*\{[^}]*\}/);
 if (!match) throw new Error('isSaveNeeded not found in app.js');
 const fn = new Function('return ' + match[0])();

@@ -40,7 +40,7 @@ func TestChatTemplateFreshInstall(t *testing.T) {
 	}
 
 	// Install the pinned 2B template from testdata:
-	tplBytes, err := os.ReadFile("testdata/chat_template.2b.jinja")
+	tplBytes, err := os.ReadFile("../../testdata/chat_template.2b.jinja")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 	a.conf.TemplateFile = "models/chat_template.jinja" // legacy config setting
 
 	// Write old 2B template into legacy path models/chat_template.jinja
-	oldTpl, err := os.ReadFile("testdata/chat_template.old_2b.jinja")
+	oldTpl, err := os.ReadFile("../../testdata/chat_template.old_2b.jinja")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestChatTemplateExistingInstallWithOld2BPin(t *testing.T) {
 	}
 
 	// 3. When new pinned template is downloaded (to chat_template.2b.jinja):
-	newTpl, err := os.ReadFile("testdata/chat_template.2b.jinja")
+	newTpl, err := os.ReadFile("../../testdata/chat_template.2b.jinja")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,11 +181,11 @@ func TestChatTemplateModelSwitch(t *testing.T) {
 	putModel(t, a.dir, m2b)
 	putModel(t, a.dir, m8b)
 
-	tpl08Bytes, err := os.ReadFile("testdata/chat_template.0.8b.jinja")
+	tpl08Bytes, err := os.ReadFile("../../testdata/chat_template.0.8b.jinja")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tpl2bBytes, err := os.ReadFile("testdata/chat_template.2b.jinja")
+	tpl2bBytes, err := os.ReadFile("../../testdata/chat_template.2b.jinja")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestChatTemplateSwitchRefusesMismatchedTemplate(t *testing.T) {
 	putModel(t, a.dir, m08)
 	putModel(t, a.dir, m2b)
 
-	tpl2bBytes, err := os.ReadFile("testdata/chat_template.2b.jinja")
+	tpl2bBytes, err := os.ReadFile("../../testdata/chat_template.2b.jinja")
 	if err != nil {
 		t.Fatal(err)
 	}
