@@ -137,8 +137,8 @@ func TestSwitchModelWorksAndIsSaved(t *testing.T) {
 	if err := a.switchModel(models.Catalog[1]); err != nil {
 		t.Fatal(err)
 	}
-	if a.conf.ModelFile != "models/b.gguf" || !strings.HasSuffix(filepath.ToSlash(a.sup.model), "models/b.gguf") || !strings.HasSuffix(filepath.ToSlash(a.paths.model), "models/b.gguf") {
-		t.Fatalf("not switched: conf=%q sup=%q paths=%q", a.conf.ModelFile, a.sup.model, a.paths.model)
+	if a.conf.ModelFile != "models/b.gguf" || !strings.HasSuffix(filepath.ToSlash(a.sup.Model), "models/b.gguf") || !strings.HasSuffix(filepath.ToSlash(a.paths.model), "models/b.gguf") {
+		t.Fatalf("not switched: conf=%q sup=%q paths=%q", a.conf.ModelFile, a.sup.Model, a.paths.model)
 	}
 	if !healthy(a) {
 		t.Error("the server must be running with the new model")
@@ -160,15 +160,15 @@ func TestSwitchModelFailureRestoresTheOldOneBeforeRestarting(t *testing.T) {
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
-	oldPaths, oldModel := a.paths, a.sup.model
+	oldPaths, oldModel := a.paths, a.sup.Model
 	before, _ := os.ReadFile(filepath.Join(a.dir, "config.json"))
 
 	err := a.switchModel(models.Catalog[1]) // the fake server exits at once for a path with FAIL in it
 	if err == nil || !strings.Contains(err.Error(), "previous model is back") || !strings.Contains(err.Error(), "smaller") {
 		t.Fatalf("error should say the old model is back and suggest a smaller one: %v", err)
 	}
-	if a.conf.ModelFile != "models/m.gguf" || a.paths != oldPaths || a.sup.model != oldModel {
-		t.Errorf("the old model must be restored: conf=%q sup=%q", a.conf.ModelFile, a.sup.model)
+	if a.conf.ModelFile != "models/m.gguf" || a.paths != oldPaths || a.sup.Model != oldModel {
+		t.Errorf("the old model must be restored: conf=%q sup=%q", a.conf.ModelFile, a.sup.Model)
 	}
 	if !healthy(a) || !a.sup.Running() {
 		t.Error("the server must be running again with the old model")
@@ -193,7 +193,7 @@ func TestSwitchModelFailureWhenRestoreAlsoFails(t *testing.T) {
 			if err := a.startServer(); err != nil {
 				t.Fatal(err)
 			}
-			oldConf, oldPaths, oldModel := a.conf.ModelFile, a.paths, a.sup.model
+			oldConf, oldPaths, oldModel := a.conf.ModelFile, a.paths, a.sup.Model
 			configPath := filepath.Join(a.dir, "config.json")
 			before, err := os.ReadFile(configPath)
 			if err != nil {
@@ -224,7 +224,7 @@ func TestSwitchModelFailureWhenRestoreAlsoFails(t *testing.T) {
 			if a.sup.Running() || healthy(a) {
 				t.Error("neither model should be running")
 			}
-			if a.conf.ModelFile != oldConf || a.paths != oldPaths || a.sup.model != oldModel {
+			if a.conf.ModelFile != oldConf || a.paths != oldPaths || a.sup.Model != oldModel {
 				t.Error("recovery must still target the previous model")
 			}
 			if after, err := os.ReadFile(configPath); err != nil || string(after) != string(before) {
@@ -1039,7 +1039,7 @@ func TestTranslationModelMenuDisabledWhileBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.model = paths.model
+	a.sup.Model = paths.model
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
@@ -1063,7 +1063,7 @@ func TestTranslationModelMenuDisabledWhileBusy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a.translating = tc.translating
 			a.serverWork = tc.serverWork
-			a.sup.starting = tc.starting
+			a.sup.SetStarting(tc.starting)
 			a.settingsServing = tc.settingsServ
 			a.modelUnloaded = tc.unloaded
 
@@ -1100,7 +1100,7 @@ func TestTranslationModelMenuSwitching(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.model = paths.model
+	a.sup.Model = paths.model
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
@@ -1123,8 +1123,8 @@ func TestTranslationModelMenuSwitching(t *testing.T) {
 	if !strings.HasSuffix(filepath.ToSlash(a.paths.model), wantModelRel) {
 		t.Fatalf("paths.model = %q, want suffix %q", a.paths.model, wantModelRel)
 	}
-	if !strings.HasSuffix(filepath.ToSlash(a.sup.model), wantModelRel) {
-		t.Fatalf("sup.model = %q, want suffix %q", a.sup.model, wantModelRel)
+	if !strings.HasSuffix(filepath.ToSlash(a.sup.Model), wantModelRel) {
+		t.Fatalf("sup.Model = %q, want suffix %q", a.sup.Model, wantModelRel)
 	}
 	if !healthy(a) {
 		t.Fatal("server is not healthy after model switch")
@@ -1172,13 +1172,13 @@ func TestTranslationModelMenuSelectActiveDoesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.model = paths.model
+	a.sup.Model = paths.model
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
 
 	noteCount := len(tray.notes)
-	oldPID := a.sup.cmd.Process.Pid
+	oldPID := a.sup.PID()
 
 	// Select 0.8B again.
 	a.handleCommand(cmdModelBase + 0)
@@ -1186,8 +1186,8 @@ func TestTranslationModelMenuSelectActiveDoesNothing(t *testing.T) {
 	if len(tray.notes) != noteCount {
 		t.Fatalf("selecting active model produced notifications: %v", tray.notes[noteCount:])
 	}
-	if a.sup.cmd.Process.Pid != oldPID {
-		t.Fatalf("server restarted when active model was selected: pid %d != %d", a.sup.cmd.Process.Pid, oldPID)
+	if a.sup.PID() != oldPID {
+		t.Fatalf("server restarted when active model was selected: pid %d != %d", a.sup.PID(), oldPID)
 	}
 	if a.conf.ModelFile != "models/"+models.Catalog[0].File {
 		t.Fatalf("conf.ModelFile changed: %q", a.conf.ModelFile)
@@ -1205,7 +1205,7 @@ func TestTranslationModelMenuFailureKeepsOldModel(t *testing.T) {
 			t.Fatal(err)
 		}
 		a.paths = paths
-		a.sup.model = paths.model
+		a.sup.Model = paths.model
 		if err := a.startServer(); err != nil {
 			t.Fatal(err)
 		}
@@ -1246,7 +1246,7 @@ func TestTranslationModelMenuFailureKeepsOldModel(t *testing.T) {
 			t.Fatal(err)
 		}
 		a.paths = paths
-		a.sup.model = paths.model
+		a.sup.Model = paths.model
 		if err := a.startServer(); err != nil {
 			t.Fatal(err)
 		}
@@ -1279,7 +1279,7 @@ func TestTranslationModelMenuUnloadedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.paths = paths
-	a.sup.model = paths.model
+	a.sup.Model = paths.model
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}

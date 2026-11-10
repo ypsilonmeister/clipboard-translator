@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
@@ -104,7 +105,7 @@ func TestServeRecoversOrQuitsAfterFailedSwitch(t *testing.T) {
 	}
 	a.hotkey = fakeHotkey{"Ctrl+Alt+E"}
 	breakPreviousEngine(a)
-	a.limiter = restartLimiter{max: 0, window: time.Minute} // no recovery attempts allowed
+	a.limiter = llamaserver.RestartLimiter{Max: 0, Window: time.Minute} // no recovery attempts allowed
 	req := newSettingsRequest(nil, time.Minute)
 	req.action, req.arg = "engine", "vulkan"
 	a.settingsReqs <- req

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 )
 
@@ -21,7 +22,7 @@ import (
 
 // isModelActive reports whether e is currently the active model in use by the app.
 // It checks models.ForFile(a.conf.ModelFile) and also checks if the resolved path
-// of the configured model file (a.paths.model / a.sup.model) points to the same
+// of the configured model file (a.paths.model / a.sup.Model) points to the same
 // file as the catalog entry (via os.SameFile and case-insensitive cleaned paths).
 func (a *app) isModelActive(e models.Entry) bool {
 	if active, known := models.ForFile(a.conf.ModelFile); known && strings.EqualFold(active.Key, e.Key) {
@@ -31,8 +32,8 @@ func (a *app) isModelActive(e models.Entry) bool {
 	catInfo, catErr := os.Stat(catalogPath)
 
 	activePaths := []string{a.paths.model}
-	if a.sup != nil && a.sup.Running() && a.sup.model != "" {
-		activePaths = append(activePaths, a.sup.model)
+	if a.sup != nil && a.sup.Running() && a.sup.Model != "" {
+		activePaths = append(activePaths, a.sup.Model)
 	}
 	// If a.paths.model is not resolved yet, resolve from a.conf.ModelFile.
 	if a.paths.model == "" && a.conf.ModelFile != "" {
@@ -149,7 +150,7 @@ func (a *app) startModelSwitch(req settingsRequest) {
 	st := a.settingsState()
 	st.Busy = "switching to " + e.Name
 	req.reply <- settingsReply{state: st} // answer first: what follows blocks the loop
-	if err := a.switchModel(e); err != nil && !errors.Is(err, errQuit) {
+	if err := a.switchModel(e); err != nil && !errors.Is(err, llamaserver.ErrQuit) {
 		a.settingsNotice = err.Error()
 	}
 }
@@ -181,8 +182,8 @@ func (a *app) checkModelSwitch(key string) (models.Entry, error) {
 // config.json changes only once the new model works.
 func (a *app) switchModel(e models.Entry) error {
 	defer a.beginServerWork()()
-	oldModel := a.sup.model
-	oldTemplate := a.sup.template
+	oldModel := a.sup.Model
+	oldTemplate := a.sup.Template
 	wasFallback := a.onFallback()
 	newConf := a.conf
 	newConf.ModelFile = "models/" + e.File
@@ -210,8 +211,8 @@ func (a *app) switchModel(e models.Entry) error {
 	a.modelUnloaded = false
 	a.updateReadyTip()
 	a.sup.Stop()
-	a.sup.model = paths.model
-	a.sup.template = paths.template
+	a.sup.Model = paths.model
+	a.sup.Template = paths.template
 	bin := a.paths.server
 	layers := a.conf.GPULayers
 	label := "loading " + e.Name
@@ -222,7 +223,7 @@ func (a *app) switchModel(e models.Entry) error {
 	}
 	// The chosen engine itself, without the CPU fallback of startServer: silently
 	// running on the CPU would hide that the model does not fit on the GPU.
-	err = a.sup.start(bin, layers, label)
+	err = a.sup.Start(bin, layers, label)
 	if err == nil {
 		a.conf, a.paths = newConf, paths
 		a.saveConfig(saveMap)
@@ -230,19 +231,19 @@ func (a *app) switchModel(e models.Entry) error {
 		a.tray.Notify("Clipboard Translator", "Model: "+e.Name, false)
 		return nil
 	}
-	if errors.Is(err, errQuit) {
+	if errors.Is(err, llamaserver.ErrQuit) {
 		return err // the main loop sees the quit request
 	}
 	log.Printf("model %s failed: %v; going back", e.Name, err)
-	a.sup.model = oldModel
-	a.sup.template = oldTemplate
+	a.sup.Model = oldModel
+	a.sup.Template = oldTemplate
 	restore := a.startServer
 	if wasFallback {
 		restore = a.startFallback
 	}
 	msg := fmt.Sprintf("Could not load %s (%v). It may need more memory than this PC has. The previous model is back in use; a smaller one may work.", e.Name, err)
 	if rerr := restore(); rerr != nil {
-		if errors.Is(rerr, errQuit) {
+		if errors.Is(rerr, llamaserver.ErrQuit) {
 			return rerr
 		}
 		// Neither works: the loop notices the idle supervisor and recovers.

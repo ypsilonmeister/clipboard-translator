@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
@@ -112,7 +113,7 @@ func TestHandleResultTruncatedKeepsClipboard(t *testing.T) {
 	a.conf.AutoPaste = true
 	cb.text = "こんにちは"
 	g := pending(a)
-	a.handleResult(result{original: "こんにちは", generation: g, window: 100, fromSelection: true, err: errTruncated})
+	a.handleResult(result{original: "こんにちは", generation: g, window: 100, fromSelection: true, err: llamaserver.ErrTruncated})
 	if cb.text != "こんにちは" || cb.writes != 0 || *pastes != 0 || len(a.hist.Items()) != 0 {
 		t.Fatalf("clipboard=%q writes=%d pastes=%d history=%d", cb.text, cb.writes, *pastes, len(a.hist.Items()))
 	}

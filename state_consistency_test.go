@@ -110,7 +110,7 @@ func startOnFallback(t *testing.T) *app {
 		t.Fatal(err)
 	}
 	if !healthy(a) || !a.onFallback() {
-		t.Fatalf("precondition: the CPU fallback must run (running %q)", a.sup.cmd.Path)
+		t.Fatalf("precondition: the CPU fallback must run (running %q)", a.sup.BinaryPath())
 	}
 	return a
 }
@@ -168,7 +168,7 @@ func TestCPUFallbackIsShownAsTheRunningEngine(t *testing.T) {
 
 func TestChoosingRunningFallbackViaSettingsRequest(t *testing.T) {
 	a := startOnFallback(t)
-	pid := a.sup.cmd.Process.Pid
+	pid := a.sup.PID()
 
 	st := a.settingsState()
 	if st.ConfiguredEngine != "vulkan" || st.RunningEngine != "cpu" {
@@ -185,7 +185,7 @@ func TestChoosingRunningFallbackViaSettingsRequest(t *testing.T) {
 		t.Fatalf("startEngineSwitch error: %v", rep.err)
 	}
 
-	if a.sup.cmd.Process.Pid != pid || !healthy(a) {
+	if a.sup.PID() != pid || !healthy(a) {
 		t.Fatal("choosing the engine that already runs must not restart it")
 	}
 
@@ -208,10 +208,10 @@ func TestChoosingRunningFallbackViaSettingsRequest(t *testing.T) {
 func TestChoosingTheConfiguredGPUAfterFallbackRetriesIt(t *testing.T) {
 	a := startOnFallback(t)
 	tray := a.tray.(*fakeTray)
-	pid := a.sup.cmd.Process.Pid
+	pid := a.sup.PID()
 
 	a.switchBackend("vulkan") // still broken
-	if a.sup.cmd == nil || a.sup.cmd.Process.Pid == pid {
+	if !a.sup.Running() || a.sup.PID() == pid {
 		t.Fatal("choosing the configured GPU while the CPU runs must launch it again, not be a no-op")
 	}
 	if !healthy(a) || a.runningBackend() != "cpu" || !a.onFallback() {
@@ -226,13 +226,13 @@ func TestChoosingTheConfiguredGPUAfterFallbackRetriesIt(t *testing.T) {
 
 	// The same from the settings page: the request is answered as busy and
 	// the page is told afterwards that the engine did not change.
-	pid = a.sup.cmd.Process.Pid
+	pid = a.sup.PID()
 	req := newActionRequest("engine", "vulkan", time.Minute)
 	a.startEngineSwitch(req)
 	if rep := <-req.reply; rep.err != nil || !strings.Contains(rep.state.Busy, "Vulkan") {
 		t.Fatalf("the page must be told the app is switching: %+v", rep)
 	}
-	if a.sup.cmd.Process.Pid == pid || !healthy(a) || a.runningBackend() != "cpu" {
+	if a.sup.PID() == pid || !healthy(a) || a.runningBackend() != "cpu" {
 		t.Fatal("the page's retry must launch the GPU and fall back to a working CPU server")
 	}
 	if a.settingsNotice == "" {
@@ -269,9 +269,9 @@ func TestRetryingTheConfiguredGPUWorksOnceItCanStart(t *testing.T) {
 
 func TestChoosingTheRunningFallbackKeepsItWithoutRestart(t *testing.T) {
 	a := startOnFallback(t)
-	pid := a.sup.cmd.Process.Pid
+	pid := a.sup.PID()
 	a.switchBackend("cpu")
-	if a.sup.cmd.Process.Pid != pid || !healthy(a) {
+	if a.sup.PID() != pid || !healthy(a) {
 		t.Fatal("choosing the engine that already runs must not restart it")
 	}
 	if currentBackend(a.conf.ServerFile) != "cpu" || a.conf.GPULayers != 0 || a.onFallback() {
@@ -283,7 +283,7 @@ func TestChoosingTheRunningFallbackKeepsItWithoutRestart(t *testing.T) {
 	// Choosing it again changes nothing.
 	before, _ := os.ReadFile(filepath.Join(a.dir, "config.json"))
 	a.switchBackend("cpu")
-	if after, _ := os.ReadFile(filepath.Join(a.dir, "config.json")); string(after) != string(before) || a.sup.cmd.Process.Pid != pid {
+	if after, _ := os.ReadFile(filepath.Join(a.dir, "config.json")); string(after) != string(before) || a.sup.PID() != pid {
 		t.Error("choosing the configured, running engine must be a no-op")
 	}
 }
@@ -294,16 +294,16 @@ func TestSwitchModelOnCPUFallbackUsesFallbackAndKeepsFallbackState(t *testing.T)
 	withModels(t, testEntry("a", "a.gguf"), testEntry("b", "b.gguf"))
 	a := startOnFallback(t)
 	putModel(t, a.dir, models.Catalog[1])
-	oldPid := a.sup.cmd.Process.Pid
+	oldPid := a.sup.PID()
 
 	if err := a.switchModel(models.Catalog[1]); err != nil {
 		t.Fatalf("switching model on CPU fallback failed: %v", err)
 	}
-	if !healthy(a) || a.sup.cmd.Process.Pid == oldPid {
+	if !healthy(a) || a.sup.PID() == oldPid {
 		t.Fatal("server must be restarted with the new model")
 	}
-	if a.sup.cmd.Path != a.paths.fallback {
-		t.Fatalf("server should be running fallback %q, got %q", a.paths.fallback, a.sup.cmd.Path)
+	if a.sup.BinaryPath() != a.paths.fallback {
+		t.Fatalf("server should be running fallback %q, got %q", a.paths.fallback, a.sup.BinaryPath())
 	}
 	if !a.onFallback() {
 		t.Fatal("a.onFallback() must still be true after switching models on CPU fallback")
@@ -330,7 +330,7 @@ func TestSwitchModelOnCPUFallbackFailureRestoresFallbackWithoutTouchingGPU(t *te
 	withModels(t, testEntry("a", "a.gguf"), testEntry("bad", "bad-FAIL.gguf"))
 	a := startOnFallback(t)
 	putModel(t, a.dir, models.Catalog[1])
-	oldModel := a.sup.model
+	oldModel := a.sup.Model
 
 	err := a.switchModel(models.Catalog[1])
 	if err == nil || !strings.Contains(err.Error(), "previous model is back") {
@@ -339,8 +339,8 @@ func TestSwitchModelOnCPUFallbackFailureRestoresFallbackWithoutTouchingGPU(t *te
 	if !healthy(a) {
 		t.Fatal("server must be restored and healthy")
 	}
-	if a.sup.cmd.Path != a.paths.fallback {
-		t.Fatalf("server should be restored to fallback %q, got %q", a.paths.fallback, a.sup.cmd.Path)
+	if a.sup.BinaryPath() != a.paths.fallback {
+		t.Fatalf("server should be restored to fallback %q, got %q", a.paths.fallback, a.sup.BinaryPath())
 	}
 	if !a.onFallback() {
 		t.Fatal("a.onFallback() must still be true after failed model switch on CPU fallback")
@@ -348,8 +348,8 @@ func TestSwitchModelOnCPUFallbackFailureRestoresFallbackWithoutTouchingGPU(t *te
 	if got := a.runningBackend(); got != "cpu" {
 		t.Fatalf("running backend must still be cpu, got %q", got)
 	}
-	if a.sup.model != oldModel {
-		t.Fatalf("supervisor model must be restored to %q, got %q", oldModel, a.sup.model)
+	if a.sup.Model != oldModel {
+		t.Fatalf("supervisor model must be restored to %q, got %q", oldModel, a.sup.Model)
 	}
 }
 
@@ -366,8 +366,8 @@ func TestSettingsStateDoesNotReportTargetModelAsActiveWhileSwitching(t *testing.
 	}
 
 	checked := 0
-	origUI := a.sup.ui
-	a.sup.ui = func(label string, elapsed time.Duration) bool {
+	origUI := a.sup.UI
+	a.sup.UI = func(label string, elapsed time.Duration) bool {
 		st := a.settingsState()
 		mA := findModel(st, "a")
 		mB := findModel(st, "b")
@@ -404,8 +404,8 @@ func TestSettingsStateDoesNotReportTargetEngineAsActiveWhileSwitching(t *testing
 	}
 
 	checked := 0
-	origUI := a.sup.ui
-	a.sup.ui = func(label string, elapsed time.Duration) bool {
+	origUI := a.sup.UI
+	a.sup.UI = func(label string, elapsed time.Duration) bool {
 		page, _ := engineChecks(t, a)
 		if len(page) != 1 || page[0] != "cpu" {
 			t.Errorf("cpu must remain active while switching engine, got %v", page)
@@ -431,8 +431,8 @@ func TestSettingsStateDoesNotReportConfiguredGPUAsActiveWhileRetryingFromFallbac
 	t.Setenv("CT_TEST_FAKE_SERVER_DELAY", "200")
 	a := startOnFallback(t)
 	checked := 0
-	origUI := a.sup.ui
-	a.sup.ui = func(label string, elapsed time.Duration) bool {
+	origUI := a.sup.UI
+	a.sup.UI = func(label string, elapsed time.Duration) bool {
 		page, _ := engineChecks(t, a)
 		if len(page) != 1 || page[0] != "cpu" {
 			t.Errorf("cpu must remain active while retrying broken vulkan GPU, got %v", page)

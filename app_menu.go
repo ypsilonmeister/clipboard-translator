@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
@@ -242,7 +243,7 @@ func (a *app) switchBackend(name string) {
 	a.sup.Stop()
 	// Start the chosen build itself, without the CPU fallback of startServer:
 	// silently running on the CPU would misrepresent the active engine in Settings.
-	err = a.sup.start(paths.server, newConf.GPULayers, "switching engine")
+	err = a.sup.Start(paths.server, newConf.GPULayers, "switching engine")
 	if err == nil {
 		a.conf, a.paths = newConf, paths
 		a.activeBackend = name
@@ -252,7 +253,7 @@ func (a *app) switchBackend(name string) {
 		a.tray.Notify("Clipboard Translator", "Translation engine: "+backendLabel(name), false)
 		return
 	}
-	if errors.Is(err, errQuit) {
+	if errors.Is(err, llamaserver.ErrQuit) {
 		return // the main loop sees the quit request
 	}
 	log.Printf("engine %s failed: %v; going back", name, err)
@@ -261,7 +262,7 @@ func (a *app) switchBackend(name string) {
 		restore = a.startFallback
 	}
 	if err := restore(); err != nil {
-		if errors.Is(err, errQuit) {
+		if errors.Is(err, llamaserver.ErrQuit) {
 			return // the main loop sees the quit request
 		}
 		// Neither build runs, so nothing is monitoring a server. Say so and

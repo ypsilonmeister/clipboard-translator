@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"github.com/ypsilonmeister/clipboard-translator/internal/testsupport"
 )
@@ -39,7 +40,7 @@ func TestUnloadModelAndReloadTranslation(t *testing.T) {
 		if busy == "switch" {
 			a.serverWork = 1
 		}
-		a.sup.starting = busy == "startup"
+		a.sup.SetStarting(busy == "startup")
 		a.settingsServing = busy == "settings"
 		if unloadMenuEnabled(t, a) {
 			t.Fatalf("unload enabled during %s", busy)
@@ -49,7 +50,8 @@ func TestUnloadModelAndReloadTranslation(t *testing.T) {
 			t.Fatalf("unloaded during %s", busy)
 		}
 	}
-	a.translating, a.sup.starting, a.settingsServing, a.serverWork = false, false, false, 0
+	a.translating, a.settingsServing, a.serverWork = false, false, 0
+	a.sup.SetStarting(false)
 	notes := len(tray.notes)
 	a.handleCommand(cmdUnloadModel)
 	if a.sup.Running() || a.sup.Exited() != nil || !a.modelUnloaded || unloadMenuEnabled(t, a) {
@@ -114,14 +116,15 @@ func TestIdleUnloadTimer(t *testing.T) {
 		if busy == "switch" {
 			a.serverWork = 1
 		}
-		a.sup.starting = busy == "startup"
+		a.sup.SetStarting(busy == "startup")
 		a.settingsServing = busy == "settings"
 		a.tickIdleUnload()
 		if !a.sup.Running() {
 			t.Fatalf("idle unload during %s", busy)
 		}
 	}
-	a.translating, a.sup.starting, a.settingsServing, a.serverWork = false, false, false, 0
+	a.translating, a.settingsServing, a.serverWork = false, false, 0
+	a.sup.SetStarting(false)
 	// A completion starts a fresh idle interval, even if it failed.
 	a.handleResult(result{generation: a.generation, err: errors.New("test failure")})
 	a.tickIdleUnload()
@@ -344,8 +347,8 @@ func TestReloadSupersededBySecondHotkeyDuringLoad(t *testing.T) {
 	var hotkeyFired bool
 	a.hotkey = pressable{spec: "Ctrl+Alt+E", fired: &hotkeyFired}
 
-	origUI := a.sup.ui
-	a.sup.ui = func(label string, elapsed time.Duration) bool {
+	origUI := a.sup.UI
+	a.sup.UI = func(label string, elapsed time.Duration) bool {
 		if currentText == "こんにちは" {
 			currentText = "さようなら"
 			hotkeyFired = true
@@ -442,8 +445,8 @@ func TestReloadCancelDuringLoad(t *testing.T) {
 	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
 
 	cancelled := false
-	origUI := a.sup.ui
-	a.sup.ui = func(label string, elapsed time.Duration) bool {
+	origUI := a.sup.UI
+	a.sup.UI = func(label string, elapsed time.Duration) bool {
 		if !cancelled {
 			cancelled = true
 			tray.cmds = append(tray.cmds, cmdCancel)
@@ -486,8 +489,8 @@ func TestReloadQuitDuringLoad(t *testing.T) {
 	cb.text = "こんにちは"
 	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return cb.text, true, nil }
 
-	origUI := a.sup.ui
-	a.sup.ui = func(label string, elapsed time.Duration) bool {
+	origUI := a.sup.UI
+	a.sup.UI = func(label string, elapsed time.Duration) bool {
 		tray.quit = true
 		return origUI(label, elapsed)
 	}
@@ -530,8 +533,8 @@ func TestSettingsEngineSwitchDuringDelayedStart(t *testing.T) {
 			req := newSettingsRequest(nil, time.Minute)
 			req.action, req.arg = "engine", "cuda"
 			queued := false
-			origUI := a.sup.ui
-			a.sup.ui = func(label string, elapsed time.Duration) bool {
+			origUI := a.sup.UI
+			a.sup.UI = func(label string, elapsed time.Duration) bool {
 				if !queued {
 					queued = true
 					a.settingsReqs <- req
@@ -554,18 +557,18 @@ func TestSettingsEngineSwitchDuringDelayedStart(t *testing.T) {
 			if rep := <-req.reply; !errors.Is(rep.err, errSettingsBusy) {
 				t.Fatalf("busy switch: %+v", rep)
 			}
-			if a.serverWork != 0 || a.sup.starting {
+			if a.serverWork != 0 || a.sup.Starting() {
 				t.Fatal("startup state not cleared")
 			}
 			// Retry from Settings after loading ends; this also cancels an in-flight translation.
-			a.sup.ui = origUI
+			a.sup.UI = origUI
 			retry := newSettingsRequest(nil, time.Minute)
 			retry.action, retry.arg = "engine", "cuda"
 			a.handleSettingsRequest(retry)
 			if rep := <-retry.reply; rep.err != nil {
 				t.Fatal(rep.err)
 			}
-			if a.activeBackend != "cuda" || a.translating || !a.canUnloadModel() || a.serverWork != 0 || a.sup.starting {
+			if a.activeBackend != "cuda" || a.translating || !a.canUnloadModel() || a.serverWork != 0 || a.sup.Starting() {
 				t.Fatal("engine switch did not finish cleanly")
 			}
 			if *pastes != 0 {
@@ -685,13 +688,13 @@ func TestServerWorkResetAfterFailedStartFallbackAndErrQuit(t *testing.T) {
 	// 3. errQuit
 	t.Setenv("CT_TEST_FAKE_SERVER_DELAY", "200")
 	a3, tray3, _ := newTestApp(t)
-	origUI := a3.sup.ui
-	a3.sup.ui = func(label string, elapsed time.Duration) bool {
+	origUI := a3.sup.UI
+	a3.sup.UI = func(label string, elapsed time.Duration) bool {
 		tray3.quit = true
 		return origUI(label, elapsed)
 	}
 	err := a3.startServer()
-	if !errors.Is(err, errQuit) {
+	if !errors.Is(err, llamaserver.ErrQuit) {
 		t.Fatalf("expected errQuit, got %v", err)
 	}
 	if a3.serverWork != 0 {
