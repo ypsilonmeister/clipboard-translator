@@ -569,7 +569,9 @@ func (a *app) serve(cb platform.Clipboard) {
 				return
 			}
 		case <-ticker.C:
-			platform.PumpMessages()
+			if a.needsLeadingPump() {
+				platform.PumpMessages()
+			}
 			a.tickDesktop()
 			a.tickClipboard()
 			if a.quitRequested() {
@@ -635,6 +637,27 @@ func (a *app) serve(cb platform.Clipboard) {
 			a.handleResult(res)
 		}
 	}
+}
+
+// needsLeadingPump reports whether the tick must service the UI before it asks
+// the hotkeys. A working hotkey pumps messages in its own Pressed, and a pump
+// before it would swallow the press: PumpMessages drops WM_HOTKEY on Windows and
+// returns the press on macOS, where Pressed returns that same value. So pump here
+// only when no hotkey will (none registered), or on Wayland, where the portal
+// session is serviced by this call.
+func (a *app) needsLeadingPump() bool {
+	if a.desktopStatus().Wayland {
+		return true
+	}
+	if !a.hasNoHotkey() {
+		return false
+	}
+	for _, e := range a.extras {
+		if e.hk != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // pollHotkeys asks every registered hotkey whether it fired and returns the
