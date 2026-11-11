@@ -33,11 +33,14 @@
   <section class="card" aria-labelledby="hotkeys-title">
     <h2 id="hotkeys-title">Hotkeys</h2>
     <p class="hint">Select text in any program and press a hotkey. The translation replaces what is on the clipboard. Each hotkey can translate in its own way.</p>
-    <div id="profiles"></div>
-    <div class="add-row">
-      <button id="add" type="button" class="secondary">+ Add hotkey</button>
-      <p id="limit" class="hint" hidden></p>
-    </div>
+    <p id="hotkeys-unavailable" class="hint" hidden></p>
+    <fieldset id="hotkeys-controls" aria-labelledby="hotkeys-title">
+      <div id="profiles"></div>
+      <div class="add-row">
+        <button id="add" type="button" class="secondary">+ Add hotkey</button>
+        <p id="limit" class="hint" hidden></p>
+      </div>
+    </fieldset>
   </section>
 
   <section class="card" aria-labelledby="model-title">

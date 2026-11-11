@@ -84,6 +84,7 @@ type LanguageOption struct {
 
 // State is what the page shows.
 type State struct {
+	HotkeysUnavailable   string   `json:"hotkeys_unavailable,omitempty"`
 	AutoPasteUnavailable string   `json:"auto_paste_unavailable,omitempty"`
 	TranslateAPIEnabled  bool     `json:"translate_api_enabled"`
 	TranslateAPIToken    string   `json:"translate_api_token"`

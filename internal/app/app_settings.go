@@ -149,6 +149,7 @@ func (a *app) settingsState() settings.State {
 	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste
 	if a.chromeOSProfile() {
+		st.HotkeysUnavailable = "Not available on ChromeOS: hotkeys cannot be triggered from Chrome or other host apps."
 		st.AutoPasteUnavailable = "Not available on ChromeOS: the app cannot paste into other apps"
 	}
 	desktop := a.desktopStatus()

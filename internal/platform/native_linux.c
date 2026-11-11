@@ -7,15 +7,15 @@
 static GtkStatusIcon *status_icon;
 static GtkWidget *current_menu, *control_window, *status_label;
 static char *last_status;
-static int menu_requested, force_control;
+static int menu_requested, menu_from_control, force_control;
 static GQueue commands = G_QUEUE_INIT;
 
 int ct_gtk_init(void) { return gtk_init_check(NULL, NULL); }
 void ct_free(void *p) { g_free(p); }
 
-static void request_menu(GtkStatusIcon *icon, guint button, guint time, gpointer data) { menu_requested = 1; }
-static void activate_icon(GtkStatusIcon *icon, gpointer data) { menu_requested = 1; }
-static void control_clicked(GtkButton *button, gpointer data) { menu_requested = 1; }
+static void request_menu(GtkStatusIcon *icon, guint button, guint time, gpointer data) { menu_from_control = 0; menu_requested = 1; }
+static void activate_icon(GtkStatusIcon *icon, gpointer data) { menu_from_control = 0; menu_requested = 1; }
+static void control_clicked(GtkButton *button, gpointer data) { menu_from_control = 1; menu_requested = 1; }
 static gboolean close_control(GtkWidget *w, GdkEvent *event, gpointer data) {
     g_queue_push_tail(&commands, GINT_TO_POINTER(2));
     return TRUE;
@@ -55,7 +55,7 @@ void ct_tray_close(void) {
     if (control_window) { gtk_widget_destroy(control_window); control_window = status_label = NULL; }
     if (status_icon) { g_object_unref(status_icon); status_icon = NULL; }
     g_queue_clear(&commands);
-    menu_requested = force_control = 0;
+    menu_requested = menu_from_control = force_control = 0;
     g_clear_pointer(&last_status,g_free);
     ct_manual_cancel_read();
 }
@@ -82,7 +82,12 @@ void ct_menu_popup(void *menu) {
     if (current_menu) gtk_widget_destroy(current_menu);
     current_menu = GTK_WIDGET(menu);
     gtk_widget_show_all(current_menu);
-    gtk_menu_popup(GTK_MENU(current_menu), NULL, NULL, gtk_status_icon_position_menu, status_icon, 0, gtk_get_current_event_time());
+    // The fallback window has no status-icon geometry (notably on ChromeOS).
+    if (menu_from_control && control_window)
+        gtk_menu_popup_at_widget(GTK_MENU(current_menu), control_window, GDK_GRAVITY_SOUTH_WEST, GDK_GRAVITY_NORTH_WEST, NULL);
+    else
+        gtk_menu_popup(GTK_MENU(current_menu), NULL, NULL, gtk_status_icon_position_menu, status_icon, 0, gtk_get_current_event_time());
+    menu_from_control = 0;
 }
 int ct_command(void) { return GPOINTER_TO_INT(g_queue_pop_head(&commands)); }
 int ct_dialog(const char *text, int question, int error) {

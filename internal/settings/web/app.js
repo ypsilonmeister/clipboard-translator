@@ -637,6 +637,13 @@
       if (state.wayland) desktop.textContent += ' Retry Wayland permissions is available in the control window when access needs attention.';
       desktop.hidden = !state.desktop_status;
     }
+    const hotkeys = $('hotkeys-controls');
+    if (hotkeys) hotkeys.disabled = !!state.hotkeys_unavailable;
+    const hotkeysNote = $('hotkeys-unavailable');
+    if (hotkeysNote) {
+      hotkeysNote.textContent = state.hotkeys_unavailable || '';
+      hotkeysNote.hidden = !state.hotkeys_unavailable;
+    }
     const autoPaste = $('auto-paste');
     if (autoPaste) autoPaste.disabled = !!state.wayland || !!state.auto_paste_unavailable;
     const pasteNote = $('auto-paste-unavailable');
