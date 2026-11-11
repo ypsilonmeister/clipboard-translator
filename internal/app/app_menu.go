@@ -66,7 +66,7 @@ func (a *app) buildMenu() []platform.MenuItem {
 	if runtime.GOOS == "linux" {
 		items = append(items, platform.MenuItem{ID: cmdTranslateClipboard, Label: "Translate clipboard"})
 	}
-	if a.chromeOSManualMode() {
+	if a.chromeOSProfile() {
 		items = append(items,
 			platform.MenuItem{ID: cmdTranslateAPIToggle, Label: "Chrome extension endpoint", Checked: a.conf.TranslateAPIEnabled},
 			platform.MenuItem{ID: cmdCopyConnectionInfo, Label: "Copy connection info"})
@@ -143,13 +143,13 @@ func (a *app) buildMenu() []platform.MenuItem {
 // handleCommand runs one app-specific menu command. It runs on the UI thread.
 func (a *app) handleCommand(id int) {
 	switch {
-	case id == cmdTranslateAPIToggle && a.chromeOSManualMode():
+	case id == cmdTranslateAPIToggle && a.chromeOSProfile():
 		req := settings.NewActionRequest("translate_api", strconv.FormatBool(!a.conf.TranslateAPIEnabled), time.Second)
 		a.handleSettingsRequest(req)
 		if rep := <-req.Reply; rep.Err != nil {
 			a.tray.Notify("Clipboard Translator", "Could not change translation endpoint: "+rep.Err.Error(), true)
 		}
-	case id == cmdCopyConnectionInfo && a.chromeOSManualMode():
+	case id == cmdCopyConnectionInfo && a.chromeOSProfile():
 		a.copyConnectionInfo()
 	case id == cmdTranslateClipboard:
 		a.startClipboardTranslation()

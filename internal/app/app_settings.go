@@ -148,7 +148,7 @@ func (a *app) settingsState() settings.State {
 	st.Guide = a.quickstartGuide()
 	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste
-	if a.chromeOSManualMode() {
+	if a.chromeOSProfile() {
 		st.AutoPasteUnavailable = "Not available on ChromeOS: the app cannot paste into other apps"
 	}
 	desktop := a.desktopStatus()

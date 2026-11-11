@@ -22,11 +22,18 @@ import (
 
 var activePortalDesktop *portalDesktop
 var linuxWayland bool
+var linuxPortalWorkflowUnavailable bool
+
+// Replaceable for capability tests; probe before the UI loop starts.
+var probePortalWorkflow = nativePortalWorkflowAvailable
+
+func detectPortalWorkflow(probe func() bool) bool { return !probe() }
 
 func initializeWaylandGTK() bool { return C.ct_wayland_gtk_init() != 0 }
 
 // Called after acquiring the single-instance lock; all portal ownership is UI-thread local.
 func InitializeDesktop(dir string) error {
+	linuxPortalWorkflowUnavailable = detectPortalWorkflow(probePortalWorkflow)
 	if !linuxWayland {
 		return nil
 	}
@@ -53,7 +60,7 @@ func initializePortalDesktop(dir, id string) error {
 	if err != nil {
 		return err
 	}
-	d := &portalDesktop{now: time.Now, tokens: tokens, appID: id, open: func() (portalDesktopWire, error) { return openGIOPortal() }}
+	d := &portalDesktop{portalWorkflowUnavailable: linuxPortalWorkflowUnavailable, now: time.Now, tokens: tokens, appID: id, open: func() (portalDesktopWire, error) { return openGIOPortal() }}
 	d.manualClipboard = &manualGTKClipboard{}
 	d.showManual = func() { C.ct_show_control() }
 	d.connect()

@@ -17,7 +17,7 @@ import (
 
 // guideSteps uses the manual ChromeOS flow or the active desktop hotkey.
 func (a *app) guideSteps() []string {
-	if a.chromeOSManualMode() {
+	if a.chromeOSProfile() {
 		return []string{
 			"ChromeOS Settings → Developers → Linux → Port forwarding: add TCP 18121.",
 			"Install/load the Chrome extension.",
@@ -59,7 +59,7 @@ func (a *app) quickstartGuide() settings.QuickstartGuide {
 		g.Intro = "The hotkey " + a.conf.Hotkey + " is not active (another program may be using it), so translating by hotkey does not work yet. Choose another hotkey under Hotkeys below and click Save."
 		return g
 	}
-	if a.chromeOSManualMode() {
+	if a.chromeOSProfile() {
 		g.Active = true
 		g.Intro = "Translate your first text in four steps:"
 		return g

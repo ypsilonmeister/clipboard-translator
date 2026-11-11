@@ -110,7 +110,7 @@ func (a *app) startClipboardTranslation() {
 	a.translateCaptured(p, 0, source, false, err)
 }
 
-func (a *app) chromeOSManualMode() bool {
+func (a *app) chromeOSProfile() bool {
 	s := a.desktopStatus()
-	return runtime.GOOS == "linux" && s.Wayland && s.Manual
+	return runtime.GOOS == "linux" && s.PortalWorkflowUnavailable
 }

@@ -17,7 +17,7 @@ func TestChromeOSManualMenu(t *testing.T) {
 	}
 	a := apiUnitApp(t)
 	base := a.cb.(*testClipboard)
-	cb := &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true}}
+	cb := &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true, PortalWorkflowUnavailable: true}}
 	a.cb = cb
 	for _, enabled := range []bool{false, true} {
 		a.conf.TranslateAPIEnabled = enabled
@@ -65,12 +65,13 @@ func TestChromeOSManualMenu(t *testing.T) {
 		t.Fatal("token changed")
 	}
 	cb.state.Manual = false
+	cb.state.PortalWorkflowUnavailable = false
 	if a.settingsState().AutoPasteUnavailable != "" {
-		t.Fatal("note escaped manual profile")
+		t.Fatal("note escaped unavailable-portal profile")
 	}
 	for _, item := range a.buildMenu() {
 		if item.ID == cmdTranslateAPIToggle || item.ID == cmdCopyConnectionInfo {
-			t.Fatal("endpoint menu escaped manual profile")
+			t.Fatal("endpoint menu escaped unavailable-portal profile")
 		}
 	}
 }
@@ -81,7 +82,7 @@ func TestChromeOSMenuEndpointToggle(t *testing.T) {
 	}
 	a := apiUnitApp(t)
 	base := a.cb.(*testClipboard)
-	a.cb = &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true}}
+	a.cb = &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true, PortalWorkflowUnavailable: true}}
 	// A free endpoint port is needed for this listener lifecycle check.
 	ln, err := net.Listen("tcp4", translateAPIAddress)
 	if err != nil {
@@ -115,7 +116,7 @@ func TestChromeOSMenuEndpointSaveFailure(t *testing.T) {
 		t.Skip("Linux manual profile")
 	}
 	a := apiUnitApp(t)
-	a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{Wayland: true, Manual: true}}
+	a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{Wayland: true, Manual: true, PortalWorkflowUnavailable: true}}
 	// A file cannot serve as the config directory, so token persistence fails before listen.
 	a.dir = filepath.Join(a.dir, "blocked")
 	if err := os.WriteFile(a.dir, []byte("x"), 0600); err != nil {
@@ -124,5 +125,43 @@ func TestChromeOSMenuEndpointSaveFailure(t *testing.T) {
 	a.handleCommand(cmdTranslateAPIToggle)
 	if a.conf.TranslateAPIEnabled || a.apiServer != nil || a.conf.TranslateAPIToken != "" {
 		t.Fatal("failed toggle changed endpoint state")
+	}
+}
+
+func TestChromeOSProfileCapability(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux capability profile")
+	}
+	for _, wayland := range []bool{false, true} {
+		for _, unavailable := range []bool{false, true} {
+			a := apiUnitApp(t)
+			a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{
+				Wayland: wayland, Manual: wayland && unavailable, PortalWorkflowUnavailable: unavailable,
+			}}
+			if got := a.chromeOSProfile(); got != unavailable {
+				t.Fatalf("wayland=%v unavailable=%v: profile=%v", wayland, unavailable, got)
+			}
+			found := false
+			for _, item := range a.buildMenu() {
+				if item.Label == "Chrome extension endpoint" {
+					found = true
+				}
+			}
+			if found != unavailable {
+				t.Fatalf("wayland=%v unavailable=%v: endpoint=%v", wayland, unavailable, found)
+			}
+			if got := a.settingsState().AutoPasteUnavailable; unavailable && got != "Not available on ChromeOS: the app cannot paste into other apps" {
+				t.Fatalf("missing profile settings note: %q", got)
+			}
+		}
+	}
+}
+
+func TestReadyMessageWithoutHotkey(t *testing.T) {
+	if got := readyMessage(""); got != "ready: copy text and choose Translate clipboard, then paste" {
+		t.Fatal(got)
+	}
+	if got := readyMessage("Ctrl+Alt+E"); got != "ready: select text and press Ctrl+Alt+E (or translate existing clipboard)" {
+		t.Fatal(got)
 	}
 }
