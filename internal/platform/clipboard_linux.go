@@ -63,12 +63,10 @@ func (c *linuxClipboard) ReplaceIfUnchanged(expected, translated string) (bool, 
 type manualGTKClipboard struct{}
 
 func (*manualGTKClipboard) Read() (string, error) {
-	p := C.ct_manual_read()
-	if p == nil {
-		return "", ErrClipboardPending
-	}
+	var complete C.int
+	p := C.ct_manual_read(&complete)
 	defer C.ct_free(unsafe.Pointer(p))
-	return C.GoString(p), nil
+	return manualClipboardReadResult(complete != 0, p != nil, C.GoString(p))
 }
 func (*manualGTKClipboard) Write(text string) error {
 	if strings.IndexByte(text, 0) >= 0 {

@@ -950,6 +950,12 @@
       } finally { e.target.disabled = false; }
     });
     $('translate-api-copy').addEventListener('click', async () => {
+      const r = await api('/api/translate-api/info', {});
+      if (!r.ok) {
+        $('translate-api-status').textContent = r.data.error || 'Could not get connection info.';
+        return;
+      }
+      if (r.data.state) renderTranslateAPI(r.data.state);
       try {
         await navigator.clipboard.writeText($('translate-api-token').value);
         $('translate-api-status').textContent = 'Token copied.';

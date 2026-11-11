@@ -182,9 +182,7 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 		if a.quitRequested() {
 			return true
 		}
-		if a.apiContext != nil && a.apiContext.Err() != nil {
-			return true
-		}
+		a.tickAPIContext()
 		a.serviceSettingsWhileBusy(label)
 		if sec := elapsed / time.Second; sec != lastSec {
 			lastSec = sec

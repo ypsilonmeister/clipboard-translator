@@ -2,7 +2,7 @@
 #define CLIPBOARD_TRANSLATOR_LINUX_H
 #include <stdint.h>
 int ct_gtk_init(void);
-char *ct_manual_read(void);
+char *ct_manual_read(int *complete);
 void ct_manual_cancel_read(void);
 void ct_manual_write(const char *text);
 void ct_show_control(void);
