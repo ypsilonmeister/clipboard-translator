@@ -235,3 +235,10 @@ func (d *portalDesktop) CancelPendingRead() {
 		c.CancelPendingRead()
 	}
 }
+
+// PresentControl runs on the UI thread before manual clipboard reads.
+func (d *portalDesktop) PresentControl() {
+	if d.manual && d.showManual != nil {
+		d.showManual()
+	}
+}

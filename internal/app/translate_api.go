@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -11,19 +12,29 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"runtime"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 )
 
-const translateAPIAddress = "0.0.0.0:18121"
+const translateAPIPort = "18121"
+
+var translateAPISupported = func() bool { return runtime.GOOS == "linux" }
+var errAPIInput = errors.New("untranslatable input")
+var errAPIRequest = errors.New("invalid request")
+
+func translateAPIURL() string {
+	return "http://" + net.JoinHostPort("localhost", translateAPIPort) + "/translate"
+}
+
 const translateTokenHeader = "X-Clipboard-Translator-Token"
 
-// The dedicated listener exposes no settings or engine administration routes.
-// IPv4 wildcard binding permits explicit Crostini port forwarding from ChromeOS.
-func (a *app) startTranslateAPI() error {
+// Tokens are created only for enable or connection-info requests.
+func (a *app) ensureTranslateAPIToken() error {
 	if a.conf.TranslateAPIToken == "" {
 		raw := make([]byte, 32)
 		if _, err := rand.Read(raw); err != nil {
@@ -35,23 +46,43 @@ func (a *app) startTranslateAPI() error {
 		}
 		a.conf.TranslateAPIToken = token
 	}
-	if !a.conf.TranslateAPIEnabled || a.apiServer != nil {
+	return nil
+}
+
+// The dedicated listener exposes no settings or engine administration routes.
+// IPv4 wildcard binding permits explicit Crostini port forwarding from ChromeOS.
+func (a *app) startTranslateAPI() error {
+	if !translateAPISupported() || !a.conf.TranslateAPIEnabled || a.apiServer != nil {
 		return nil
 	}
-	ln, err := net.Listen("tcp4", translateAPIAddress)
+	if err := a.ensureTranslateAPIToken(); err != nil {
+		return err
+	}
+	address := net.JoinHostPort("0.0.0.0", translateAPIPort)
+	ln, err := net.Listen("tcp4", address)
 	if err != nil {
 		return err
 	}
 	a.apiServer = &http.Server{Handler: translateAPIHandler(a.conf.TranslateAPIToken, a.askSettings), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 47 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
 	srv := a.apiServer
 	go func() { _ = srv.Serve(ln) }()
-	log.Printf("translation endpoint listening on %s (token required)", translateAPIAddress)
+	log.Printf("translation endpoint listening on %s (token required)", address)
 	return nil
 }
 func (a *app) stopTranslateAPI() {
-	if a.apiServer != nil {
-		_ = a.apiServer.Close()
+	if a.apiReply != nil {
+		a.abortTranslation()
+	}
+	if srv := a.apiServer; srv != nil {
 		a.apiServer = nil
+		// Shutdown must not block the UI loop while handlers finish their replies.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				_ = srv.Close()
+			}
+		}()
 	}
 }
 
@@ -97,11 +128,21 @@ func translateAPIHandler(token string, ask func(settings.Request) settings.Reply
 		}
 		req := settings.NewActionRequest("translate", "", 46*time.Minute)
 		req.Text, req.Profile = body.Text, body.Profile
+		ctx, cancel := context.WithDeadline(r.Context(), req.Deadline)
+		defer cancel()
+		req.Context = ctx
 		rep := ask(req)
 		if rep.Err != nil {
-			code := 422
-			if errors.Is(rep.Err, settings.ErrBusy) {
+			code := http.StatusBadGateway
+			switch {
+			case errors.Is(rep.Err, settings.ErrBusy):
 				code = 503
+			case errors.Is(rep.Err, context.DeadlineExceeded):
+				code = 504
+			case errors.Is(rep.Err, errAPIInput):
+				code = 422
+			case errors.Is(rep.Err, errAPIRequest):
+				code = 400
 			}
 			fail(code, rep.Err.Error())
 			return
@@ -126,6 +167,10 @@ func (a *app) configureTranslateAPI(req settings.Request) {
 	enabled := req.Arg == "true"
 	if req.Arg != "true" && req.Arg != "false" {
 		req.Reply <- settings.Reply{Err: errors.New("enabled must be true or false")}
+		return
+	}
+	if enabled && !translateAPISupported() {
+		req.Reply <- settings.Reply{Err: errors.New("Translation endpoint is available only on Linux")}
 		return
 	}
 	old := a.conf.TranslateAPIEnabled
@@ -173,17 +218,19 @@ func (a *app) handleAPITranslation(req settings.Request) {
 		}
 	}
 	if index < 0 {
-		req.Reply <- settings.Reply{Err: errors.New("Unknown profile; use its hotkey or zero-based index")}
+		req.Reply <- settings.Reply{Err: fmt.Errorf("%w: unknown profile; use its hotkey or zero-based index", errAPIRequest)}
 		return
 	}
 	p := a.conf.Profiles[index]
 	reason, _ := p.Check(req.Text, a.conf.MaxChars)
 	if reason != config.SkipNone {
-		req.Reply <- settings.Reply{Err: fmt.Errorf("Text cannot be translated: %s", reason)}
+		req.Reply <- settings.Reply{Err: fmt.Errorf("%w: %s", errAPIInput, config.SkipMessage(reason, utf8.RuneCountInString(req.Text), a.conf.MaxChars, p.Label()))}
 		return
 	}
 	a.abortTranslation()
 	a.apiReply = req.Reply
+	a.apiContext = req.Context
+	a.presentManualControl()
 	a.translateCaptured(p, 0, req.Text, false, nil)
 	// Reload failures or a canceled startup must not leave an HTTP caller waiting.
 	if !a.translating && a.apiReply != nil {
@@ -192,7 +239,19 @@ func (a *app) handleAPITranslation(req settings.Request) {
 }
 func (a *app) finishAPI(text string, err error) {
 	if a.apiReply != nil {
+		if err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("translation failed: %v", err)
+		}
 		a.apiReply <- settings.Reply{Translation: text, Err: err}
 		a.apiReply = nil
+		a.apiContext = nil
+	}
+}
+
+func (a *app) tickAPIContext() {
+	if a.apiContext != nil && a.apiContext.Err() != nil {
+		err := a.apiContext.Err()
+		a.finishAPI("", err)
+		a.abortTranslation()
 	}
 }

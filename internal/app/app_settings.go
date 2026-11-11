@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -71,7 +72,13 @@ func (a *app) closeSettings() {
 // askSettings runs on a server goroutine: it hands the request to the main loop
 // and waits for the answer, giving up at the request's deadline.
 func (a *app) askSettings(req settings.Request) settings.Reply {
+	var done <-chan struct{}
+	if req.Context != nil {
+		done = req.Context.Done()
+	}
 	select {
+	case <-done:
+		return settings.Reply{Err: req.Context.Err()}
 	case a.settingsReqs <- req:
 	default:
 		return settings.Reply{Err: settings.ErrBusy}
@@ -79,9 +86,14 @@ func (a *app) askSettings(req settings.Request) settings.Reply {
 	timer := time.NewTimer(time.Until(req.Deadline))
 	defer timer.Stop()
 	select {
+	case <-done:
+		return settings.Reply{Err: req.Context.Err()}
 	case rep := <-req.Reply:
 		return rep
 	case <-timer.C:
+		if req.Action == "translate" {
+			return settings.Reply{Err: context.DeadlineExceeded}
+		}
 		return settings.Reply{Err: settings.ErrBusy}
 	}
 }
@@ -89,6 +101,10 @@ func (a *app) askSettings(req settings.Request) settings.Reply {
 // handleSettingsRequest runs on the UI thread. A request whose deadline passed
 // while the loop was busy is dropped: the page was already told it failed.
 func (a *app) handleSettingsRequest(req settings.Request) {
+	if req.Context != nil && req.Context.Err() != nil {
+		req.Reply <- settings.Reply{Err: req.Context.Err()}
+		return
+	}
 	if time.Now().After(req.Deadline) {
 		req.Reply <- settings.Reply{Err: settings.ErrBusy}
 		return
@@ -114,7 +130,11 @@ func (a *app) handleSettingsRequest(req settings.Request) {
 		return
 	}
 	if req.Save == nil {
-		req.Reply <- settings.Reply{State: a.settingsState()}
+		var err error
+		if translateAPISupported() {
+			err = a.ensureTranslateAPIToken()
+		}
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: err}
 		return
 	}
 	a.settingsNotice = ""
@@ -142,9 +162,10 @@ func (a *app) settingsState() settings.State {
 			st.ActualHotkeys[i] = actual
 		}
 	}
-	st.TranslateAPIEnabled = a.conf.TranslateAPIEnabled
+	st.TranslateAPIAvailable = translateAPISupported()
+	st.TranslateAPIEnabled = translateAPISupported() && a.conf.TranslateAPIEnabled
 	st.TranslateAPIToken = a.conf.TranslateAPIToken
-	st.TranslateAPIURL = "http://localhost:18121/translate"
+	st.TranslateAPIURL = translateAPIURL()
 	st.Guide = a.quickstartGuide()
 	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste

@@ -1,16 +1,21 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 	"github.com/ypsilonmeister/clipboard-translator/internal/testsupport"
 )
@@ -89,7 +94,7 @@ func TestTranslateAPIWithFakeEngine(t *testing.T) {
 		text, profile string
 		status        int
 	}{
-		{"Hello", "", 200}, {"こんにちは", "0", 200}, {"Hello", a.conf.Profiles[0].Hotkey, 200}, {"Hello", "missing", 422}, {"", "", 422},
+		{"Hello", "", 200}, {"こんにちは", "0", 200}, {"Hello", a.conf.Profiles[0].Hotkey, 200}, {"Hello", "missing", 400}, {"", "", 422},
 	} {
 		b, _ := json.Marshal(map[string]string{"text": tc.text, "profile": tc.profile})
 		req := httptest.NewRequest("POST", "/translate", strings.NewReader(string(b)))
@@ -243,31 +248,243 @@ func TestManualClipboardInMemory(t *testing.T) {
 		t.Fatalf("clipboard=%q", cb.text)
 	}
 }
-func TestTranslateAPIDisabledTokenPersists(t *testing.T) {
+func TestTranslateAPILazyToken(t *testing.T) {
 	a := apiUnitApp(t)
+	// A non-directory config path fails writes even when tests run as root.
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, []byte("read only config"), 0400); err != nil {
+		t.Fatal(err)
+	}
+	a.dir = file
 	if err := a.startTranslateAPI(); err != nil {
 		t.Fatal(err)
 	}
-	if a.apiServer != nil {
-		t.Fatal("disabled endpoint started listening")
+	if a.conf.TranslateAPIToken != "" || a.apiServer != nil {
+		t.Fatal("disabled startup changed token or listener")
+	}
+	a.conf.TranslateAPIEnabled = true
+	old := translateAPISupported
+	translateAPISupported = func() bool { return true }
+	t.Cleanup(func() { translateAPISupported = old })
+	a.conf.TranslateAPIEnabled = false
+	req := settings.NewActionRequest("translate_api", "true", time.Second)
+	a.configureTranslateAPI(req)
+	if rep := <-req.Reply; rep.Err == nil || a.conf.TranslateAPIEnabled || a.apiServer != nil {
+		t.Fatal("failed persistence enabled endpoint")
+	}
+	a.dir = t.TempDir()
+	info := settings.NewRequest(nil, time.Second)
+	a.handleSettingsRequest(info)
+	if rep := <-info.Reply; rep.Err != nil {
+		t.Fatal(rep.Err)
 	}
 	token := a.conf.TranslateAPIToken
-	if len(token) != 64 {
-		t.Fatalf("token length=%d", len(token))
-	}
 	conf, err := config.Load(a.dir)
-	if err != nil {
+	if err != nil || len(token) != 64 || conf.TranslateAPIToken != token {
+		t.Fatalf("token persistence: %v", err)
+	}
+	if err := a.startTranslateAPI(); err != nil {
 		t.Fatal(err)
 	}
-	if conf.TranslateAPIToken != token || conf.TranslateAPIEnabled {
-		t.Fatal("token not persisted with endpoint off")
+	if a.conf.TranslateAPIToken != token || a.apiServer != nil {
+		t.Fatal("restart changed token or listener")
 	}
-	b := newApp(a.dir, conf, config.Paths{}, &fakeTray{}, io.Discard)
-	t.Cleanup(b.dl.Close)
-	if err := b.startTranslateAPI(); err != nil {
+}
+
+func TestTranslateAPINonLinux(t *testing.T) {
+	old := translateAPISupported
+	translateAPISupported = func() bool { return false }
+	t.Cleanup(func() { translateAPISupported = old })
+	a := apiUnitApp(t)
+	a.conf.TranslateAPIEnabled = true
+	if err := a.startTranslateAPI(); err != nil {
 		t.Fatal(err)
 	}
-	if b.conf.TranslateAPIToken != token || b.apiServer != nil {
-		t.Fatal("restart changed token or opened listener")
+	if a.apiServer != nil || a.conf.TranslateAPIToken != "" {
+		t.Fatal("unsupported startup opened endpoint or generated token")
+	}
+	req := settings.NewActionRequest("translate_api", "true", time.Second)
+	a.configureTranslateAPI(req)
+	if rep := <-req.Reply; rep.Err == nil {
+		t.Fatal("unsupported enable accepted")
+	}
+	if st := a.settingsState(); st.TranslateAPIAvailable || st.TranslateAPIEnabled {
+		t.Fatal("settings offered unsupported endpoint")
+	}
+}
+
+func TestTranslateAPIStatusMapping(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		code int
+	}{
+		{errAPIInput, 422}, {errAPIRequest, 400}, {settings.ErrBusy, 503},
+		{errors.New("engine crashed"), 502}, {fmt.Errorf("engine: %w", context.DeadlineExceeded), 504},
+	} {
+		h := translateAPIHandler("secret", func(settings.Request) settings.Reply { return settings.Reply{Err: tc.err} })
+		req := httptest.NewRequest("POST", "/translate", strings.NewReader(`{"text":"Hello"}`))
+		req.Header.Set(translateTokenHeader, "secret")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != tc.code {
+			t.Fatalf("%v: status %d", tc.err, w.Code)
+		}
+	}
+}
+
+func TestTranslateAPIDisableAborts(t *testing.T) {
+	a := apiUnitApp(t)
+	a.conf.TranslateAPIEnabled = true
+	a.translating = true
+	shutdown := make(chan struct{})
+	a.apiServer = &http.Server{}
+	a.apiServer.RegisterOnShutdown(func() { close(shutdown) })
+	canceled := false
+	a.cancelCurrent = func() { canceled = true }
+	a.apiReply = make(chan settings.Reply, 1)
+	reply := a.apiReply
+	req := settings.NewActionRequest("translate_api", "false", time.Second)
+	a.configureTranslateAPI(req)
+	if rep := <-req.Reply; rep.Err != nil {
+		t.Fatal(rep.Err)
+	}
+	if rep := <-reply; rep.Err == nil || !canceled || a.translating || a.apiReply != nil {
+		t.Fatal("disable failed to abort")
+	}
+	select {
+	case <-shutdown:
+	case <-time.After(time.Second):
+		t.Fatal("server did not shut down gracefully")
+	}
+}
+
+type apiContextKey struct{}
+
+func TestTranslateAPIDisconnect(t *testing.T) {
+	a := apiUnitApp(t)
+	a.conf.TranslateAPIEnabled = true
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), apiContextKey{}, "caller"))
+	h := translateAPIHandler("secret", func(req settings.Request) settings.Reply {
+		if req.Context == nil || req.Context.Value(apiContextKey{}) != "caller" {
+			t.Fatal("HTTP context lost")
+		}
+		a.translating = true
+		a.apiReply = req.Reply
+		a.apiContext = req.Context
+		canceled := false
+		a.cancelCurrent = func() { canceled = true }
+		cancel()
+		a.tickAPIContext()
+		if a.translating || a.apiReply != nil || !canceled {
+			t.Fatal("disconnect retained busy state")
+		}
+		return <-req.Reply
+	})
+	req := httptest.NewRequest("POST", "/translate", strings.NewReader(`{"text":"Hello"}`)).WithContext(ctx)
+	req.Header.Set(translateTokenHeader, "secret")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestTranslateAPISkipLength(t *testing.T) {
+	a := apiUnitApp(t)
+	a.conf.TranslateAPIEnabled = true
+	a.conf.MaxChars = 3
+	req := settings.NewActionRequest("translate", "", time.Second)
+	req.Text = "Hello"
+	a.handleAPITranslation(req)
+	rep := <-req.Reply
+	if !errors.Is(rep.Err, errAPIInput) || !strings.Contains(rep.Err.Error(), "5 characters") || !strings.Contains(rep.Err.Error(), "3-character limit") {
+		t.Fatalf("reply=%+v", rep)
+	}
+}
+
+// The read stays pending until a desktop owner focuses the control window.
+type manualFocusClipboard struct {
+	*asyncDesktopClipboard
+	presented int
+}
+
+func (c *manualFocusClipboard) PresentControl() { c.presented++ }
+
+func TestManualClipboardFocusAndTimeout(t *testing.T) {
+	a := apiUnitApp(t)
+	c := &manualFocusClipboard{asyncDesktopClipboard: &asyncDesktopClipboard{testClipboard: &testClipboard{}, readPending: true, state: platform.DesktopStatus{Wayland: true, Manual: true}}}
+	a.cb = c
+	a.handleCommand(cmdTranslateClipboard)
+	if c.presented != 1 || a.pendingRead == nil {
+		t.Fatal("manual read did not present control window")
+	}
+	a.pendingRead.deadline = time.Time{}
+	a.tickClipboard()
+	tray := a.tray.(*fakeTray)
+	if len(tray.notes) == 0 || !strings.Contains(tray.notes[len(tray.notes)-1], "focus the app control window") {
+		t.Fatalf("notifications=%+v", tray.notes)
+	}
+}
+
+func TestTranslateAPIRequestContextCancelsEngine(t *testing.T) {
+	a := apiUnitApp(t)
+	a.conf.TranslateAPIEnabled = true
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	old := http.DefaultTransport
+	http.DefaultTransport = apiCancelTransport{started: started, stopped: stopped}
+	t.Cleanup(func() { http.DefaultTransport = old })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := settings.NewActionRequest("translate", "", time.Second)
+	req.Text, req.Context = "Hello", ctx
+	a.handleSettingsRequest(req)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("engine did not start")
+	}
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("engine did not receive cancellation")
+	}
+	a.tickAPIContext()
+	if a.busy() {
+		t.Fatal("disconnected request left app busy")
+	}
+	if rep := <-req.Reply; !errors.Is(rep.Err, context.Canceled) {
+		t.Fatalf("reply=%+v", rep)
+	}
+	select {
+	case res := <-a.results:
+		a.handleResult(res)
+	case <-time.After(time.Second):
+		t.Fatal("engine did not return")
+	}
+}
+
+type apiCancelTransport struct{ started, stopped chan struct{} }
+
+func (f apiCancelTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	close(f.started)
+	<-req.Context().Done()
+	close(f.stopped)
+	return nil, req.Context().Err()
+}
+
+func TestTranslateAPIDisableDuringReload(t *testing.T) {
+	a := apiUnitApp(t)
+	a.conf.TranslateAPIEnabled = true
+	a.translating = true
+	canceled := false
+	a.cancelCurrent = func() { canceled = true }
+	a.apiReply = make(chan settings.Reply, 1)
+	reply := a.apiReply
+	req := settings.NewActionRequest("translate_api", "false", time.Second)
+	a.settingsReqs <- req
+	a.serviceSettingsWhileBusy("loading model")
+	if rep := <-req.Reply; rep.Err != nil {
+		t.Fatal(rep.Err)
+	}
+	if rep := <-reply; !errors.Is(rep.Err, context.Canceled) || !canceled || a.translating || a.conf.TranslateAPIEnabled {
+		t.Fatal("disable during reload did not abort")
 	}
 }
