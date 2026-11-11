@@ -16,6 +16,8 @@ import (
 )
 
 type Config struct {
+	TranslateAPIEnabled   bool   `json:"translate_api_enabled"`
+	TranslateAPIToken     string `json:"translate_api_token"`
 	Hotkey                string `json:"hotkey"`
 	Port                  int    `json:"port"`
 	PollMS                int    `json:"poll_ms"`

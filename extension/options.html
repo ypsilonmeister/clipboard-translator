@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Clipboard Translator options</title>
+<link rel="stylesheet" href="options.css"></head><body>
+<h1>Clipboard Translator</h1>
+<p>Enable the translation endpoint in the Linux app's Settings, forward TCP port 18121 in ChromeOS, then copy its token here. Settings stay in this browser, without sync.</p>
+<form id="options">
+<label for="endpoint">Endpoint URL</label><input id="endpoint" type="url" required value="http://localhost:18121/translate">
+<label for="token">Token</label><input id="token" type="password" required autocomplete="off" spellcheck="false">
+<button type="submit">Save</button><button id="test" type="button">Test connection</button>
+</form><p id="status" role="status"></p>
+<p>Test connection translates “Hello” locally without changing the clipboard. Selected text is sent only when you choose the context menu action. ChromeOS host applications cannot trigger the Linux app's hotkey.</p>
+<script type="module" src="options.js"></script></body></html>

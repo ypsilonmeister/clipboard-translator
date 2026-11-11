@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -56,7 +57,10 @@ type app struct {
 	extras      []extraHotkey
 	hotkeyLimit int // how many hotkeys this OS build can register, hotkeyLimit() in production
 
-	settings       *settings.Server          // the settings page, while it is open
+	settings       *settings.Server // the settings page, while it is open
+	apiContext     context.Context
+	apiReply       chan settings.Reply
+	apiServer      *http.Server
 	settingsReqs   chan settings.Request     // page -> main loop
 	settingsNotice string                    // why the last switch started from the page did not work
 	settingsIdle   time.Duration             // idle timeout for the settings server; 0 uses settingsIdle
@@ -178,6 +182,7 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 		if a.quitRequested() {
 			return true
 		}
+		a.tickAPIContext()
 		a.serviceSettingsWhileBusy(label)
 		if sec := elapsed / time.Second; sec != lastSec {
 			lastSec = sec
@@ -386,6 +391,11 @@ func (a *app) run() {
 	a.cb = cb
 	a.registerStartupHotkey()
 	defer a.closeSettings()
+	if err := a.startTranslateAPI(); err != nil {
+		log.Printf("translation endpoint: %v", err)
+		a.tray.Notify("Clipboard Translator", "Could not start translation endpoint: "+err.Error(), true)
+	}
+	defer a.stopTranslateAPI()
 	defer a.dl.Close() // closes the partial file of a running download before the process ends
 	defer func() {     // a.hotkey changes when the user picks another one
 		_ = a.hotkey.Close()
@@ -573,6 +583,7 @@ func (a *app) serve(cb platform.Clipboard) {
 				platform.PumpMessages()
 			}
 			a.tickDesktop()
+			a.tickAPIContext()
 			a.tickClipboard()
 			if a.quitRequested() {
 				log.Print("stop requested")
@@ -734,6 +745,10 @@ func (a *app) shouldNotifySkip(reason config.SkipReason) bool {
 // abortTranslation cancels the request in flight and makes sure its result,
 // should it still arrive, is ignored.
 func (a *app) abortTranslation() {
+	a.finishAPI("", context.Canceled)
+	if c, ok := a.cb.(interface{ CancelPendingRead() }); ok {
+		c.CancelPendingRead()
+	}
 	a.cancelTranslation()
 	a.generation++
 	a.pendingRead = nil
@@ -847,7 +862,11 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		a.tray.SetStatus(a.readyTip)
 		if a.desktopStatus().Wayland || errors.Is(err, platform.ErrCaptureModifiersHeld) || errors.Is(err, platform.ErrCaptureFocusChanged) {
 			// Say so: translating the old clipboard text instead would be a silent wrong answer.
-			a.tray.Notify("Clipboard Translator", "Nothing was translated: "+err.Error()+". Release the keys and press the hotkey again.", true)
+			msg := "Nothing was translated: " + err.Error() + "."
+			if !a.desktopStatus().Manual { // manual mode has no hotkey to press again
+				msg += " Release the keys and press the hotkey again."
+			}
+			a.tray.Notify("Clipboard Translator", msg, true)
 		}
 		return
 	}
@@ -878,6 +897,10 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 			if !errors.Is(err, llamaserver.ErrQuit) {
 				a.failed(err)
 			}
+			if a.apiContext != nil && a.apiContext.Err() != nil {
+				err = a.apiContext.Err()
+			}
+			a.finishAPI("", err)
 			return
 		}
 		for {
@@ -902,7 +925,11 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 			return
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.conf.TranslationTimeoutSec)*time.Second)
+	parent := context.Background()
+	if a.apiContext != nil {
+		parent = a.apiContext
+	}
+	ctx, cancel := context.WithTimeout(parent, time.Duration(a.conf.TranslationTimeoutSec)*time.Second)
 	a.cancelCurrent = cancel
 	a.cancelTransientStatus()
 	a.translating, a.translateStart, a.lastTranslSec = true, a.timeNow(), 0
@@ -943,6 +970,15 @@ func (a *app) handleResult(res result) {
 	a.chunkIndex = 0
 	a.chunkTotal = 0
 	a.resetIdleTimer()
+	if a.apiReply != nil {
+		text := res.translated
+		if res.output == config.OutputBilingual && res.err == nil {
+			text = formatBilingual(res.original, text)
+		}
+		a.finishAPI(text, res.err)
+		a.refreshStatus()
+		return
+	}
 	if res.err != nil {
 		if !errors.Is(res.err, context.Canceled) {
 			log.Printf("translation failed: %v", res.err)

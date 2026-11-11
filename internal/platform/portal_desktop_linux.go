@@ -4,6 +4,7 @@ package platform
 
 /*
 #include <gtk/gtk.h>
+#include "native_linux.h"
 #include <gdk/gdkwayland.h>
 static int ct_wayland_gtk_init(void) {
     gdk_set_allowed_backends("wayland");
@@ -53,6 +54,8 @@ func initializePortalDesktop(dir, id string) error {
 		return err
 	}
 	d := &portalDesktop{now: time.Now, tokens: tokens, appID: id, open: func() (portalDesktopWire, error) { return openGIOPortal() }}
+	d.manualClipboard = &manualGTKClipboard{}
+	d.showManual = func() { C.ct_show_control() }
 	d.connect()
 	activePortalDesktop = d
 	return nil // connection errors are recoverable from the control window

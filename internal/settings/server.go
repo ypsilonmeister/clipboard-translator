@@ -84,9 +84,13 @@ type LanguageOption struct {
 
 // State is what the page shows.
 type State struct {
-	ActualHotkeys []string `json:"actual_hotkeys,omitempty"`
-	Wayland       bool     `json:"wayland,omitempty"`
-	DesktopStatus string   `json:"desktop_status,omitempty"`
+	TranslateAPIAvailable bool     `json:"translate_api_available"`
+	TranslateAPIEnabled   bool     `json:"translate_api_enabled"`
+	TranslateAPIToken     string   `json:"translate_api_token"`
+	TranslateAPIURL       string   `json:"translate_api_url"`
+	ActualHotkeys         []string `json:"actual_hotkeys,omitempty"`
+	Wayland               bool     `json:"wayland,omitempty"`
+	DesktopStatus         string   `json:"desktop_status,omitempty"`
 	Form
 	Revision       int              `json:"revision"`
 	Languages      []LanguageOption `json:"language_options"`
@@ -135,8 +139,11 @@ type EngineState struct {
 // the state". The loop drops it once deadline has passed, so a save the page was
 // told had failed is never applied later.
 type Request struct {
+	Context  context.Context // optional caller lifetime, used by translation requests
 	Save     *Form
 	Action   string // "" (state or save), "use_model" or "engine"
+	Text     string
+	Profile  string
 	Arg      string // the model key or the engine name
 	Kind     string // for "delete_model": "model" or "partial"
 	Deadline time.Time
@@ -144,10 +151,11 @@ type Request struct {
 }
 
 type Reply struct {
-	State    State
-	Warnings []string
-	Notice   string
-	Err      error
+	Translation string
+	State       State
+	Warnings    []string
+	Notice      string
+	Err         error
 }
 
 var ErrBusy = errors.New("The app is busy (loading the model or restarting the server). Try again in a moment.")
@@ -193,6 +201,8 @@ func Start(ask func(Request) Reply, dl *models.Manager, idle time.Duration) (*Se
 	mux.HandleFunc("/", s.guard(false, s.serveIndex))
 	mux.HandleFunc("/app.js", s.guard(false, s.serveAsset("web/app.js", "text/javascript; charset=utf-8")))
 	mux.HandleFunc("/app.css", s.guard(false, s.serveAsset("web/app.css", "text/css; charset=utf-8")))
+	mux.HandleFunc("/api/translate-api", s.guard(true, s.handleAction("translate_api", "enabled")))
+	mux.HandleFunc("/api/translate-api/info", s.guard(true, s.handleAction("translate_api_info", "")))
 	mux.HandleFunc("/api/state", s.guard(false, s.handleState))
 	mux.HandleFunc("/api/save", s.guard(true, s.handleSave))
 	mux.HandleFunc("/api/model/download", s.guard(true, s.handleDownload))

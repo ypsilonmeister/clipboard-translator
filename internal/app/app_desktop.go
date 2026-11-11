@@ -59,6 +59,9 @@ func (a *app) tickClipboard() {
 				return
 			}
 			err = errors.New("clipboard read timed out")
+			if a.desktopStatus().Manual {
+				err = errors.New("clipboard read timed out; focus the app control window and try Translate clipboard again")
+			}
 		}
 		a.pendingRead = nil
 		a.translateCaptured(p.profile, p.win, text, false, err)
@@ -94,4 +97,26 @@ func (a *app) finishHistoryCopy(text string) {
 		return
 	}
 	a.tray.Notify("Clipboard Translator", "Copied. Paste with "+platform.PasteShortcut()+".", false)
+}
+
+func (a *app) startClipboardTranslation() {
+	a.abortTranslation()
+	a.resetIdleTimer()
+	p := a.conf.Profiles[0]
+	p.Input = config.InputClipboard
+	a.presentManualControl()
+	source, err := a.cb.Read()
+	if errors.Is(err, platform.ErrClipboardPending) {
+		a.pendingRead = &pendingClipboardRead{profile: p, deadline: a.timeNow().Add(8 * time.Second)}
+		return
+	}
+	a.translateCaptured(p, 0, source, false, err)
+}
+
+func (a *app) presentManualControl() {
+	if a.desktopStatus().Manual {
+		if window, ok := a.cb.(interface{ PresentControl() }); ok {
+			window.PresentControl()
+		}
+	}
 }

@@ -10,6 +10,7 @@ import "C"
 import (
 	"errors"
 	"strings"
+	"unsafe"
 )
 
 type linuxClipboard struct{}
@@ -52,3 +53,30 @@ func (c *linuxClipboard) ReplaceIfUnchanged(expected, translated string) (bool, 
 	}
 	return true, nil
 }
+
+// Manual mode uses only the focused GTK client's regular clipboard access.
+type manualGTKClipboard struct{}
+
+func (*manualGTKClipboard) Read() (string, error) {
+	var complete C.int
+	p := C.ct_manual_read(&complete)
+	defer C.ct_free(unsafe.Pointer(p))
+	return manualClipboardReadResult(complete != 0, p != nil, C.GoString(p))
+}
+func (*manualGTKClipboard) Write(text string) error {
+	if strings.IndexByte(text, 0) >= 0 {
+		return errors.New("clipboard text contains a NUL byte")
+	}
+	withCString(text, func(p *C.char) { C.ct_manual_write(p) })
+	return nil
+}
+func (*manualGTKClipboard) Close() error { return nil }
+func (c *manualGTKClipboard) ReplaceIfUnchanged(old, text string) (bool, error) {
+	current, err := c.Read()
+	if err != nil || !SameClipboardText(current, old) {
+		return false, err
+	}
+	return true, c.Write(text)
+}
+
+func (*manualGTKClipboard) CancelPendingRead() { C.ct_manual_cancel_read() }

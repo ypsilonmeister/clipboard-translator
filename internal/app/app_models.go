@@ -118,12 +118,16 @@ func (a *app) fillModelsAndEngines(st *settings.State) {
 
 // serviceSettingsWhileBusy answers the page while the main loop is inside a
 // slow call (loading a model, waiting to restart the server). It only serves
-// "state" requests, marked busy: anything else would start another slow call
-// inside this one, so it is refused.
+// "state" requests, marked busy, and endpoint disable requests. Other actions
+// would start another slow call inside this one, so they are refused.
 func (a *app) serviceSettingsWhileBusy(label string) {
 	for {
 		select {
 		case req := <-a.settingsReqs:
+			if req.Action == "translate_api" && req.Arg == "false" && time.Now().Before(req.Deadline) {
+				a.configureTranslateAPI(req)
+				continue
+			}
 			if time.Now().After(req.Deadline) || req.Action != "" || req.Save != nil {
 				req.Reply <- settings.Reply{Err: settings.ErrBusy}
 				continue

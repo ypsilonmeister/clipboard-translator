@@ -15,18 +15,21 @@ type portalDesktopWire interface {
 
 // The wrapper stays stable across reconnects, including existing hotkey handles.
 type portalDesktop struct {
-	open         func() (portalDesktopWire, error)
-	wire         portalDesktopWire
-	client       *portalClient
-	hotkeys      *portalHotkeys
-	remote       *portalRemote
-	tokens       portalTokenStore
-	capabilities map[string]bool
-	err          error
-	now          func() time.Time
-	closed       bool
-	appID        string
-	retryRemote  bool
+	manual          bool
+	manualClipboard Clipboard
+	showManual      func()
+	open            func() (portalDesktopWire, error)
+	wire            portalDesktopWire
+	client          *portalClient
+	hotkeys         *portalHotkeys
+	remote          *portalRemote
+	tokens          portalTokenStore
+	capabilities    map[string]bool
+	err             error
+	now             func() time.Time
+	closed          bool
+	appID           string
+	retryRemote     bool
 }
 
 func (d *portalDesktop) connect() {
@@ -36,6 +39,7 @@ func (d *portalDesktop) connect() {
 		return
 	}
 	d.err = nil
+	d.manual = false
 	d.retryRemote = false
 	d.wire = w
 	d.capabilities = make(map[string]bool)
@@ -48,6 +52,10 @@ func (d *portalDesktop) connect() {
 			return true
 		}
 		if e.code == 0 || (e.id == portalRemoteDesktop && e.devices&1 == 0) {
+			d.manual = true
+			if d.showManual != nil {
+				d.showManual()
+			}
 			p.fail("Wayland requires GlobalShortcuts, RemoteDesktop keyboard and Clipboard portals; use GNOME 48+ with current desktop portal packages, then Retry Wayland permissions")
 			return true
 		}
@@ -100,6 +108,10 @@ func (d *portalDesktop) Step() {
 func (d *portalDesktop) DesktopStatus() DesktopStatus {
 	s := DesktopStatus{Wayland: true}
 	switch {
+	case d.manual && !d.closed:
+		s.Manual = true
+		s.Message = "Manual mode: hotkey workflow unavailable; required desktop portals are missing. Copy text, choose Translate clipboard, then paste. GNOME 48+ supports the portal workflow."
+		s.Retry = true
 	case d.closed:
 		s.Message = "Wayland connection is closed"
 	case d.err != nil:
@@ -179,18 +191,27 @@ func (d *portalDesktop) access() error {
 	return nil
 }
 func (d *portalDesktop) Read() (string, error) {
+	if d.manual && !d.closed && d.manualClipboard != nil {
+		return d.manualClipboard.Read()
+	}
 	if err := d.access(); err != nil {
 		return "", err
 	}
 	return d.remote.clip.Read()
 }
 func (d *portalDesktop) Write(text string) error {
+	if d.manual && !d.closed && d.manualClipboard != nil {
+		return d.manualClipboard.Write(text)
+	}
 	if err := d.access(); err != nil {
 		return err
 	}
 	return d.remote.clip.Write(text)
 }
 func (d *portalDesktop) ReplaceIfUnchanged(old, text string) (bool, error) {
+	if d.manual && !d.closed && d.manualClipboard != nil {
+		return d.manualClipboard.ReplaceIfUnchanged(old, text)
+	}
 	if err := d.access(); err != nil {
 		return false, err
 	}
@@ -207,4 +228,17 @@ func (d *portalDesktop) Close() error {
 		}
 	}
 	return nil
+}
+
+func (d *portalDesktop) CancelPendingRead() {
+	if c, ok := d.manualClipboard.(interface{ CancelPendingRead() }); ok {
+		c.CancelPendingRead()
+	}
+}
+
+// PresentControl runs on the UI thread before manual clipboard reads.
+func (d *portalDesktop) PresentControl() {
+	if d.manual && d.showManual != nil {
+		d.showManual()
+	}
 }

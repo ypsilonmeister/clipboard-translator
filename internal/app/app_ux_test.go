@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -161,8 +162,12 @@ func TestCancelFromMenu(t *testing.T) {
 	a.cancelCurrent = func() { cancelled = true }
 	a.readyTip = "ready"
 
-	if items := a.buildMenu(); items[2].ID != cmdCancel {
-		t.Fatalf("while translating, Cancel must follow Settings and Quick start, got %+v", items[2])
+	cancelIndex := 2
+	if runtime.GOOS == "linux" {
+		cancelIndex++ // Translate clipboard follows Quick start on Linux.
+	}
+	if items := a.buildMenu(); items[cancelIndex].ID != cmdCancel {
+		t.Fatalf("while translating, Cancel must follow the translation actions, got %+v", items[cancelIndex])
 	}
 	a.handleCommand(cmdCancel)
 	if !cancelled || a.translating || a.generation == g || tray.status != "Clipboard Translator - translation cancelled" {

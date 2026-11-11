@@ -114,3 +114,69 @@ func TestPortalDesktopConnectionFailureIsRecoverable(t *testing.T) {
 	d.Close()
 	d.RetryDesktop()
 }
+
+func TestPortalMissingCapabilitiesEnableManualClipboardOnly(t *testing.T) {
+	for _, iface := range []string{portalShortcuts, portalRemoteDesktop, portalClipboardInterface} {
+		t.Run(iface, func(t *testing.T) {
+			d, w := desktopFixture(t)
+			defer d.Close()
+			shown := false
+			d.showManual = func() { shown = true }
+			clipboard := &manualTestClipboard{text: "Hello"}
+			d.manualClipboard = clipboard
+			w.events = append(w.events, portalEvent{kind: "capability", id: iface, code: 0})
+			d.Step()
+			s := d.DesktopStatus()
+			if !d.manual || !shown || s.Ready || !strings.Contains(s.Message, "Manual mode") {
+				t.Fatalf("status=%+v manual=%v shown=%v", s, d.manual, shown)
+			}
+			text, err := d.Read()
+			if err != nil || text != "Hello" {
+				t.Fatalf("read=%q %v", text, err)
+			}
+			if ok, err := d.ReplaceIfUnchanged("Hello", "こんにちは"); !ok || err != nil {
+				t.Fatalf("replace=%v %v", ok, err)
+			}
+			if ok, _ := d.ReplaceIfUnchanged("Hello", "stale"); ok {
+				t.Fatal("overwrote newer clipboard")
+			}
+			if len(w.registered) != 0 {
+				t.Fatal("missing portals must not request authorization")
+			}
+		})
+	}
+	d, w := desktopFixture(t)
+	defer d.Close()
+	desktopCapabilities(d, w)
+	if d.manual {
+		t.Fatal("complete portals changed to manual mode")
+	}
+}
+
+type manualTestClipboard struct{ text string }
+
+func (c *manualTestClipboard) Read() (string, error)   { return c.text, nil }
+func (c *manualTestClipboard) Write(text string) error { c.text = text; return nil }
+func (*manualTestClipboard) Close() error              { return nil }
+func (c *manualTestClipboard) ReplaceIfUnchanged(old, text string) (bool, error) {
+	if c.text != old {
+		return false, nil
+	}
+	c.text = text
+	return true, nil
+}
+
+func TestPortalManualControlPresentation(t *testing.T) {
+	shown := 0
+	d := &portalDesktop{showManual: func() { shown++ }}
+	d.PresentControl()
+	if shown != 0 {
+		t.Fatal("presented outside manual mode")
+	}
+	d.manual = true
+	d.PresentControl()
+	d.PresentControl()
+	if shown != 2 {
+		t.Fatal("manual requests must refocus each time")
+	}
+}

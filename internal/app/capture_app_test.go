@@ -45,3 +45,29 @@ func TestStartTranslationPassesHotkeyWindowToCapture(t *testing.T) {
 		t.Fatalf("capture window = %d, want the window in front at the hotkey press", got)
 	}
 }
+
+// Manual mode has no hotkey, so the failure text must not tell the user to
+// press one again.
+func TestCaptureFailureNotificationMentionsHotkeyOnlyWithHotkeys(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		state      platform.DesktopStatus
+		wantHotkey bool
+	}{
+		{"portal workflow", platform.DesktopStatus{Wayland: true, Ready: true}, true},
+		{"manual mode", platform.DesktopStatus{Wayland: true, Manual: true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, tray, base, _, _ := uxApp(t)
+			a.cb = &asyncDesktopClipboard{testClipboard: base, state: tc.state}
+			a.translateCaptured(a.conf.Profiles[0], 0, "", false, platform.ErrClipboardNoValue)
+			note := tray.lastNote()
+			if !strings.Contains(note, "Nothing was translated") {
+				t.Fatalf("note = %q", note)
+			}
+			if got := strings.Contains(note, "press the hotkey again"); got != tc.wantHotkey {
+				t.Fatalf("note = %q, mentions hotkey = %v, want %v", note, got, tc.wantHotkey)
+			}
+		})
+	}
+}
