@@ -101,11 +101,13 @@ static char *manual_text;
 static void manual_received(GtkClipboard *clipboard, const gchar *text, gpointer data) {
     if (GPOINTER_TO_UINT(data) != manual_read_generation) return;
     g_free(manual_text);
-    manual_text = g_strdup(text ? text : "");
+    manual_text = g_strdup(text);
     manual_read_state = 2;
 }
-char *ct_manual_read(void) {
+char *ct_manual_read(int *complete) {
+    *complete = 0;
     if (manual_read_state == 2) {
+        *complete = 1;
         manual_read_state = 0;
         return g_strdup(manual_text);
     }

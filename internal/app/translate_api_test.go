@@ -273,7 +273,7 @@ func TestTranslateAPILazyToken(t *testing.T) {
 		t.Fatal("failed persistence enabled endpoint")
 	}
 	a.dir = t.TempDir()
-	info := settings.NewRequest(nil, time.Second)
+	info := settings.NewActionRequest("translate_api_info", "", time.Second)
 	a.handleSettingsRequest(info)
 	if rep := <-info.Reply; rep.Err != nil {
 		t.Fatal(rep.Err)
@@ -486,5 +486,134 @@ func TestTranslateAPIDisableDuringReload(t *testing.T) {
 	}
 	if rep := <-reply; !errors.Is(rep.Err, context.Canceled) || !canceled || a.translating || a.conf.TranslateAPIEnabled {
 		t.Fatal("disable during reload did not abort")
+	}
+}
+
+func TestReReviewAPINeverPresentsManualControl(t *testing.T) {
+	installAPIEngineTransport(t)
+	a := apiUnitApp(t)
+	a.conf.TranslateAPIEnabled = true
+	c := &manualFocusClipboard{asyncDesktopClipboard: &asyncDesktopClipboard{testClipboard: &testClipboard{}, state: platform.DesktopStatus{Wayland: true, Manual: true}}}
+	a.cb = c
+	req := settings.NewActionRequest("translate", "", time.Second)
+	req.Text = "Hello"
+	a.handleAPITranslation(req)
+	if c.presented != 0 {
+		t.Fatal("API stole focus")
+	}
+	select {
+	case res := <-a.results:
+		a.handleResult(res)
+	case <-time.After(time.Second):
+		t.Fatal("engine timed out")
+	}
+}
+
+func TestReReviewStateDoesNotCreateToken(t *testing.T) {
+	a := apiUnitApp(t)
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0400); err != nil {
+		t.Fatal(err)
+	}
+	a.dir = file
+	req := settings.NewRequest(nil, time.Second)
+	a.handleSettingsRequest(req)
+	rep := <-req.Reply
+	if rep.Err != nil || rep.State.TranslateAPIToken != "" || a.conf.TranslateAPIToken != "" {
+		t.Fatalf("state created token or failed: %+v", rep)
+	}
+	a.conf.TranslateAPIToken = "existing"
+	req = settings.NewRequest(nil, time.Second)
+	a.handleSettingsRequest(req)
+	if rep = <-req.Reply; rep.Err != nil || rep.State.TranslateAPIToken != "existing" {
+		t.Fatal(rep)
+	}
+}
+
+func TestReReviewCancellationStatus(t *testing.T) {
+	for _, deadline := range []bool{false, true} {
+		h := translateAPIHandler("secret", func(settings.Request) settings.Reply {
+			if deadline {
+				return settings.Reply{Err: context.DeadlineExceeded}
+			}
+			return settings.Reply{Err: fmt.Errorf("wrapped: %w", context.Canceled)}
+		})
+		req := httptest.NewRequest("POST", "/translate", strings.NewReader(`{"text":"Hello"}`))
+		if deadline {
+			ctx, cancel := context.WithDeadline(req.Context(), time.Now().Add(-time.Second))
+			defer cancel()
+			req = req.WithContext(ctx)
+		}
+		req.Header.Set(translateTokenHeader, "secret")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != 409 || !strings.Contains(w.Body.String(), "request cancelled") {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestReReviewRequestCancellationKeepsModelLoadAlive(t *testing.T) {
+	a := apiUnitApp(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	a.apiContext = ctx
+	a.apiReply = make(chan settings.Reply, 1)
+	a.translating = true
+	reply := a.apiReply
+	if a.sup.UI("loading", 0) {
+		t.Fatal("request cancellation became app quit")
+	}
+	if a.translating || !errors.Is((<-reply).Err, context.Canceled) {
+		t.Fatal("request not cancelled")
+	}
+	a.sigQuit = true
+	if !a.sup.UI("loading", 0) {
+		t.Fatal("app quit no longer stops load")
+	}
+}
+
+type noValueClipboard struct{ *asyncDesktopClipboard }
+
+func (c *noValueClipboard) Read() (string, error) { return "", platform.ErrClipboardNoValue }
+func TestReReviewManualNoValue(t *testing.T) {
+	a := apiUnitApp(t)
+	a.cb = &noValueClipboard{&asyncDesktopClipboard{testClipboard: &testClipboard{}, state: platform.DesktopStatus{Wayland: true, Manual: true}}}
+	a.startClipboardTranslation()
+	notes := a.tray.(*fakeTray).notes
+	if len(notes) == 0 || !strings.Contains(notes[len(notes)-1], "focus the app control window") {
+		t.Fatal(notes)
+	}
+}
+
+func TestReReviewEnabledStateDoesNotCreateToken(t *testing.T) {
+	a := apiUnitApp(t)
+	a.conf.TranslateAPIEnabled = true
+	a.dir = filepath.Join(t.TempDir(), "missing", "config")
+	req := settings.NewRequest(nil, time.Second)
+	a.handleSettingsRequest(req)
+	rep := <-req.Reply
+	if rep.Err != nil || rep.State.TranslateAPIToken != "" || a.conf.TranslateAPIToken != "" {
+		t.Fatal(rep)
+	}
+	if _, err := os.Stat(a.dir); !os.IsNotExist(err) {
+		t.Fatal("state wrote config", err)
+	}
+}
+
+func TestReReviewManualEmptyClipboard(t *testing.T) {
+	a := apiUnitApp(t)
+	a.cb = &asyncDesktopClipboard{testClipboard: &testClipboard{}, state: platform.DesktopStatus{Wayland: true, Manual: true}}
+	a.startClipboardTranslation()
+	if a.translating || a.pendingRead != nil {
+		t.Fatal("empty clipboard started translation")
+	}
+	if got := a.tray.(*fakeTray).status; got != config.SkipStatus(config.SkipEmpty, a.conf.Profiles[0].Label()) {
+		t.Fatalf("empty clipboard status=%q", got)
+	}
+	for _, note := range a.tray.(*fakeTray).notes {
+		if strings.Contains(note, "focus the app control window") {
+			t.Fatal("empty clipboard treated as missing value")
+		}
 	}
 }

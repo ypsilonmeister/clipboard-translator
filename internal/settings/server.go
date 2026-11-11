@@ -202,6 +202,7 @@ func Start(ask func(Request) Reply, dl *models.Manager, idle time.Duration) (*Se
 	mux.HandleFunc("/app.js", s.guard(false, s.serveAsset("web/app.js", "text/javascript; charset=utf-8")))
 	mux.HandleFunc("/app.css", s.guard(false, s.serveAsset("web/app.css", "text/css; charset=utf-8")))
 	mux.HandleFunc("/api/translate-api", s.guard(true, s.handleAction("translate_api", "enabled")))
+	mux.HandleFunc("/api/translate-api/info", s.guard(true, s.handleAction("translate_api_info", "")))
 	mux.HandleFunc("/api/state", s.guard(false, s.handleState))
 	mux.HandleFunc("/api/save", s.guard(true, s.handleSave))
 	mux.HandleFunc("/api/model/download", s.guard(true, s.handleDownload))

@@ -89,3 +89,17 @@ func ClassifyClipboardDiff(expected, current string, elapsed time.Duration) clip
 		Elapsed:        elapsed,
 	}
 }
+
+// ErrClipboardNoValue means the focused client received no clipboard result.
+var ErrClipboardNoValue = errors.New("clipboard unavailable; focus the app control window and try Translate clipboard again")
+
+// Keep a completed NULL GTK result distinct from both pending and empty text.
+func manualClipboardReadResult(complete, hasValue bool, text string) (string, error) {
+	if !complete {
+		return "", ErrClipboardPending
+	}
+	if !hasValue {
+		return "", ErrClipboardNoValue
+	}
+	return text, nil
+}

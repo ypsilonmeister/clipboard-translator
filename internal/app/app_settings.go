@@ -131,7 +131,7 @@ func (a *app) handleSettingsRequest(req settings.Request) {
 	}
 	if req.Save == nil {
 		var err error
-		if translateAPISupported() {
+		if translateAPISupported() && req.Action == "translate_api_info" {
 			err = a.ensureTranslateAPIToken()
 		}
 		req.Reply <- settings.Reply{State: a.settingsState(), Err: err}

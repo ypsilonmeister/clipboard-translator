@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 )
 
@@ -50,7 +51,7 @@ func (a *app) ensureTranslateAPIToken() error {
 }
 
 // The dedicated listener exposes no settings or engine administration routes.
-// IPv4 wildcard binding permits explicit Crostini port forwarding from ChromeOS.
+// Crostini forwarding terminates on the container address, not loopback.
 func (a *app) startTranslateAPI() error {
 	if !translateAPISupported() || !a.conf.TranslateAPIEnabled || a.apiServer != nil {
 		return nil
@@ -58,15 +59,24 @@ func (a *app) startTranslateAPI() error {
 	if err := a.ensureTranslateAPIToken(); err != nil {
 		return err
 	}
-	address := net.JoinHostPort("0.0.0.0", translateAPIPort)
-	ln, err := net.Listen("tcp4", address)
-	if err != nil {
-		return err
+	addresses := platform.TranslationAPIBindHosts()
+	listeners := make([]net.Listener, 0, len(addresses))
+	for _, host := range addresses {
+		ln, err := net.Listen("tcp4", net.JoinHostPort(host, translateAPIPort))
+		if err != nil {
+			for _, opened := range listeners {
+				_ = opened.Close()
+			}
+			return err
+		}
+		listeners = append(listeners, ln)
 	}
 	a.apiServer = &http.Server{Handler: translateAPIHandler(a.conf.TranslateAPIToken, a.askSettings), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 47 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
 	srv := a.apiServer
-	go func() { _ = srv.Serve(ln) }()
-	log.Printf("translation endpoint listening on %s (token required)", address)
+	for _, ln := range listeners {
+		go func(ln net.Listener) { _ = srv.Serve(ln) }(ln)
+	}
+	log.Printf("translation endpoint listening on %v port %s (token required)", addresses, translateAPIPort)
 	return nil
 }
 func (a *app) stopTranslateAPI() {
@@ -135,6 +145,9 @@ func translateAPIHandler(token string, ask func(settings.Request) settings.Reply
 		if rep.Err != nil {
 			code := http.StatusBadGateway
 			switch {
+			case errors.Is(rep.Err, context.Canceled), errors.Is(rep.Err, context.DeadlineExceeded) && ctx.Err() != nil:
+				fail(409, "request cancelled")
+				return
 			case errors.Is(rep.Err, settings.ErrBusy):
 				code = 503
 			case errors.Is(rep.Err, context.DeadlineExceeded):
@@ -230,7 +243,6 @@ func (a *app) handleAPITranslation(req settings.Request) {
 	a.abortTranslation()
 	a.apiReply = req.Reply
 	a.apiContext = req.Context
-	a.presentManualControl()
 	a.translateCaptured(p, 0, req.Text, false, nil)
 	// Reload failures or a canceled startup must not leave an HTTP caller waiting.
 	if !a.translating && a.apiReply != nil {
