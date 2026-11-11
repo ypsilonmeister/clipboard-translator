@@ -190,21 +190,24 @@ func patchObject(raw []byte, set map[string]json.RawMessage) ([]byte, error) {
 	var edits []edit
 	found := map[string]bool{}
 	members := 0
-	lastEnd := int(d.InputOffset()) // Immediately after the opening brace for an empty object.
+	openEnd := int(d.InputOffset()) // Immediately after the opening brace.
+	lastEnd := openEnd
 	indent := ""
 	newline := "\n"
 	if bytes.Contains(raw, []byte("\r\n")) {
 		newline = "\r\n"
 	}
-	multiline := bytes.Contains(raw, []byte("\n"))
+	// Lay new keys out one per line only when this object itself does: a newline
+	// elsewhere in the text (a trailing one after a compact object) says nothing.
+	multiline := false
 	for d.More() {
 		keyOffset := int(d.InputOffset())
 		for keyOffset < len(raw) && (raw[keyOffset] == ',' || raw[keyOffset] == ' ' || raw[keyOffset] == '\t' || raw[keyOffset] == '\r' || raw[keyOffset] == '\n') {
 			keyOffset++
 		}
 		if members == 0 {
-			line := bytes.LastIndexByte(raw[:keyOffset], '\n')
-			if line >= 0 {
+			multiline = bytes.IndexByte(raw[openEnd:keyOffset], '\n') >= 0
+			if line := bytes.LastIndexByte(raw[:keyOffset], '\n'); multiline && line >= 0 {
 				indent = string(raw[line+1 : keyOffset])
 			}
 		}
@@ -237,6 +240,12 @@ func patchObject(raw []byte, set map[string]json.RawMessage) ([]byte, error) {
 				edits = append(edits, edit{start, end, replacement})
 			}
 			found[key.(string)] = true
+		}
+	}
+	if members == 0 {
+		// An empty object is multiline when a newline sits between its braces.
+		if closeIdx := bytes.IndexByte(raw[openEnd:], '}'); closeIdx >= 0 {
+			multiline = bytes.IndexByte(raw[openEnd:openEnd+closeIdx], '\n') >= 0
 		}
 	}
 	var keys []string

@@ -128,3 +128,22 @@ func TestUpdateFileAppendCRLF(t *testing.T) {
 		t.Fatalf("got %q, err %v", got, err)
 	}
 }
+
+// A compact object stays compact even when the file ends with a newline, and an
+// empty object is laid out like it was written.
+func TestPatchObjectLayoutFollowsTheObject(t *testing.T) {
+	add := map[string]json.RawMessage{"added": json.RawMessage(`42`)}
+	for _, tc := range []struct{ name, raw, want string }{
+		{"compact with trailing newline", "{\"a\":1,\"b\":2}\n", "{\"a\":1,\"b\":2,\"added\":42}\n"},
+		{"compact with trailing CRLF", "{\"a\":1}\r\n", "{\"a\":1,\"added\":42}\r\n"},
+		{"compact without newline", `{"a":1}`, `{"a":1,"added":42}`},
+		{"empty compact object", "{}\n", "{\"added\":42}\n"},
+		{"empty multiline object", "{\n}\n", "{\n\"added\": 42\n}\n"},
+		{"first key on the brace line, later keys indented", "{\"a\":1,\n  \"b\":2}\n", "{\"a\":1,\n  \"b\":2,\"added\":42}\n"},
+	} {
+		got, err := patchObject([]byte(tc.raw), add)
+		if err != nil || string(got) != tc.want || !json.Valid(got) {
+			t.Errorf("%s: got %q, err %v; want %q", tc.name, got, err, tc.want)
+		}
+	}
+}

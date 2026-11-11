@@ -14,12 +14,30 @@ func TestTranslationAPIBindHosts(t *testing.T) {
 	}{
 		{false, "", []string{"127.0.0.1"}},
 		{true, "100.115.92.2", []string{"127.0.0.1", "100.115.92.2"}},
-		{true, "", []string{"0.0.0.0"}},
-		{true, "127.0.0.1", []string{"0.0.0.0"}},
+		{true, "", []string{"127.0.0.1"}},
+		{true, "127.0.0.1", []string{"127.0.0.1"}},
+		{true, "0.0.0.0", []string{"127.0.0.1"}},
+		{true, "::1", []string{"127.0.0.1"}},
 	} {
-		if got := translationAPIBindHosts(tc.cros, func() (string, error) { return tc.ip, nil }); !reflect.DeepEqual(got, tc.want) {
+		got, warning := translationAPIBindHosts(tc.cros, func() (string, error) { return tc.ip, nil })
+		if !reflect.DeepEqual(got, tc.want) {
 			t.Fatal(got, tc.want)
 		}
+		for _, host := range got {
+			if host == "0.0.0.0" {
+				t.Fatal("wildcard bind", tc)
+			}
+		}
+		if wantWarning := tc.cros && len(tc.want) == 1; (warning != "") != wantWarning {
+			t.Fatal("warning", warning, tc)
+		}
+	}
+}
+
+func TestTranslationAPIBindHostsLookupError(t *testing.T) {
+	got, warning := translationAPIBindHosts(true, func() (string, error) { return "", errors.New("no route") })
+	if !reflect.DeepEqual(got, []string{"127.0.0.1"}) || warning == "" {
+		t.Fatal(got, warning)
 	}
 }
 
