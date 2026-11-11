@@ -17,7 +17,7 @@ async function run({endpoint, token, text}) {
   let result;
   try {
     const translated = await translate(endpoint, token, text);
-    await navigator.clipboard.writeText(translated);
+    await writeClipboard(translated);
     result = {ok: true, text: translated};
   } catch (error) {
     result = {ok: false, text: error.message || 'Cannot reach the local app. Check app settings and port forwarding.'};
@@ -26,4 +26,23 @@ async function run({endpoint, token, text}) {
     busy = false;
   }
   await chrome.runtime.sendMessage({type: 'translation-done', ...result});
+}
+
+async function writeClipboard(text) {
+  try {
+    window.focus();
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    try {
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      if (!document.execCommand('copy')) throw new Error('Clipboard write failed.');
+    } finally {
+      textarea.remove();
+    }
+  }
 }

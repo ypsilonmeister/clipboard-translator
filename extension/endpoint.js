@@ -15,8 +15,13 @@ export async function translate(endpoint, token, text) {
     headers: {'Content-Type': 'application/json', 'X-Clipboard-Translator-Token': token},
     body: JSON.stringify({text}), signal: AbortSignal.timeout(46 * 60 * 1000),
   });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || `App returned HTTP ${response.status}`);
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error(response.ok ? 'App returned an invalid response.' : `App returned HTTP ${response.status}`);
+  }
+  if (!response.ok) throw new Error(result?.error || `App returned HTTP ${response.status}`);
   if (typeof result.translation !== 'string' || !result.translation.trim()) throw new Error('App returned no translation.');
   return result.translation;
 }
