@@ -165,3 +165,18 @@ func (c *manualTestClipboard) ReplaceIfUnchanged(old, text string) (bool, error)
 	c.text = text
 	return true, nil
 }
+
+func TestPortalManualControlPresentation(t *testing.T) {
+	shown := 0
+	d := &portalDesktop{showManual: func() { shown++ }}
+	d.PresentControl()
+	if shown != 0 {
+		t.Fatal("presented outside manual mode")
+	}
+	d.manual = true
+	d.PresentControl()
+	d.PresentControl()
+	if shown != 2 {
+		t.Fatal("manual requests must refocus each time")
+	}
+}

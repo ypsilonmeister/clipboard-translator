@@ -58,6 +58,7 @@ type app struct {
 	hotkeyLimit int // how many hotkeys this OS build can register, hotkeyLimit() in production
 
 	settings       *settings.Server // the settings page, while it is open
+	apiContext     context.Context
 	apiReply       chan settings.Reply
 	apiServer      *http.Server
 	settingsReqs   chan settings.Request     // page -> main loop
@@ -179,6 +180,9 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 		// noHotkey does not pump messages, so always service the UI here.
 		platform.PumpMessages()
 		if a.quitRequested() {
+			return true
+		}
+		if a.apiContext != nil && a.apiContext.Err() != nil {
 			return true
 		}
 		a.serviceSettingsWhileBusy(label)
@@ -586,6 +590,7 @@ func (a *app) serve(cb platform.Clipboard) {
 		case <-ticker.C:
 			platform.PumpMessages()
 			a.tickDesktop()
+			a.tickAPIContext()
 			a.tickClipboard()
 			if a.quitRequested() {
 				log.Print("stop requested")
@@ -726,7 +731,7 @@ func (a *app) shouldNotifySkip(reason config.SkipReason) bool {
 // abortTranslation cancels the request in flight and makes sure its result,
 // should it still arrive, is ignored.
 func (a *app) abortTranslation() {
-	a.finishAPI("", errors.New("translation canceled"))
+	a.finishAPI("", context.Canceled)
 	if c, ok := a.cb.(interface{ CancelPendingRead() }); ok {
 		c.CancelPendingRead()
 	}
@@ -874,6 +879,9 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 			if !errors.Is(err, llamaserver.ErrQuit) {
 				a.failed(err)
 			}
+			if a.apiContext != nil && a.apiContext.Err() != nil {
+				err = a.apiContext.Err()
+			}
 			a.finishAPI("", err)
 			return
 		}
@@ -899,7 +907,11 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 			return
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(a.conf.TranslationTimeoutSec)*time.Second)
+	parent := context.Background()
+	if a.apiContext != nil {
+		parent = a.apiContext
+	}
+	ctx, cancel := context.WithTimeout(parent, time.Duration(a.conf.TranslationTimeoutSec)*time.Second)
 	a.cancelCurrent = cancel
 	a.cancelTransientStatus()
 	a.translating, a.translateStart, a.lastTranslSec = true, a.timeNow(), 0

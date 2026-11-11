@@ -84,7 +84,7 @@ func TestChromeOSMenuEndpointToggle(t *testing.T) {
 	base := a.cb.(*testClipboard)
 	a.cb = &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true, PortalWorkflowUnavailable: true}}
 	// A free endpoint port is needed for this listener lifecycle check.
-	ln, err := net.Listen("tcp4", translateAPIAddress)
+	ln, err := net.Listen("tcp4", net.JoinHostPort("0.0.0.0", translateAPIPort))
 	if err != nil {
 		t.Skipf("endpoint port unavailable: %v", err)
 	}

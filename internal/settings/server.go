@@ -84,14 +84,15 @@ type LanguageOption struct {
 
 // State is what the page shows.
 type State struct {
-	LanguageOnly         bool     `json:"language_only,omitempty"`
-	AutoPasteUnavailable string   `json:"auto_paste_unavailable,omitempty"`
-	TranslateAPIEnabled  bool     `json:"translate_api_enabled"`
-	TranslateAPIToken    string   `json:"translate_api_token"`
-	TranslateAPIURL      string   `json:"translate_api_url"`
-	ActualHotkeys        []string `json:"actual_hotkeys,omitempty"`
-	Wayland              bool     `json:"wayland,omitempty"`
-	DesktopStatus        string   `json:"desktop_status,omitempty"`
+	LanguageOnly          bool     `json:"language_only,omitempty"`
+	AutoPasteUnavailable  string   `json:"auto_paste_unavailable,omitempty"`
+	TranslateAPIAvailable bool     `json:"translate_api_available"`
+	TranslateAPIEnabled   bool     `json:"translate_api_enabled"`
+	TranslateAPIToken     string   `json:"translate_api_token"`
+	TranslateAPIURL       string   `json:"translate_api_url"`
+	ActualHotkeys         []string `json:"actual_hotkeys,omitempty"`
+	Wayland               bool     `json:"wayland,omitempty"`
+	DesktopStatus         string   `json:"desktop_status,omitempty"`
 	Form
 	Revision       int              `json:"revision"`
 	Languages      []LanguageOption `json:"language_options"`
@@ -140,6 +141,7 @@ type EngineState struct {
 // the state". The loop drops it once deadline has passed, so a save the page was
 // told had failed is never applied later.
 type Request struct {
+	Context  context.Context // optional caller lifetime, used by translation requests
 	Save     *Form
 	Action   string // "" (state or save), "use_model" or "engine"
 	Text     string

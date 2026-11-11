@@ -60,6 +60,9 @@ func (a *app) tickClipboard() {
 				return
 			}
 			err = errors.New("clipboard read timed out")
+			if a.desktopStatus().Manual {
+				err = errors.New("clipboard read timed out; focus the app control window and try Translate clipboard again")
+			}
 		}
 		a.pendingRead = nil
 		a.translateCaptured(p.profile, p.win, text, false, err)
@@ -102,6 +105,7 @@ func (a *app) startClipboardTranslation() {
 	a.resetIdleTimer()
 	p := a.conf.Profiles[0]
 	p.Input = config.InputClipboard
+	a.presentManualControl()
 	source, err := a.cb.Read()
 	if errors.Is(err, platform.ErrClipboardPending) {
 		a.pendingRead = &pendingClipboardRead{profile: p, deadline: a.timeNow().Add(8 * time.Second)}
@@ -113,4 +117,12 @@ func (a *app) startClipboardTranslation() {
 func (a *app) chromeOSProfile() bool {
 	s := a.desktopStatus()
 	return runtime.GOOS == "linux" && s.PortalWorkflowUnavailable
+}
+
+func (a *app) presentManualControl() {
+	if a.desktopStatus().Manual {
+		if window, ok := a.cb.(interface{ PresentControl() }); ok {
+			window.PresentControl()
+		}
+	}
 }

@@ -701,6 +701,7 @@
 
   // Take new data from the app without touching what is being edited.
   function renderTranslateAPI(st) {
+    $('translate-api-enabled').disabled = !st.translate_api_available;
     $('translate-api-enabled').checked = !!st.translate_api_enabled;
     $('translate-api-token').value = st.translate_api_token || '';
     $('translate-api-url').textContent = st.translate_api_url || '';
