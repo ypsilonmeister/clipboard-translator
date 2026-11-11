@@ -638,7 +638,12 @@
       desktop.hidden = !state.desktop_status;
     }
     const autoPaste = $('auto-paste');
-    if (autoPaste) autoPaste.disabled = !!state.wayland;
+    if (autoPaste) autoPaste.disabled = !!state.wayland || !!state.auto_paste_unavailable;
+    const pasteNote = $('auto-paste-unavailable');
+    if (pasteNote) {
+      pasteNote.textContent = state.auto_paste_unavailable || '';
+      pasteNote.hidden = !state.auto_paste_unavailable;
+    }
     const bar = $('busybar');
     if (bar) bar.hidden = !appBusy();
     const busyText = $('busytext');

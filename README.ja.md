@@ -344,7 +344,7 @@ CI でデスクトップの許可操作や実際の Wayland セッションは�
 1. アプリの **Settings...** で **ChromeOS / local translation endpoint** を有効にし、**Copy token** でトークンをコピーします。初期状態では無効です。インストールごとのトークンはローカルで生成され、`config.json` の `translate_api_token` に保存されます。他人に共有しないでください。スイッチ（`translate_api_enabled`）は即時反映され、再起動後も保持されます。
 2. ChromeOS の **設定 → デベロッパー → Linux 開発環境 → ポート転送** で TCP **18121** を追加して有効にします。拡張機能には `http://localhost:18121/translate` を指定します。`http://penguin.linux.test:18121/translate` も使用できます。
 3. リポジトリの `extension/` ディレクトリを Chrome から選択できる場所（マイファイルなど）にコピーします。`chrome://extensions` で **デベロッパーモード** を有効にし、**パッケージ化されていない拡張機能を読み込む** でそのディレクトリを指定します。ビルドは不要です。
-4. 拡張機能の **Options** に URL とトークンを入力して **Save**、**Test connection** を押します。接続テストは「Hello」をローカルで翻訳し、クリップボードは変更しません。
+4. Linux の手動モード（デスクトップポータルがない環境）では、アプリメニューの **Chrome extension endpoint** と **Copy connection info** も使えます。コピーした JSON を拡張機能の **Options** の **Paste connection info** に貼り付け、**Apply connection info**、**Test connection** を押します。URL とトークンの手動入力と **Save** も引き続き使えます。接続テストは「Hello」をローカルで翻訳し、クリップボードは変更しません。
 5. Chrome で英語または日本語を選択し、右クリックして **Translate with Clipboard Translator** を選びます。通知に結果の短いプレビューが表示されたら **Ctrl+V** で貼り付けます。既定のプロファイルでは英語→日本語、日本語→英語になります。
 
 拡張機能は先頭のプロファイルの翻訳方向、改行整形、置換／対訳出力を使用します。クリップボードの監視は行わず、設定したローカルエンドポイント以外へテキストを送りません。設定は Chrome 内にローカル保存し、同期しません。エンドポイントはホットキーと同じモデル、再ロード、分割翻訳処理を使用し、別の翻訳中はビジーを返します。Linux 側のクリップボードは変更せず、成功後に拡張機能がホスト側のクリップボードへ書き込みます。

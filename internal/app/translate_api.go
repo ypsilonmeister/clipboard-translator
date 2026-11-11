@@ -21,9 +21,7 @@ import (
 const translateAPIAddress = "0.0.0.0:18121"
 const translateTokenHeader = "X-Clipboard-Translator-Token"
 
-// The dedicated listener exposes no settings or engine administration routes.
-// IPv4 wildcard binding permits explicit Crostini port forwarding from ChromeOS.
-func (a *app) startTranslateAPI() error {
+func (a *app) ensureTranslateAPIToken() error {
 	if a.conf.TranslateAPIToken == "" {
 		raw := make([]byte, 32)
 		if _, err := rand.Read(raw); err != nil {
@@ -34,6 +32,15 @@ func (a *app) startTranslateAPI() error {
 			return err
 		}
 		a.conf.TranslateAPIToken = token
+	}
+	return nil
+}
+
+// The dedicated listener exposes no settings or engine administration routes.
+// IPv4 wildcard binding permits explicit Crostini port forwarding from ChromeOS.
+func (a *app) startTranslateAPI() error {
+	if err := a.ensureTranslateAPIToken(); err != nil {
+		return err
 	}
 	if !a.conf.TranslateAPIEnabled || a.apiServer != nil {
 		return nil
@@ -195,4 +202,18 @@ func (a *app) finishAPI(text string, err error) {
 		a.apiReply <- settings.Reply{Translation: text, Err: err}
 		a.apiReply = nil
 	}
+}
+
+// copyConnectionInfo shares token persistence with endpoint startup without opening a listener.
+func (a *app) copyConnectionInfo() {
+	if err := a.ensureTranslateAPIToken(); err != nil {
+		a.tray.Notify("Clipboard Translator", "Could not save connection info: "+err.Error(), true)
+		return
+	}
+	data, _ := json.Marshal(struct {
+		Endpoint string `json:"endpoint"`
+		Token    string `json:"token"`
+	}{"http://localhost:18121/translate", a.conf.TranslateAPIToken})
+	a.abortTranslation()
+	a.finishHistoryCopy(string(data))
 }

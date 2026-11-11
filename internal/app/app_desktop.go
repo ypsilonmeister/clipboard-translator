@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"log"
+	"runtime"
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
@@ -107,4 +108,9 @@ func (a *app) startClipboardTranslation() {
 		return
 	}
 	a.translateCaptured(p, 0, source, false, err)
+}
+
+func (a *app) chromeOSManualMode() bool {
+	s := a.desktopStatus()
+	return runtime.GOOS == "linux" && s.Wayland && s.Manual
 }
