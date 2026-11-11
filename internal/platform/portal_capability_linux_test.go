@@ -71,9 +71,11 @@ func TestCrostiniDetectionCached(t *testing.T) {
 		if !x.Crostini || !w.Crostini || !x.PortalCapabilitiesMissing {
 			t.Fatal(x, w)
 		}
-		hosts, _ := TranslationAPIBindHosts()
-		if len(hosts) == 0 || (len(hosts) == 1 && hosts[0] == "127.0.0.1") {
-			t.Fatal(hosts)
+		// The cached flag selects the scoped bind. The address lookup is stubbed:
+		// the real one needs a network route, which a sandbox or CI runner may lack.
+		hosts, warning := translationAPIBindHosts(desktopCrostini, func() (string, error) { return "100.115.92.26", nil })
+		if len(hosts) != 2 || hosts[0] != "127.0.0.1" || hosts[1] != "100.115.92.26" || warning != "" {
+			t.Fatal(hosts, warning)
 		}
 	}
 	if calls != 1 {
