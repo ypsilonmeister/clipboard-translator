@@ -113,6 +113,11 @@ func (a *app) startClipboardTranslation() {
 	a.translateCaptured(p, 0, source, false, err)
 }
 
+func (a *app) chromeOSProfile() bool {
+	s := a.desktopStatus()
+	return s.Crostini && s.PortalCapabilitiesMissing
+}
+
 func (a *app) presentManualControl() {
 	if a.desktopStatus().Manual {
 		if window, ok := a.cb.(interface{ PresentControl() }); ok {

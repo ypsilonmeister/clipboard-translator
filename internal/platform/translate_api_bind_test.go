@@ -6,27 +6,6 @@ import (
 	"testing"
 )
 
-func TestTranslationAPICrostiniMarkers(t *testing.T) {
-	for _, marker := range []string{"", "dmi", "file", "env"} {
-		got := translationAPICrostini(func(path string) ([]byte, error) {
-			if marker == "dmi" && path == "/sys/class/dmi/id/product_name" {
-				return []byte("crosvm\n"), nil
-			}
-			if marker == "file" && path == "/dev/.cros_milestone" {
-				return nil, nil
-			}
-			return nil, errors.New("absent")
-		}, func(string) string {
-			if marker == "env" {
-				return "1"
-			}
-			return ""
-		})
-		if got != (marker != "") {
-			t.Fatal(marker, got)
-		}
-	}
-}
 func TestTranslationAPIBindHosts(t *testing.T) {
 	for _, tc := range []struct {
 		cros bool

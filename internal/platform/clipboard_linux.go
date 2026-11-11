@@ -13,7 +13,12 @@ import (
 	"unsafe"
 )
 
-type linuxClipboard struct{}
+type linuxClipboard struct{ portalCapabilitiesMissing bool }
+
+func (c *linuxClipboard) DesktopStatus() DesktopStatus {
+	return DesktopStatus{Crostini: desktopCrostini, PortalCapabilitiesMissing: c.portalCapabilitiesMissing}
+}
+func (*linuxClipboard) RetryDesktop() {}
 
 func NewClipboard() (Clipboard, error) {
 	if linuxWayland {
@@ -25,7 +30,7 @@ func NewClipboard() (Clipboard, error) {
 	if C.ct_init() == 0 {
 		return nil, errors.New("X11 clipboard is unavailable")
 	}
-	return &linuxClipboard{}, nil
+	return &linuxClipboard{portalCapabilitiesMissing: linuxPortalCapabilitiesMissing}, nil
 }
 func (*linuxClipboard) Read() (string, error) { return readX11Text(false), nil }
 func (*linuxClipboard) Write(text string) error {

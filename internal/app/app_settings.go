@@ -169,6 +169,13 @@ func (a *app) settingsState() settings.State {
 	st.Guide = a.quickstartGuide()
 	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste
+	if a.chromeOSProfile() {
+		st.LanguageOnly = true
+		st.Inactive = nil
+		st.NoActiveHotkey = false
+		st.ActualHotkeys = nil
+		st.AutoPasteUnavailable = "Not available on ChromeOS: the app cannot paste into other apps"
+	}
 	desktop := a.desktopStatus()
 	st.Wayland = desktop.Wayland
 	st.DesktopStatus = desktop.Message
@@ -286,14 +293,42 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 		}
 	}
 
+	// The manual workflow edits only profile zero's languages. Never accept
+	// hidden hotkey/output fields back from this page.
+	if a.chromeOSProfile() && hasField("profiles") {
+		if len(form.Profiles) == 0 {
+			return nil, errors.New("Choose translation languages")
+		}
+		language := form.Profiles[0]
+		form.Profiles = nil
+		for i, p := range a.conf.Profiles {
+			f, err := settings.FormFromProfile(p, runtime.GOOS)
+			if err != nil {
+				return nil, err
+			}
+			if i == 0 {
+				f.Languages, f.Target = language.Languages, language.Target
+			}
+			form.Profiles = append(form.Profiles, f)
+		}
+	}
 	cand, err := form.ToConfig(a.conf)
 	if err != nil {
 		return nil, err
 	}
+	if a.chromeOSProfile() && hasField("profiles") {
+		language := cand.Profiles[0]
+		cand.Profiles = append([]config.Profile(nil), a.conf.Profiles...)
+		cand.Profiles[0].Languages, cand.Profiles[0].Target = language.Languages, language.Target
+		cand.NormalizeProfiles()
+	}
 	sameProf := sameProfiles(cand.Profiles, a.conf.Profiles)
 	// Let Save recover unchanged hotkeys after another program releases them.
-	retryHotkeys := hasField("profiles") && !a.anyHotkeyActive() && sameProf
+	retryHotkeys := !a.chromeOSProfile() && hasField("profiles") && !a.anyHotkeyActive() && sameProf
 	if !retryHotkeys && sameProf && cand.AutoPaste == a.conf.AutoPaste && cand.NotifyOnComplete == a.conf.NotifyOnComplete && cand.MaxChars == a.conf.MaxChars && cand.IdleUnloadMinutes == a.conf.IdleUnloadMinutes {
+		if a.chromeOSProfile() {
+			return nil, nil
+		}
 		return a.inactiveHotkeys(), nil
 	}
 
@@ -330,6 +365,8 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 		a.conf.AutoPaste, a.conf.NotifyOnComplete, a.conf.MaxChars = cand.AutoPaste, cand.NotifyOnComplete, cand.MaxChars
 		a.conf.IdleUnloadMinutes = cand.IdleUnloadMinutes
 		a.conf.ExplicitProfiles = cand.ExplicitProfiles
+	} else if a.chromeOSProfile() {
+		a.conf = cand
 	} else {
 		old := a.conf
 		a.closeHotkeys()
@@ -367,12 +404,33 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 	if a.conf.Profiles[0].Languages != nil {
 		set["languages"] = a.conf.Profiles[0].Languages
 	}
-	if err := config.UpdateFile(a.dir, set); err != nil {
+	save := func() error { return config.UpdateFile(a.dir, set) }
+	if a.chromeOSProfile() {
+		save = func() error {
+			globals := map[string]any{}
+			if changedAutoPaste {
+				globals["auto_paste"] = a.conf.AutoPaste
+			}
+			if changedNotifyOnComplete {
+				globals["notify_on_complete"] = a.conf.NotifyOnComplete
+			}
+			if changedMaxChars {
+				globals["max_chars"] = a.conf.MaxChars
+			}
+			if changedIdleUnload {
+				globals["idle_unload_minutes"] = a.conf.IdleUnloadMinutes
+			}
+			return config.UpdateTranslationSettings(a.dir, a.conf.Profiles[0], changedProfiles, globals)
+		}
+	}
+	if err := save(); err != nil {
 		log.Printf("could not save config.json: %v", err)
 		warnings = append(warnings, "The settings work now but could not be saved to config.json: "+err.Error())
 	}
 	a.refreshStatus()
-	warnings = append(warnings, a.inactiveHotkeys()...)
+	if !a.chromeOSProfile() {
+		warnings = append(warnings, a.inactiveHotkeys()...)
+	}
 	log.Printf("settings applied: %d hotkey(s)", len(a.conf.Profiles))
 	return warnings, nil
 }

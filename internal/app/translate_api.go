@@ -270,3 +270,20 @@ func (a *app) tickAPIContext() {
 		a.abortTranslation()
 	}
 }
+
+// copyConnectionInfo shares token persistence with endpoint startup without opening a listener.
+func (a *app) copyConnectionInfo() {
+	if err := a.ensureTranslateAPIToken(); err != nil {
+		a.tray.Notify("Clipboard Translator", "Could not save connection info: "+err.Error(), true)
+		return
+	}
+	data, _ := json.Marshal(struct {
+		Endpoint string `json:"endpoint"`
+		Token    string `json:"token"`
+	}{translateAPIURL(), a.conf.TranslateAPIToken})
+	if err := a.cb.Write(string(data)); err != nil {
+		a.tray.Notify("Clipboard Translator", "Could not copy connection info: "+err.Error(), true)
+		return
+	}
+	a.tray.Notify("Clipboard Translator", "Connection info copied. The clipboard now holds the token in clear text.", false)
+}

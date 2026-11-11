@@ -218,7 +218,7 @@
   }
 
   function inactiveBanner(list) {
-    if (!list || list.length === 0) return showBanner([]);
+    if (state.language_only || !list || list.length === 0) return showBanner([]);
     showBanner(['These hotkeys are not active right now. Choose another hotkey below and click Save. If none are active, you can also retry Save after the other program releases them:'].concat(list));
   }
 
@@ -242,34 +242,36 @@
   }
 
   function profileCard(p, i) {
+    const languageOnly = !!state.language_only;
     const mods = [['ctrl', 'Ctrl'], ['alt', 'Alt'], ['shift', 'Shift'], ['win', state.win_key]];
     const card = h('div', { class: 'profile', 'data-index': String(i) });
 
-    const remove = h('button', { type: 'button', class: 'danger', disabled: model.profiles.length <= 1,
-      'aria-label': 'Remove hotkey ' + (i + 1),
-      onclick: () => { model.profiles.splice(i, 1); touchField('profiles'); renderHotkeys(); } }, 'Remove');
-    card.append(h('div', { class: 'profile-head' },
-      h('h3', { text: 'Hotkey ' + (i + 1) }),
-      h('span', { class: 'spacer' }), remove));
+    if (!languageOnly) {
+      const remove = h('button', { type: 'button', class: 'danger', disabled: model.profiles.length <= 1,
+        'aria-label': 'Remove hotkey ' + (i + 1),
+        onclick: () => { model.profiles.splice(i, 1); touchField('profiles'); renderHotkeys(); } }, 'Remove');
+      card.append(h('div', { class: 'profile-head' },
+        h('h3', { text: 'Hotkey ' + (i + 1) }),
+        h('span', { class: 'spacer' }), remove));
 
-    const actual = state.actual_hotkeys && state.actual_hotkeys[i];
-    card.append(h('p', { class: 'hint actual-hotkey', 'data-index': String(i), hidden: !actual,
-      text: actual ? 'Currently active shortcut: ' + actual : '' }));
+      const actual = state.actual_hotkeys && state.actual_hotkeys[i];
+      card.append(h('p', { class: 'hint actual-hotkey', 'data-index': String(i), hidden: !actual,
+        text: actual ? 'Currently active shortcut: ' + actual : '' }));
 
-    const keyRow = h('div', { class: 'row' }, h('span', { class: 'label', text: 'Keys' }));
-    for (const [id, name] of mods) {
-      keyRow.append(h('label', { class: 'chip' },
-        h('input', { type: 'checkbox', checked: p[id], onchange: (e) => { p[id] = e.target.checked; touchField('profiles'); } }), name));
+      const keyRow = h('div', { class: 'row' }, h('span', { class: 'label', text: 'Keys' }));
+      for (const [id, name] of mods) {
+        keyRow.append(h('label', { class: 'chip' },
+          h('input', { type: 'checkbox', checked: p[id], onchange: (e) => { p[id] = e.target.checked; touchField('profiles'); } }), name));
+      }
+      keyRow.append(h('span', { class: 'plus', text: '+' }));
+      const letter = h('select', { class: 'letter', 'aria-label': 'Key of hotkey ' + (i + 1), onchange: (e) => { p.key = e.target.value; touchField('profiles'); } },
+        HOTKEY_KEYS.map((l) => h('option', { value: l, text: l })));
+      letter.value = p.key;
+      keyRow.append(letter);
+      card.append(keyRow);
     }
-    keyRow.append(h('span', { class: 'plus', text: '+' }));
-    const letter = h('select', { class: 'letter', 'aria-label': 'Key of hotkey ' + (i + 1), onchange: (e) => { p.key = e.target.value; touchField('profiles'); } },
-      HOTKEY_KEYS.map((l) => h('option', { value: l, text: l })));
-    letter.value = p.key;
-    keyRow.append(letter);
-    card.append(keyRow);
-
     const name = 'mode-' + i;
-    const seg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'How hotkey ' + (i + 1) + ' translates' },
+    const seg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': languageOnly ? 'Translate mode' : 'How hotkey ' + (i + 1) + ' translates' },
       [['pair', 'Between two languages'], ['target', 'Into one language']].map(([v, text]) =>
         h('label', {}, h('input', { type: 'radio', name, value: v, checked: p.mode === v,
           onchange: () => { p.mode = v; touchField('profiles'); renderHotkeys(); } }), text)));
@@ -280,12 +282,14 @@
         langSelect(p.a, (v) => { p.a = v; }, 'First language'),
         h('span', { class: 'plus', text: '↔' }),
         langSelect(p.b, (v) => { p.b = v; }, 'Second language')));
-      card.append(h('p', { class: 'hint', text: 'Text in either language is translated into the other. The two languages need different scripts so the app can tell them apart (for example English and German cannot share one hotkey).' }));
+      card.append(h('p', { class: 'hint', text: 'Text in either language is translated into the other. The two languages need different scripts so the app can tell them apart (for example English and German cannot ' + (languageOnly ? 'be paired).' : 'share one hotkey).') }));
     } else {
       card.append(h('div', { class: 'row' }, h('span', { class: 'label', text: 'Into' }),
         langSelect(p.target, (v) => { p.target = v; }, 'Target language')));
       card.append(h('p', { class: 'hint', text: 'Any language is translated into this one; the model works out the source language itself.' }));
     }
+
+    if (languageOnly) return card;
 
     const inputId = 'input-' + i;
     const inputSelect = h('select', {
@@ -340,7 +344,17 @@
   }
 
   function renderHotkeys() {
-    $('profiles').replaceChildren(...model.profiles.map(profileCard));
+    const languageOnly = !!state.language_only;
+    $('hotkeys-title').textContent = languageOnly ? 'Languages' : 'Hotkeys';
+    $('hotkeys-intro').textContent = languageOnly
+      ? 'Hotkeys are not available on ChromeOS; these language settings apply to translation.'
+      : 'Select text in any program and press a hotkey. The translation replaces what is on the clipboard. Each hotkey can translate in its own way.';
+    $('profiles').replaceChildren(...(languageOnly ? model.profiles.slice(0, 1) : model.profiles).map(profileCard));
+    if (languageOnly) {
+      $('add').hidden = true;
+      $('limit').hidden = true;
+      return;
+    }
     const max = state.max_hotkeys;
     const full = model.profiles.length >= max;
     $('add').hidden = max <= 1;
@@ -638,7 +652,12 @@
       desktop.hidden = !state.desktop_status;
     }
     const autoPaste = $('auto-paste');
-    if (autoPaste) autoPaste.disabled = !!state.wayland;
+    if (autoPaste) autoPaste.disabled = !!state.wayland || !!state.auto_paste_unavailable;
+    const pasteNote = $('auto-paste-unavailable');
+    if (pasteNote) {
+      pasteNote.textContent = state.auto_paste_unavailable || '';
+      pasteNote.hidden = !state.auto_paste_unavailable;
+    }
     const bar = $('busybar');
     if (bar) bar.hidden = !appBusy();
     const busyText = $('busytext');

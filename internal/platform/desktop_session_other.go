@@ -2,5 +2,8 @@
 
 package platform
 
-func InitializeDesktop(string) error { return nil }
-func CloseDesktop()                  {}
+func InitializeDesktop(string) error {
+	desktopCrostini = evaluateCrostini()
+	return nil
+}
+func CloseDesktop() {}

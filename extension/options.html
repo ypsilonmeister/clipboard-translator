@@ -3,6 +3,9 @@
 <link rel="stylesheet" href="options.css"></head><body>
 <h1>Clipboard Translator</h1>
 <p>Enable the translation endpoint in the Linux app's Settings, forward TCP port 18121 in ChromeOS, then copy its token here. Settings stay in this browser, without sync.</p>
+<label for="connection-info">Paste connection info</label>
+<textarea id="connection-info" spellcheck="false"></textarea>
+<button id="apply-connection" type="button">Apply connection info</button>
 <form id="options">
 <label for="endpoint">Endpoint URL</label><input id="endpoint" type="url" required value="http://localhost:18121/translate">
 <label for="token">Token</label><input id="token" type="password" required autocomplete="off" spellcheck="false">
