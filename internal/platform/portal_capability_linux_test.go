@@ -71,7 +71,7 @@ func TestCrostiniDetectionCached(t *testing.T) {
 		if !x.Crostini || !w.Crostini || !x.PortalCapabilitiesMissing {
 			t.Fatal(x, w)
 		}
-		hosts := TranslationAPIBindHosts()
+		hosts, _ := TranslationAPIBindHosts()
 		if len(hosts) == 0 || (len(hosts) == 1 && hosts[0] == "127.0.0.1") {
 			t.Fatal(hosts)
 		}
