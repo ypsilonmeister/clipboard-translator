@@ -6,25 +6,27 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 func TestChromeOSManualMenu(t *testing.T) {
+	t.Setenv("SOMMELIER_VERSION", "test")
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux manual profile")
 	}
 	a := apiUnitApp(t)
 	base := a.cb.(*testClipboard)
-	cb := &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true, PortalWorkflowUnavailable: true}}
+	cb := &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true, PortalCapabilitiesMissing: true}}
 	a.cb = cb
 	for _, enabled := range []bool{false, true} {
 		a.conf.TranslateAPIEnabled = enabled
 		items := a.buildMenu()
 		labels := []string{"Settings...", "Quick start", "Translate clipboard", "Chrome extension endpoint", "Copy connection info"}
 		if enabled {
-			labels = append(labels, "ChromeOS: enable port forwarding for TCP 18121")
+			labels = append(labels, "ChromeOS: enable port forwarding for TCP "+translateAPIPort)
 		}
 		labels = append(labels, "Manual mode (hotkey unavailable)", "Retry Wayland permissions")
 		for i, label := range labels {
@@ -46,7 +48,7 @@ func TestChromeOSManualMenu(t *testing.T) {
 	if err := json.Unmarshal([]byte(base.text), &info); err != nil {
 		t.Fatal(err)
 	}
-	if info.Endpoint != "http://localhost:18121/translate" || len(info.Token) != 64 || a.apiServer != nil {
+	if info.Endpoint != translateAPIURL() || len(info.Token) != 64 || a.apiServer != nil {
 		t.Fatalf("invalid connection info or listener started")
 	}
 	data, err := os.ReadFile(filepath.Join(a.dir, "config.json"))
@@ -65,7 +67,7 @@ func TestChromeOSManualMenu(t *testing.T) {
 		t.Fatal("token changed")
 	}
 	cb.state.Manual = false
-	cb.state.PortalWorkflowUnavailable = false
+	cb.state.PortalCapabilitiesMissing = false
 	if a.settingsState().AutoPasteUnavailable != "" {
 		t.Fatal("note escaped unavailable-portal profile")
 	}
@@ -77,12 +79,13 @@ func TestChromeOSManualMenu(t *testing.T) {
 }
 
 func TestChromeOSMenuEndpointToggle(t *testing.T) {
+	t.Setenv("SOMMELIER_VERSION", "test")
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux manual profile")
 	}
 	a := apiUnitApp(t)
 	base := a.cb.(*testClipboard)
-	a.cb = &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true, PortalWorkflowUnavailable: true}}
+	a.cb = &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true, PortalCapabilitiesMissing: true}}
 	// A free endpoint port is needed for this listener lifecycle check.
 	ln, err := net.Listen("tcp4", net.JoinHostPort("0.0.0.0", translateAPIPort))
 	if err != nil {
@@ -112,11 +115,12 @@ func TestChromeOSMenuEndpointToggle(t *testing.T) {
 }
 
 func TestChromeOSMenuEndpointSaveFailure(t *testing.T) {
+	t.Setenv("SOMMELIER_VERSION", "test")
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux manual profile")
 	}
 	a := apiUnitApp(t)
-	a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{Wayland: true, Manual: true, PortalWorkflowUnavailable: true}}
+	a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{Wayland: true, Manual: true, PortalCapabilitiesMissing: true}}
 	// A file cannot serve as the config directory, so token persistence fails before listen.
 	a.dir = filepath.Join(a.dir, "blocked")
 	if err := os.WriteFile(a.dir, []byte("x"), 0600); err != nil {
@@ -129,6 +133,7 @@ func TestChromeOSMenuEndpointSaveFailure(t *testing.T) {
 }
 
 func TestChromeOSProfileCapability(t *testing.T) {
+	t.Setenv("SOMMELIER_VERSION", "test")
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux capability profile")
 	}
@@ -136,7 +141,7 @@ func TestChromeOSProfileCapability(t *testing.T) {
 		for _, unavailable := range []bool{false, true} {
 			a := apiUnitApp(t)
 			a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{
-				Wayland: wayland, Manual: wayland && unavailable, PortalWorkflowUnavailable: unavailable,
+				Wayland: wayland, Manual: wayland && unavailable, PortalCapabilitiesMissing: unavailable,
 			}}
 			if got := a.chromeOSProfile(); got != unavailable {
 				t.Fatalf("wayland=%v unavailable=%v: profile=%v", wayland, unavailable, got)
@@ -157,11 +162,51 @@ func TestChromeOSProfileCapability(t *testing.T) {
 	}
 }
 
+func TestOrdinaryDesktopNeverChromeOS(t *testing.T) {
+	old := isCrostini
+	t.Cleanup(func() { isCrostini = old })
+	isCrostini = func() bool { return false }
+	t.Setenv("SOMMELIER_VERSION", "test")
+	a := apiUnitApp(t)
+	for _, wayland := range []bool{false, true} {
+		a.cb = &asyncDesktopClipboard{testClipboard: &testClipboard{}, state: platform.DesktopStatus{Wayland: wayland, PortalCapabilitiesMissing: true}}
+		if a.chromeOSProfile() {
+			t.Fatal("ordinary Linux desktop received ChromeOS profile")
+		}
+	}
+}
+
+func TestConnectionCopyWhileTranslating(t *testing.T) {
+	a := apiUnitApp(t)
+	cb := a.cb.(*testClipboard)
+	cb.text = "source"
+	cancelled := false
+	a.cancelCurrent = func() { cancelled = true }
+	a.translating = true
+	generation := a.generation
+	a.copyConnectionInfo()
+	if cancelled || a.generation != generation || cb.text != "source" || a.conf.TranslateAPIToken != "" {
+		t.Fatal("copy disturbed active translation")
+	}
+}
+
 func TestReadyMessageWithoutHotkey(t *testing.T) {
 	if got := readyMessage(""); got != "ready: copy text and choose Translate clipboard, then paste" {
 		t.Fatal(got)
 	}
 	if got := readyMessage("Ctrl+Alt+E"); got != "ready: select text and press Ctrl+Alt+E (or translate existing clipboard)" {
 		t.Fatal(got)
+	}
+}
+
+func TestConnectionCopyTokenNotice(t *testing.T) {
+	a := apiUnitApp(t)
+	a.copyConnectionInfo()
+	tray := a.tray.(*fakeTray)
+	if len(tray.notes) != 1 || !strings.Contains(tray.notes[0], "token in clear text") {
+		t.Fatalf("notifications: %v", tray.notes)
+	}
+	if !strings.Contains(a.cb.(*testClipboard).text, a.conf.TranslateAPIToken) || len(a.conf.TranslateAPIToken) != 64 {
+		t.Fatal("connection info not copied")
 	}
 }

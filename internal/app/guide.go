@@ -19,7 +19,7 @@ import (
 func (a *app) guideSteps() []string {
 	if a.chromeOSProfile() {
 		return []string{
-			"ChromeOS Settings → Developers → Linux → Port forwarding: add TCP 18121.",
+			"ChromeOS Settings → Developers → Linux → Port forwarding: add TCP " + translateAPIPort + ".",
 			"Install/load the Chrome extension.",
 			"In the app menu, use \"Copy connection info\", and paste it into the extension options.",
 			"Select text in Chrome → right-click → \"Translate with Clipboard Translator\" → paste with Ctrl+V.",

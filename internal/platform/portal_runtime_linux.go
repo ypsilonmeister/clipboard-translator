@@ -15,7 +15,7 @@ type portalDesktopWire interface {
 
 // The wrapper stays stable across reconnects, including existing hotkey handles.
 type portalDesktop struct {
-	portalWorkflowUnavailable bool
+	portalCapabilitiesMissing bool
 	manual                    bool
 	manualClipboard           Clipboard
 	showManual                func()
@@ -41,6 +41,7 @@ func (d *portalDesktop) connect() {
 	}
 	d.err = nil
 	d.manual = false
+	d.portalCapabilitiesMissing = false
 	d.retryRemote = false
 	d.wire = w
 	d.capabilities = make(map[string]bool)
@@ -54,6 +55,7 @@ func (d *portalDesktop) connect() {
 		}
 		if e.code == 0 || (e.id == portalRemoteDesktop && e.devices&1 == 0) {
 			d.manual = true
+			d.portalCapabilitiesMissing = true
 			if d.showManual != nil {
 				d.showManual()
 			}
@@ -107,7 +109,7 @@ func (d *portalDesktop) Step() {
 	d.remote.Step()
 }
 func (d *portalDesktop) DesktopStatus() DesktopStatus {
-	s := DesktopStatus{Wayland: true, PortalWorkflowUnavailable: d.portalWorkflowUnavailable}
+	s := DesktopStatus{Wayland: true, PortalCapabilitiesMissing: d.portalCapabilitiesMissing}
 	switch {
 	case d.manual && !d.closed:
 		s.Manual = true

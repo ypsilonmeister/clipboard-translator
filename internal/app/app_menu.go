@@ -71,7 +71,7 @@ func (a *app) buildMenu() []platform.MenuItem {
 			platform.MenuItem{ID: cmdTranslateAPIToggle, Label: "Chrome extension endpoint", Checked: a.conf.TranslateAPIEnabled},
 			platform.MenuItem{ID: cmdCopyConnectionInfo, Label: "Copy connection info"})
 		if a.conf.TranslateAPIEnabled {
-			items = append(items, platform.MenuItem{Label: "ChromeOS: enable port forwarding for TCP 18121", Disabled: true})
+			items = append(items, platform.MenuItem{Label: "ChromeOS: enable port forwarding for TCP " + translateAPIPort, Disabled: true})
 		}
 	}
 	if s := a.desktopStatus(); s.Wayland {

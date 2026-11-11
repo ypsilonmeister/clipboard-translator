@@ -7,6 +7,7 @@
 static GtkStatusIcon *status_icon;
 static GtkWidget *current_menu, *control_window, *status_label;
 static char *last_status;
+static GdkEvent *control_menu_event;
 static int menu_requested, menu_from_control, force_control;
 static GQueue commands = G_QUEUE_INIT;
 
@@ -15,7 +16,7 @@ void ct_free(void *p) { g_free(p); }
 
 static void request_menu(GtkStatusIcon *icon, guint button, guint time, gpointer data) { menu_from_control = 0; menu_requested = 1; }
 static void activate_icon(GtkStatusIcon *icon, gpointer data) { menu_from_control = 0; menu_requested = 1; }
-static void control_clicked(GtkButton *button, gpointer data) { menu_from_control = 1; menu_requested = 1; }
+static void control_clicked(GtkButton *button, gpointer data) { if (control_menu_event) gdk_event_free(control_menu_event); control_menu_event = gtk_get_current_event(); menu_from_control = 1; menu_requested = 1; }
 static gboolean close_control(GtkWidget *w, GdkEvent *event, gpointer data) {
     g_queue_push_tail(&commands, GINT_TO_POINTER(2));
     return TRUE;
@@ -54,6 +55,7 @@ void ct_tray_close(void) {
     if (current_menu) { gtk_widget_destroy(current_menu); current_menu = NULL; }
     if (control_window) { gtk_widget_destroy(control_window); control_window = status_label = NULL; }
     if (status_icon) { g_object_unref(status_icon); status_icon = NULL; }
+    if (control_menu_event) { gdk_event_free(control_menu_event); control_menu_event = NULL; }
     g_queue_clear(&commands);
     menu_requested = menu_from_control = force_control = 0;
     g_clear_pointer(&last_status,g_free);
@@ -84,9 +86,10 @@ void ct_menu_popup(void *menu) {
     gtk_widget_show_all(current_menu);
     // The fallback window has no status-icon geometry (notably on ChromeOS).
     if (menu_from_control && control_window)
-        gtk_menu_popup_at_widget(GTK_MENU(current_menu), control_window, GDK_GRAVITY_SOUTH_WEST, GDK_GRAVITY_NORTH_WEST, NULL);
+        gtk_menu_popup_at_widget(GTK_MENU(current_menu), control_window, GDK_GRAVITY_SOUTH_WEST, GDK_GRAVITY_NORTH_WEST, control_menu_event);
     else
         gtk_menu_popup(GTK_MENU(current_menu), NULL, NULL, gtk_status_icon_position_menu, status_icon, 0, gtk_get_current_event_time());
+    if (control_menu_event) { gdk_event_free(control_menu_event); control_menu_event = NULL; }
     menu_from_control = 0;
 }
 int ct_command(void) { return GPOINTER_TO_INT(g_queue_pop_head(&commands)); }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -101,48 +102,58 @@ func parseConfigEntries(b []byte) ([]configEntry, error) {
 // BOM at the start of the old file is accepted; the .bak keeps it, the new
 // file is written without one.
 func UpdateFile(dir string, set map[string]any) error {
+	return updateFile(dir, set, nil)
+}
+
+// updateFile owns validation, backups and writes for all config editors.
+// A transform preserves formatting (including a BOM) for nested edits.
+func updateFile(dir string, set map[string]any, transform func([]byte) ([]byte, error)) error {
 	path := filepath.Join(dir, "config.json")
 	old, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	var entries []configEntry
-	if len(old) > 0 {
-		if entries, err = parseConfigEntries(old); err != nil {
+
+	raw := bytes.TrimPrefix(old, utf8BOM)
+	if len(raw) == 0 {
+		raw = []byte("{}\n")
+	}
+	if _, err := parseConfigEntries(raw); err != nil {
+		return err
+	}
+	if transform != nil {
+		updated, err := transform(raw)
+		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(path+".bak", old, 0o600); err != nil {
+		if bytes.HasPrefix(old, utf8BOM) {
+			updated = append(append([]byte{}, utf8BOM...), updated...)
+		}
+		return writeConfigFile(path, old, updated)
+	}
+	fields := make(map[string]json.RawMessage, len(set))
+	for key, value := range set {
+		encoded, err := json.Marshal(value)
+		if err != nil {
 			return err
 		}
+		fields[key] = encoded
 	}
-	// Apply in a stable order: existing keys first (in place), then new ones sorted.
-	var added []string
-	for k := range set {
-		found := false
-		for _, e := range entries {
-			if e.key == k {
-				found = true
-			}
-		}
-		if !found {
-			added = append(added, k)
-		}
+	updated, err := patchObject(raw, fields)
+	if err != nil {
+		return err
 	}
-	sort.Strings(added)
-	for _, k := range added {
-		entries = append(entries, configEntry{key: k})
+	entries, err := parseConfigEntries(updated)
+	if err != nil {
+		return err
 	}
+	// Retain UpdateFile's established normalized output; nested translation edits
+	// above use the same patch engine while preserving the original formatting.
+
 	var out bytes.Buffer
 	out.WriteString("{\n")
 	for i, e := range entries {
 		raw := e.val
-		if v, ok := set[e.key]; ok {
-			b, err := json.Marshal(v)
-			if err != nil {
-				return err
-			}
-			raw = b
-		}
 		var compact bytes.Buffer
 		if err := json.Compact(&compact, raw); err != nil {
 			return err
@@ -158,5 +169,93 @@ func UpdateFile(dir string, set map[string]any) error {
 		out.WriteString("\n")
 	}
 	out.WriteString("}\n")
-	return os.WriteFile(path, out.Bytes(), 0o644)
+	return writeConfigFile(path, old, out.Bytes())
+}
+
+// patchObject changes only value spans, retaining unknown fields and formatting.
+func patchObject(raw []byte, set map[string]json.RawMessage) ([]byte, error) {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	if t, err := d.Token(); err != nil || t != json.Delim('{') {
+		return nil, fmt.Errorf("expected config object")
+	}
+	type edit struct {
+		start, end int
+		value      []byte
+	}
+	var edits []edit
+	found := map[string]bool{}
+	members := 0
+	for d.More() {
+		members++
+		key, err := d.Token()
+		if err != nil {
+			return nil, err
+		}
+		var value json.RawMessage
+		if err := d.Decode(&value); err != nil {
+			return nil, err
+		}
+		end := int(d.InputOffset())
+		// Decode starts before the colon and whitespace; locate the raw value.
+		start := end - len(value)
+		if replacement, ok := set[key.(string)]; ok {
+			var a, b any
+			left := json.NewDecoder(bytes.NewReader(value))
+			left.UseNumber()
+			right := json.NewDecoder(bytes.NewReader(replacement))
+			right.UseNumber()
+			if err := left.Decode(&a); err != nil {
+				return nil, err
+			}
+			if err := right.Decode(&b); err != nil {
+				return nil, err
+			}
+			if !reflect.DeepEqual(a, b) {
+				edits = append(edits, edit{start, end, replacement})
+			}
+			found[key.(string)] = true
+		}
+	}
+	closeAt := int(d.InputOffset())
+	for closeAt < len(raw) && raw[closeAt] != '}' {
+		closeAt++
+	}
+	var keys []string
+	for key := range set {
+		if !found[key] {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var extra bytes.Buffer
+	for i, key := range keys {
+		if members > 0 || i > 0 {
+			extra.WriteByte(',')
+		}
+		k, _ := json.Marshal(key)
+		extra.Write(k)
+		extra.WriteByte(':')
+		extra.Write(set[key])
+	}
+	if extra.Len() > 0 {
+		edits = append(edits, edit{closeAt, closeAt, extra.Bytes()})
+	}
+	for i := len(edits) - 1; i >= 0; i-- {
+		e := edits[i]
+		raw = append(append(append([]byte{}, raw[:e.start]...), e.value...), raw[e.end:]...)
+	}
+	return raw, nil
+}
+
+// writeConfigFile keeps Scoop hard links intact and leaves no backup on no-op saves.
+func writeConfigFile(path string, old, updated []byte) error {
+	if bytes.Equal(old, updated) {
+		return nil
+	}
+	if len(old) > 0 {
+		if err := os.WriteFile(path+".bak", old, 0600); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, updated, 0644)
 }

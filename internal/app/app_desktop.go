@@ -114,9 +114,11 @@ func (a *app) startClipboardTranslation() {
 	a.translateCaptured(p, 0, source, false, err)
 }
 
+var isCrostini = platform.IsCrostini
+
 func (a *app) chromeOSProfile() bool {
 	s := a.desktopStatus()
-	return runtime.GOOS == "linux" && s.PortalWorkflowUnavailable
+	return runtime.GOOS == "linux" && isCrostini() && s.PortalCapabilitiesMissing
 }
 
 func (a *app) presentManualControl() {
