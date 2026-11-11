@@ -59,7 +59,10 @@ func (a *app) startTranslateAPI() error {
 	if err := a.ensureTranslateAPIToken(); err != nil {
 		return err
 	}
-	addresses := platform.TranslationAPIBindHosts()
+	addresses, warning := platform.TranslationAPIBindHosts()
+	if warning != "" {
+		a.tray.Notify("Clipboard Translator", warning, true)
+	}
 	listeners := make([]net.Listener, 0, len(addresses))
 	for _, host := range addresses {
 		ln, err := net.Listen("tcp4", net.JoinHostPort(host, translateAPIPort))

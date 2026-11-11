@@ -20,21 +20,26 @@ func translationAPICrostini(read func(string) ([]byte, error), getenv func(strin
 	return getenv("SOMMELIER_VERSION") != ""
 }
 
-func translationAPIBindHosts(crostini bool, primary func() (string, error)) []string {
+// translationAPIBindHosts lists the addresses to listen on. It never falls back
+// to the wildcard: when the Crostini container address cannot be read it listens
+// on loopback only and returns a warning, so a transient lookup failure cannot
+// expose the endpoint on every interface.
+func translationAPIBindHosts(crostini bool, primary func() (string, error)) (hosts []string, warning string) {
 	if !crostini {
-		return []string{"127.0.0.1"}
+		return []string{"127.0.0.1"}, ""
 	}
 	ip, err := primary()
 	parsed := net.ParseIP(ip)
 	if err != nil || parsed.To4() == nil || parsed.IsLoopback() || parsed.IsUnspecified() {
-		log.Printf("translation endpoint: cannot determine Crostini container IPv4 (%v, %q); falling back to wildcard for ChromeOS forwarding", err, ip)
-		return []string{"0.0.0.0"}
+		log.Printf("translation endpoint: cannot determine Crostini container IPv4 (%v, %q); listening on loopback only", err, ip)
+		return []string{"127.0.0.1"}, "The container network address could not be read, so ChromeOS port forwarding cannot reach the endpoint. Turn the endpoint off and on again once the network is up."
 	}
-	return []string{"127.0.0.1", ip}
+	return []string{"127.0.0.1", ip}, ""
 }
 
-// TranslationAPIBindHosts resolves addresses at endpoint startup.
-func TranslationAPIBindHosts() []string {
+// TranslationAPIBindHosts resolves the addresses each time the endpoint is
+// started, so a changed container address is picked up when it is turned on again.
+func TranslationAPIBindHosts() ([]string, string) {
 	return translationAPIBindHosts(translationAPICrostini(os.ReadFile, os.Getenv), func() (string, error) {
 		// A UDP route lookup selects the primary interface without sending packets.
 		conn, err := net.Dial("udp4", "192.0.2.1:9")

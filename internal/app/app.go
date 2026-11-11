@@ -839,7 +839,11 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		a.tray.SetStatus(a.readyTip)
 		if a.desktopStatus().Wayland || errors.Is(err, platform.ErrCaptureModifiersHeld) || errors.Is(err, platform.ErrCaptureFocusChanged) {
 			// Say so: translating the old clipboard text instead would be a silent wrong answer.
-			a.tray.Notify("Clipboard Translator", "Nothing was translated: "+err.Error()+". Release the keys and press the hotkey again.", true)
+			msg := "Nothing was translated: " + err.Error() + "."
+			if !a.desktopStatus().Manual { // manual mode has no hotkey to press again
+				msg += " Release the keys and press the hotkey again."
+			}
+			a.tray.Notify("Clipboard Translator", msg, true)
 		}
 		return
 	}
