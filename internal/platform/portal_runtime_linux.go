@@ -109,7 +109,7 @@ func (d *portalDesktop) Step() {
 	d.remote.Step()
 }
 func (d *portalDesktop) DesktopStatus() DesktopStatus {
-	s := DesktopStatus{Wayland: true, PortalCapabilitiesMissing: d.portalCapabilitiesMissing}
+	s := DesktopStatus{Crostini: desktopCrostini, Wayland: true, PortalCapabilitiesMissing: d.portalCapabilitiesMissing}
 	switch {
 	case d.manual && !d.closed:
 		s.Manual = true

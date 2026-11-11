@@ -13,13 +13,12 @@ import (
 )
 
 func TestChromeOSManualMenu(t *testing.T) {
-	t.Setenv("SOMMELIER_VERSION", "test")
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux manual profile")
 	}
 	a := apiUnitApp(t)
 	base := a.cb.(*testClipboard)
-	cb := &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true, PortalCapabilitiesMissing: true}}
+	cb := &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true, Crostini: true, PortalCapabilitiesMissing: true}}
 	a.cb = cb
 	for _, enabled := range []bool{false, true} {
 		a.conf.TranslateAPIEnabled = enabled
@@ -79,13 +78,12 @@ func TestChromeOSManualMenu(t *testing.T) {
 }
 
 func TestChromeOSMenuEndpointToggle(t *testing.T) {
-	t.Setenv("SOMMELIER_VERSION", "test")
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux manual profile")
 	}
 	a := apiUnitApp(t)
 	base := a.cb.(*testClipboard)
-	a.cb = &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true, PortalCapabilitiesMissing: true}}
+	a.cb = &asyncDesktopClipboard{testClipboard: base, state: platform.DesktopStatus{Wayland: true, Manual: true, Crostini: true, PortalCapabilitiesMissing: true}}
 	// A free endpoint port is needed for this listener lifecycle check.
 	ln, err := net.Listen("tcp4", net.JoinHostPort("0.0.0.0", translateAPIPort))
 	if err != nil {
@@ -115,12 +113,11 @@ func TestChromeOSMenuEndpointToggle(t *testing.T) {
 }
 
 func TestChromeOSMenuEndpointSaveFailure(t *testing.T) {
-	t.Setenv("SOMMELIER_VERSION", "test")
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux manual profile")
 	}
 	a := apiUnitApp(t)
-	a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{Wayland: true, Manual: true, PortalCapabilitiesMissing: true}}
+	a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{Wayland: true, Manual: true, Crostini: true, PortalCapabilitiesMissing: true}}
 	// A file cannot serve as the config directory, so token persistence fails before listen.
 	a.dir = filepath.Join(a.dir, "blocked")
 	if err := os.WriteFile(a.dir, []byte("x"), 0600); err != nil {
@@ -133,7 +130,6 @@ func TestChromeOSMenuEndpointSaveFailure(t *testing.T) {
 }
 
 func TestChromeOSProfileCapability(t *testing.T) {
-	t.Setenv("SOMMELIER_VERSION", "test")
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux capability profile")
 	}
@@ -141,7 +137,7 @@ func TestChromeOSProfileCapability(t *testing.T) {
 		for _, unavailable := range []bool{false, true} {
 			a := apiUnitApp(t)
 			a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{
-				Wayland: wayland, Manual: wayland && unavailable, PortalCapabilitiesMissing: unavailable,
+				Crostini: true, Wayland: wayland, Manual: wayland && unavailable, PortalCapabilitiesMissing: unavailable,
 			}}
 			if got := a.chromeOSProfile(); got != unavailable {
 				t.Fatalf("wayland=%v unavailable=%v: profile=%v", wayland, unavailable, got)
@@ -163,10 +159,6 @@ func TestChromeOSProfileCapability(t *testing.T) {
 }
 
 func TestOrdinaryDesktopNeverChromeOS(t *testing.T) {
-	old := isCrostini
-	t.Cleanup(func() { isCrostini = old })
-	isCrostini = func() bool { return false }
-	t.Setenv("SOMMELIER_VERSION", "test")
 	a := apiUnitApp(t)
 	for _, wayland := range []bool{false, true} {
 		a.cb = &asyncDesktopClipboard{testClipboard: &testClipboard{}, state: platform.DesktopStatus{Wayland: wayland, PortalCapabilitiesMissing: true}}
@@ -185,8 +177,12 @@ func TestConnectionCopyWhileTranslating(t *testing.T) {
 	a.translating = true
 	generation := a.generation
 	a.copyConnectionInfo()
-	if cancelled || a.generation != generation || cb.text != "source" || a.conf.TranslateAPIToken != "" {
+	if cancelled || a.generation != generation || cb.text == "source" || len(a.conf.TranslateAPIToken) != 64 || !a.translating {
 		t.Fatal("copy disturbed active translation")
+	}
+	var info struct{ Endpoint, Token string }
+	if err := json.Unmarshal([]byte(cb.text), &info); err != nil || info.Endpoint != translateAPIURL() || info.Token != a.conf.TranslateAPIToken {
+		t.Fatalf("connection info = %q, error %v", cb.text, err)
 	}
 }
 

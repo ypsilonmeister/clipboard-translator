@@ -5,7 +5,9 @@ package platform
 import "testing"
 
 func TestPortalWorkflowCapabilityStatus(t *testing.T) {
-	t.Setenv("SOMMELIER_VERSION", "test")
+	oldEval, oldCached := evaluateCrostini, desktopCrostini
+	t.Cleanup(func() { evaluateCrostini, desktopCrostini = oldEval, oldCached })
+	evaluateCrostini = func() bool { return true }
 	oldProbe, oldWayland, oldUnavailable := probePortalWorkflow, linuxWayland, linuxPortalCapabilitiesMissing
 	defer func() {
 		probePortalWorkflow, linuxWayland, linuxPortalCapabilitiesMissing = oldProbe, oldWayland, oldUnavailable
@@ -30,12 +32,14 @@ func TestPortalWorkflowCapabilityStatus(t *testing.T) {
 
 func TestOrdinaryX11SkipsPortalProbe(t *testing.T) {
 	oldProbe, oldWayland := probePortalWorkflow, linuxWayland
-	oldMarker, oldMissing := desktopIsCrostini, linuxPortalCapabilitiesMissing
+	oldCached := desktopCrostini
+	oldMarker, oldMissing := evaluateCrostini, linuxPortalCapabilitiesMissing
 	t.Cleanup(func() {
+		desktopCrostini = oldCached
 		probePortalWorkflow, linuxWayland = oldProbe, oldWayland
-		desktopIsCrostini, linuxPortalCapabilitiesMissing = oldMarker, oldMissing
+		evaluateCrostini, linuxPortalCapabilitiesMissing = oldMarker, oldMissing
 	})
-	desktopIsCrostini = func() bool { return false }
+	evaluateCrostini = func() bool { return false }
 	linuxWayland = false
 	probePortalWorkflow = func() bool { t.Fatal("ordinary desktop probed portals"); return false }
 	if err := InitializeDesktop(t.TempDir()); err != nil {
@@ -43,5 +47,36 @@ func TestOrdinaryX11SkipsPortalProbe(t *testing.T) {
 	}
 	if linuxPortalCapabilitiesMissing {
 		t.Fatal("ordinary X11 reported missing capabilities")
+	}
+}
+
+func TestCrostiniDetectionCached(t *testing.T) {
+	oldEval, oldCached := evaluateCrostini, desktopCrostini
+	oldProbe, oldWayland, oldMissing := probePortalWorkflow, linuxWayland, linuxPortalCapabilitiesMissing
+	t.Cleanup(func() {
+		evaluateCrostini, desktopCrostini = oldEval, oldCached
+		probePortalWorkflow, linuxWayland, linuxPortalCapabilitiesMissing = oldProbe, oldWayland, oldMissing
+	})
+	calls := 0
+	evaluateCrostini = func() bool { calls++; return true }
+	linuxWayland = false
+	probePortalWorkflow = func() bool { return false }
+	if err := InitializeDesktop(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	evaluateCrostini = func() bool { t.Fatal("detection after initialization"); return false }
+	for i := 0; i < 5; i++ {
+		x := (&linuxClipboard{portalCapabilitiesMissing: linuxPortalCapabilitiesMissing}).DesktopStatus()
+		w := (&portalDesktop{manual: true}).DesktopStatus()
+		if !x.Crostini || !w.Crostini || !x.PortalCapabilitiesMissing {
+			t.Fatal(x, w)
+		}
+		hosts := TranslationAPIBindHosts()
+		if len(hosts) == 0 || (len(hosts) == 1 && hosts[0] == "127.0.0.1") {
+			t.Fatal(hosts)
+		}
+	}
+	if calls != 1 {
+		t.Fatal(calls)
 	}
 }

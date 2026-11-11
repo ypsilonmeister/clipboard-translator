@@ -169,7 +169,12 @@ func updateFile(dir string, set map[string]any, transform func([]byte) ([]byte, 
 		out.WriteString("\n")
 	}
 	out.WriteString("}\n")
-	return writeConfigFile(path, old, out.Bytes())
+	normalized := out.Bytes()
+	// Preserve Windows line endings through the normal writer as well.
+	if bytes.Contains(raw, []byte("\r\n")) {
+		normalized = bytes.ReplaceAll(normalized, []byte("\n"), []byte("\r\n"))
+	}
+	return writeConfigFile(path, old, normalized)
 }
 
 // patchObject changes only value spans, retaining unknown fields and formatting.
@@ -185,7 +190,24 @@ func patchObject(raw []byte, set map[string]json.RawMessage) ([]byte, error) {
 	var edits []edit
 	found := map[string]bool{}
 	members := 0
+	lastEnd := int(d.InputOffset()) // Immediately after the opening brace for an empty object.
+	indent := ""
+	newline := "\n"
+	if bytes.Contains(raw, []byte("\r\n")) {
+		newline = "\r\n"
+	}
+	multiline := bytes.Contains(raw, []byte("\n"))
 	for d.More() {
+		keyOffset := int(d.InputOffset())
+		for keyOffset < len(raw) && (raw[keyOffset] == ',' || raw[keyOffset] == ' ' || raw[keyOffset] == '\t' || raw[keyOffset] == '\r' || raw[keyOffset] == '\n') {
+			keyOffset++
+		}
+		if members == 0 {
+			line := bytes.LastIndexByte(raw[:keyOffset], '\n')
+			if line >= 0 {
+				indent = string(raw[line+1 : keyOffset])
+			}
+		}
 		members++
 		key, err := d.Token()
 		if err != nil {
@@ -196,6 +218,7 @@ func patchObject(raw []byte, set map[string]json.RawMessage) ([]byte, error) {
 			return nil, err
 		}
 		end := int(d.InputOffset())
+		lastEnd = end
 		// Decode starts before the colon and whitespace; locate the raw value.
 		start := end - len(value)
 		if replacement, ok := set[key.(string)]; ok {
@@ -216,10 +239,6 @@ func patchObject(raw []byte, set map[string]json.RawMessage) ([]byte, error) {
 			found[key.(string)] = true
 		}
 	}
-	closeAt := int(d.InputOffset())
-	for closeAt < len(raw) && raw[closeAt] != '}' {
-		closeAt++
-	}
 	var keys []string
 	for key := range set {
 		if !found[key] {
@@ -232,13 +251,20 @@ func patchObject(raw []byte, set map[string]json.RawMessage) ([]byte, error) {
 		if members > 0 || i > 0 {
 			extra.WriteByte(',')
 		}
+		if multiline {
+			extra.WriteString(newline)
+			extra.WriteString(indent)
+		}
 		k, _ := json.Marshal(key)
 		extra.Write(k)
 		extra.WriteByte(':')
+		if multiline {
+			extra.WriteByte(' ')
+		}
 		extra.Write(set[key])
 	}
 	if extra.Len() > 0 {
-		edits = append(edits, edit{closeAt, closeAt, extra.Bytes()})
+		edits = append(edits, edit{lastEnd, lastEnd, extra.Bytes()})
 	}
 	for i := len(edits) - 1; i >= 0; i-- {
 		e := edits[i]

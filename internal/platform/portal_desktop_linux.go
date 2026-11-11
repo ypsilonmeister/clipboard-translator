@@ -24,9 +24,6 @@ var activePortalDesktop *portalDesktop
 var linuxWayland bool
 var linuxPortalCapabilitiesMissing bool
 
-// Replaceable for capability tests; probe before the UI loop starts.
-var desktopIsCrostini = IsCrostini
-
 var probePortalWorkflow = nativePortalInterfacesAvailable
 
 func detectPortalWorkflow(probe func() bool) bool { return !probe() }
@@ -35,8 +32,9 @@ func initializeWaylandGTK() bool { return C.ct_wayland_gtk_init() != 0 }
 
 // Called after acquiring the single-instance lock; all portal ownership is UI-thread local.
 func InitializeDesktop(dir string) error {
+	desktopCrostini = evaluateCrostini()
 	linuxPortalCapabilitiesMissing = false
-	if !linuxWayland && desktopIsCrostini() {
+	if !linuxWayland && desktopCrostini {
 		linuxPortalCapabilitiesMissing = detectPortalWorkflow(probePortalWorkflow)
 	}
 	if !linuxWayland {

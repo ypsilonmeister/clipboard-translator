@@ -14,14 +14,13 @@ import (
 )
 
 func TestChromeOSLanguageSettings(t *testing.T) {
-	t.Setenv("SOMMELIER_VERSION", "test")
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux capability profile")
 	}
 	for _, wayland := range []bool{false, true} {
 		for _, unavailable := range []bool{false, true} {
 			a := apiUnitApp(t)
-			a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{Wayland: wayland, Manual: wayland && unavailable, PortalCapabilitiesMissing: unavailable}}
+			a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{Crostini: true, Wayland: wayland, Manual: wayland && unavailable, PortalCapabilitiesMissing: unavailable}}
 			before, _ := json.Marshal(a.conf)
 			st := a.settingsState()
 			if st.LanguageOnly != unavailable {
@@ -36,12 +35,11 @@ func TestChromeOSLanguageSettings(t *testing.T) {
 }
 
 func TestChromeOSLanguageSavePreservesHotkeys(t *testing.T) {
-	t.Setenv("SOMMELIER_VERSION", "test")
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux capability profile")
 	}
 	a := apiUnitApp(t)
-	a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{PortalCapabilitiesMissing: true}}
+	a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{Crostini: true, PortalCapabilitiesMissing: true}}
 	const original = `{
   "hotkey" : "Alt+Shift+E",
   "languages": ["ja", "en"],
@@ -74,7 +72,7 @@ func TestChromeOSLanguageSavePreservesHotkeys(t *testing.T) {
 	}
 	got, _ := os.ReadFile(filepath.Join(a.dir, "config.json"))
 	want := strings.Replace(original, `"languages" : ["ja", "en"]`, `"languages" : null`, 1)
-	want = strings.Replace(want, `"future": {"x": 1} }`, `"future": {"x": 1} ,"target":"de"}`, 1)
+	want = strings.Replace(want, `"future": {"x": 1} }`, `"future": {"x": 1},"target":"de" }`, 1)
 	if string(got) != want {
 		t.Fatalf("file changed outside language values:\ngot %s\nwant %s", got, want)
 	}
@@ -93,12 +91,11 @@ func TestChromeOSLanguageSavePreservesHotkeys(t *testing.T) {
 }
 
 func TestChromeOSReadyTip(t *testing.T) {
-	t.Setenv("SOMMELIER_VERSION", "test")
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux capability profile")
 	}
 	a := apiUnitApp(t)
-	a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{PortalCapabilitiesMissing: true}}
+	a.cb = &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{Crostini: true, PortalCapabilitiesMissing: true}}
 	a.updateReadyTip()
 	if a.readyTip != "Clipboard Translator - ready" {
 		t.Fatal(a.readyTip)
@@ -110,6 +107,7 @@ func TestChromeOSReadyTip(t *testing.T) {
 	if a.readyTip != "Clipboard Translator - ready (Alt+Shift+E)" {
 		t.Fatal(a.readyTip)
 	}
+	a.cb.(*asyncDesktopClipboard).state.Crostini = true
 	a.cb.(*asyncDesktopClipboard).state.PortalCapabilitiesMissing = true
 	a.modelUnloaded = true
 	a.updateReadyTip()

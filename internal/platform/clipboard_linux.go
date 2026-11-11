@@ -16,7 +16,7 @@ import (
 type linuxClipboard struct{ portalCapabilitiesMissing bool }
 
 func (c *linuxClipboard) DesktopStatus() DesktopStatus {
-	return DesktopStatus{PortalCapabilitiesMissing: c.portalCapabilitiesMissing}
+	return DesktopStatus{Crostini: desktopCrostini, PortalCapabilitiesMissing: c.portalCapabilitiesMissing}
 }
 func (*linuxClipboard) RetryDesktop() {}
 

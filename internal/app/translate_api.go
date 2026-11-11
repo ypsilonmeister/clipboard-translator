@@ -270,10 +270,6 @@ func (a *app) tickAPIContext() {
 
 // copyConnectionInfo shares token persistence with endpoint startup without opening a listener.
 func (a *app) copyConnectionInfo() {
-	if a.busy() || a.capturing != nil || a.pendingRead != nil || a.pendingResult != nil {
-		a.tray.Notify("Clipboard Translator", "Translation in progress; copy connection info after it finishes.", false)
-		return
-	}
 	if err := a.ensureTranslateAPIToken(); err != nil {
 		a.tray.Notify("Clipboard Translator", "Could not save connection info: "+err.Error(), true)
 		return

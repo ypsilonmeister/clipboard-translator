@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -95,5 +96,35 @@ func TestUpdateConfigFileMissingAndInvalid(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(bad, "config.json")); string(b) != `["not an object"]` {
 		t.Fatal("a refused update must leave the file untouched")
+	}
+}
+
+func TestPatchObjectAppendFormatting(t *testing.T) {
+	for _, newline := range []string{"\n", "\r\n"} {
+		for _, indent := range []string{"  ", "\t"} {
+			raw := []byte("{" + newline + indent + `"existing": true` + newline + "}" + newline)
+			got, err := patchObject(raw, map[string]json.RawMessage{"added": json.RawMessage(`42`)})
+			want := "{" + newline + indent + `"existing": true,` + newline + indent + `"added": 42` + newline + "}" + newline
+			if err != nil || string(got) != want || !json.Valid(got) {
+				t.Fatalf("got %q, err %v; want %q", got, err, want)
+			}
+		}
+	}
+}
+
+func TestUpdateFileAppendCRLF(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	const original = "{\r\n  \"hotkey\": \"Ctrl+Alt+E\"\r\n}\r\n"
+	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateFile(dir, map[string]any{"auto_paste": true}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	const want = "{\r\n  \"hotkey\": \"Ctrl+Alt+E\",\r\n  \"auto_paste\": true\r\n}\r\n"
+	if err != nil || string(got) != want || !json.Valid(got) {
+		t.Fatalf("got %q, err %v", got, err)
 	}
 }

@@ -3,7 +3,6 @@ package app
 import (
 	"errors"
 	"log"
-	"runtime"
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
@@ -114,11 +113,9 @@ func (a *app) startClipboardTranslation() {
 	a.translateCaptured(p, 0, source, false, err)
 }
 
-var isCrostini = platform.IsCrostini
-
 func (a *app) chromeOSProfile() bool {
 	s := a.desktopStatus()
-	return runtime.GOOS == "linux" && isCrostini() && s.PortalCapabilitiesMissing
+	return s.Crostini && s.PortalCapabilitiesMissing
 }
 
 func (a *app) presentManualControl() {
