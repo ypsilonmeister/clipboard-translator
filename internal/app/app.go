@@ -510,6 +510,13 @@ func (a *app) updateReadyTip() {
 		a.readyTip = "Clipboard Translator - " + s.Message
 		return
 	}
+	if a.chromeOSProfile() {
+		a.readyTip = "Clipboard Translator - ready"
+		if a.modelUnloaded {
+			a.readyTip = "Clipboard Translator - idle (model unloaded); next translation loads the model"
+		}
+		return
+	}
 	if a.modelUnloaded {
 		a.readyTip = "Clipboard Translator - idle (model unloaded); next hotkey loads the model"
 		return
