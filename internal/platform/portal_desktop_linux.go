@@ -22,11 +22,21 @@ import (
 
 var activePortalDesktop *portalDesktop
 var linuxWayland bool
+var linuxPortalCapabilitiesMissing bool
+
+var probePortalWorkflow = nativePortalInterfacesAvailable
+
+func detectPortalWorkflow(probe func() bool) bool { return !probe() }
 
 func initializeWaylandGTK() bool { return C.ct_wayland_gtk_init() != 0 }
 
 // Called after acquiring the single-instance lock; all portal ownership is UI-thread local.
 func InitializeDesktop(dir string) error {
+	desktopCrostini = evaluateCrostini()
+	linuxPortalCapabilitiesMissing = false
+	if !linuxWayland && desktopCrostini {
+		linuxPortalCapabilitiesMissing = detectPortalWorkflow(probePortalWorkflow)
+	}
 	if !linuxWayland {
 		return nil
 	}

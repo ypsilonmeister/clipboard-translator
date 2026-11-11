@@ -211,3 +211,5 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 /* An author rule such as display:flex would otherwise beat the hidden attribute. */
 [hidden] { display: none !important; }
+
+#hotkeys-controls { border: 0; padding: 0; margin: 0; min-width: 0; }

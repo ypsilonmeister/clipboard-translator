@@ -512,6 +512,13 @@ func (a *app) updateReadyTip() {
 		a.readyTip = "Clipboard Translator - " + s.Message
 		return
 	}
+	if a.chromeOSProfile() {
+		a.readyTip = "Clipboard Translator - ready"
+		if a.modelUnloaded {
+			a.readyTip = "Clipboard Translator - idle (model unloaded); next translation loads the model"
+		}
+		return
+	}
 	if a.modelUnloaded {
 		a.readyTip = "Clipboard Translator - idle (model unloaded); next hotkey loads the model"
 		return
@@ -531,7 +538,7 @@ func (a *app) serve(cb platform.Clipboard) {
 		log.Printf("ready, but the hotkey %s could not be registered; waiting for the user to pick another", a.conf.Hotkey)
 		tray.Notify("Clipboard Translator", fmt.Sprintf("Could not register the hotkey %s (another program may be using it). Open Settings... from the tray menu and choose another hotkey there.", a.conf.Hotkey), true)
 	} else {
-		log.Printf("ready: select text and press %s (or translate existing clipboard)", a.hotkeySummary())
+		log.Print(readyMessage(a.hotkeySummary()))
 		if !a.conf.QuickstartShown && !a.desktopStatus().Wayland {
 			a.showQuickstart() // first run only; the tray menu shows it again
 		}
@@ -1097,4 +1104,11 @@ func pasteWithFocus(target uintptr, foreground func() uintptr, wait func(time.Du
 		return errors.New("the focused window changed while waiting to paste")
 	}
 	return send()
+}
+
+func readyMessage(hotkeys string) string {
+	if hotkeys == "" {
+		return "ready: copy text and choose Translate clipboard, then paste"
+	}
+	return fmt.Sprintf("ready: select text and press %s (or translate existing clipboard)", hotkeys)
 }

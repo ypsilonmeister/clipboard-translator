@@ -127,7 +127,7 @@ func TestPortalMissingCapabilitiesEnableManualClipboardOnly(t *testing.T) {
 			w.events = append(w.events, portalEvent{kind: "capability", id: iface, code: 0})
 			d.Step()
 			s := d.DesktopStatus()
-			if !d.manual || !shown || s.Ready || !strings.Contains(s.Message, "Manual mode") {
+			if !s.PortalCapabilitiesMissing || !d.manual || !shown || s.Ready || !strings.Contains(s.Message, "Manual mode") {
 				t.Fatalf("status=%+v manual=%v shown=%v", s, d.manual, shown)
 			}
 			text, err := d.Read()

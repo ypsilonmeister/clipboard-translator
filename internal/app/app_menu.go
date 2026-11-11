@@ -6,12 +6,14 @@ import (
 	"log"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
@@ -27,6 +29,8 @@ const (
 	cmdUnloadModel          = platform.FirstAppCommand + 10
 	cmdQuickstart           = platform.FirstAppCommand + 11
 	cmdTranslateClipboard   = platform.FirstAppCommand + 13
+	cmdTranslateAPIToggle   = platform.FirstAppCommand + 14
+	cmdCopyConnectionInfo   = platform.FirstAppCommand + 15
 	cmdRetryDesktop         = platform.FirstAppCommand + 12
 	cmdModelBase            = platform.FirstAppCommand + 100 // + index into models.Catalog
 	cmdHistoryBase          = platform.FirstAppCommand + 300 // translation; + index into history (newest first)
@@ -61,6 +65,14 @@ func (a *app) buildMenu() []platform.MenuItem {
 	items := []platform.MenuItem{{ID: cmdSettings, Label: "Settings..."}, {ID: cmdQuickstart, Label: "Quick start"}}
 	if runtime.GOOS == "linux" {
 		items = append(items, platform.MenuItem{ID: cmdTranslateClipboard, Label: "Translate clipboard"})
+	}
+	if a.chromeOSProfile() {
+		items = append(items,
+			platform.MenuItem{ID: cmdTranslateAPIToggle, Label: "Chrome extension endpoint", Checked: a.conf.TranslateAPIEnabled},
+			platform.MenuItem{ID: cmdCopyConnectionInfo, Label: "Copy connection info"})
+		if a.conf.TranslateAPIEnabled {
+			items = append(items, platform.MenuItem{Label: "ChromeOS: enable port forwarding for TCP " + translateAPIPort, Disabled: true})
+		}
 	}
 	if s := a.desktopStatus(); s.Wayland {
 		label := "Wayland: waiting for desktop permissions"
@@ -131,6 +143,14 @@ func (a *app) buildMenu() []platform.MenuItem {
 // handleCommand runs one app-specific menu command. It runs on the UI thread.
 func (a *app) handleCommand(id int) {
 	switch {
+	case id == cmdTranslateAPIToggle && a.chromeOSProfile():
+		req := settings.NewActionRequest("translate_api", strconv.FormatBool(!a.conf.TranslateAPIEnabled), time.Second)
+		a.handleSettingsRequest(req)
+		if rep := <-req.Reply; rep.Err != nil {
+			a.tray.Notify("Clipboard Translator", "Could not change translation endpoint: "+rep.Err.Error(), true)
+		}
+	case id == cmdCopyConnectionInfo && a.chromeOSProfile():
+		a.copyConnectionInfo()
 	case id == cmdTranslateClipboard:
 		a.startClipboardTranslation()
 	case id == cmdRetryDesktop:

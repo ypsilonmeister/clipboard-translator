@@ -32,11 +32,13 @@
 
   <section class="card" aria-labelledby="hotkeys-title">
     <h2 id="hotkeys-title">Hotkeys</h2>
-    <p class="hint">Select text in any program and press a hotkey. The translation replaces what is on the clipboard. Each hotkey can translate in its own way.</p>
-    <div id="profiles"></div>
-    <div class="add-row">
-      <button id="add" type="button" class="secondary">+ Add hotkey</button>
-      <p id="limit" class="hint" hidden></p>
+    <p id="hotkeys-intro" class="hint">Select text in any program and press a hotkey. The translation replaces what is on the clipboard. Each hotkey can translate in its own way.</p>
+    <div id="hotkeys-controls">
+      <div id="profiles"></div>
+      <div class="add-row">
+        <button id="add" type="button" class="secondary">+ Add hotkey</button>
+        <p id="limit" class="hint" hidden></p>
+      </div>
     </div>
   </section>
 
@@ -59,6 +61,7 @@
       <input type="checkbox" id="auto-paste">
       <span>Paste automatically after translating</span>
     </label>
+    <p id="auto-paste-unavailable" class="hint" hidden></p>
     <p class="hint">Types the paste shortcut for you, but only when the text was a fresh selection and the same window is still in front.</p>
     <label class="check">
       <input type="checkbox" id="notify-on-complete">

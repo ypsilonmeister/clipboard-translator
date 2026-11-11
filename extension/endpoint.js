@@ -25,3 +25,13 @@ export async function translate(endpoint, token, text) {
   if (typeof result.translation !== 'string' || !result.translation.trim()) throw new Error('App returned no translation.');
   return result.translation;
 }
+
+export function connectionInfo(value) {
+  let info;
+  try { info = JSON.parse(value); }
+  catch { throw new Error('Invalid connection info: paste the JSON from the app menu.'); }
+  if (!info || typeof info.endpoint !== 'string' || typeof info.token !== 'string' || !info.token.trim()) {
+    throw new Error('Invalid connection info: endpoint and token are required.');
+  }
+  return {endpoint: endpointURL(info.endpoint), token: info.token.trim()};
+}
