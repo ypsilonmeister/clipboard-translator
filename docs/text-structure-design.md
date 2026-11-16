@@ -115,6 +115,7 @@ When text length exceeds the safety budget (determined by profile `max_chars` or
 ```
 
 1. **Paragraph-level chunks (Primary):** Split on blank-line boundaries (`\n\s*\n`). Consecutive small paragraphs are grouped together up to the target chunk size.
+   - *Group fallback (Issue #173):* A group of paragraphs is sent as one request with blank lines between them, and the translation is split back at its blank lines. If the number of paragraphs that comes back differs (the model merged or split paragraphs), that group alone is translated again, one request per paragraph. The one-to-one paragraph mapping of §3.2 therefore never depends on the model keeping the separators.
 2. **Sentence-level fallback (Secondary):** If an individual paragraph exceeds the chunk size, split it at sentence boundaries:
    - Latin: `[.!?]\s+` followed by an uppercase letter.
    - Japanese: `[。！？]` followed by non-quote character.
@@ -131,6 +132,7 @@ Multi-chunk translation must strictly uphold the app's fundamental contract of *
   3. **Leave the system clipboard untouched:** The user's clipboard remains exactly as it was before the hotkey was pressed.
   4. **In-Memory History:** Do not record incomplete or fragmented translations in the history tray menu. The failed request is discarded (or recorded with its original text and an error indicator).
   5. **User Feedback:** The tray icon tooltip or balloon notification clearly indicates the failure (e.g. `Translation failed at chunk 2 of 4`).
+- **Timeout semantics (Issue #173):** `translation_timeout_seconds` limits **each request** to `llama-server`, not the whole job. A long text on a slow engine is several requests that each finish in time, so a total limit would fail texts whose chunks all succeed. The job as a whole ends when it finishes, fails, or is cancelled or superseded by the user. A request that runs into the limit fails the job (all-or-nothing as above) with a message that names `translation_timeout_seconds`.
 
 ### 3.2 Bilingual Output Recombination (バイリンガル出力の結合形式)
 When `output: "bilingual"` is configured in the profile:
