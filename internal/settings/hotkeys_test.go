@@ -34,7 +34,13 @@ for (const languageOnly of [false,true,false]) {
  assert.equal($('add').hidden,languageOnly);
  const nodes=all($('profiles'));
  const labels=nodes.map(n=>n.text||n['aria-label']||'').join(' ');
- for(const text of ['Text from','Output','Line breaks','Keys','Remove hotkey']) assert.equal(labels.includes(text),!languageOnly,text);
+ for(const text of ['Text from','Keys','Remove hotkey']) assert.equal(labels.includes(text),!languageOnly,text);
+ for (const [label,field,value] of [['Output','output','bilingual'],['Line breaks','cleanup_newlines','auto']]) {
+  assert(labels.includes(label),label);
+  const select=nodes.find(n=>n.id===(field==='output'?'output-0':'cleanup-0'));
+  touched=false; select.onchange({target:{value}});
+  assert.equal(model.profiles[0][field],value); assert(touched);
+ }
  if(languageOnly){
   assert(!labels.includes('hotkey'));
   const select=nodes.find(n=>n['aria-label']==='First language');select.onchange({target:{value:'de'}});

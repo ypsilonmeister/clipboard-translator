@@ -64,7 +64,6 @@ func TestChromeOSLanguageSavePreservesHotkeys(t *testing.T) {
 	st.Profiles[0].Languages = nil
 	st.Profiles[0].Target = "de"
 	st.Profiles[0].Key = "Q"
-	st.Profiles[0].Output = "replace"
 	st.Profiles[1].Target = "es"
 	warnings, err := a.applySettings(settings.Form{BaseRevision: st.BaseRevision, Changed: []string{"profiles"}, Profiles: st.Profiles})
 	if err != nil || len(warnings) > 0 {
@@ -76,7 +75,7 @@ func TestChromeOSLanguageSavePreservesHotkeys(t *testing.T) {
 	if string(got) != want {
 		t.Fatalf("file changed outside language values:\ngot %s\nwant %s", got, want)
 	}
-	if a.conf.Profiles[0].Target != "de" || a.conf.Profiles[0].Hotkey != "Alt+Shift+E" || a.conf.Profiles[0].Output != "bilingual" || a.conf.Profiles[1].Target != "fr" {
+	if a.conf.Profiles[0].Target != "de" || a.conf.Profiles[0].Hotkey != "Alt+Shift+E" || a.conf.Profiles[0].Output != "bilingual" || a.conf.Profiles[0].CleanupNewlines != "auto" || a.conf.Profiles[1].Target != "fr" {
 		t.Fatalf("config=%+v", a.conf.Profiles)
 	}
 	reloaded, err := config.Load(a.dir)

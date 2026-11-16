@@ -289,29 +289,29 @@
       card.append(h('p', { class: 'hint', text: 'Any language is translated into this one; the model works out the source language itself.' }));
     }
 
-    if (languageOnly) return card;
-
-    const inputId = 'input-' + i;
-    const inputSelect = h('select', {
-      id: inputId,
-      class: 'input',
-      'aria-label': 'Text source for hotkey ' + (i + 1),
-      onchange: (e) => {
-        p.input = e.target.value;
-        touchField('profiles');
+    if (!languageOnly) {
+      const inputId = 'input-' + i;
+      const inputSelect = h('select', {
+        id: inputId,
+        class: 'input',
+        'aria-label': 'Text source for hotkey ' + (i + 1),
+        onchange: (e) => {
+          p.input = e.target.value;
+          touchField('profiles');
+        },
       },
-    },
-      h('option', { value: 'selection', text: 'Selected text (copied first)' }),
-      h('option', { value: 'clipboard', text: 'Clipboard (no copy, no waiting)' }),
-    );
-    inputSelect.value = p.input || 'selection';
-    card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: inputId, text: 'Text from' }), inputSelect));
+        h('option', { value: 'selection', text: 'Selected text (copied first)' }),
+        h('option', { value: 'clipboard', text: 'Clipboard (no copy, no waiting)' }),
+      );
+      inputSelect.value = p.input || 'selection';
+      card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: inputId, text: 'Text from' }), inputSelect));
+    }
 
     const outputId = 'output-' + i;
     const outputSelect = h('select', {
       id: outputId,
       class: 'output',
-      'aria-label': 'Output format for hotkey ' + (i + 1),
+      'aria-label': languageOnly ? 'Output format' : 'Output format for hotkey ' + (i + 1),
       onchange: (e) => {
         p.output = e.target.value;
         touchField('profiles');
@@ -327,7 +327,7 @@
     const cleanupSelect = h('select', {
       id: cleanupId,
       class: 'cleanup-newlines',
-      'aria-label': 'Newline cleanup for hotkey ' + (i + 1),
+      'aria-label': languageOnly ? 'Newline cleanup' : 'Newline cleanup for hotkey ' + (i + 1),
       onchange: (e) => {
         p.cleanup_newlines = e.target.value;
         touchField('profiles');
