@@ -1,0 +1,414 @@
+// Package download is the one HTTP file downloader behind both the first-run
+// setup (internal/setup) and the Settings page's model download
+// (internal/models). It resumes from "<dest>.partial" with a Range request,
+// checks the SHA-256 before the file gets its final name, treats a connection
+// that delivers no byte for a while as failed, and retries a few times, each
+// time continuing from the partial file.
+//
+// It is a leaf package: it imports nothing of this module and never decides
+// by itself to contact the network; callers run it only for something the
+// user started (the setup, or the Download button).
+package download
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"hash"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+)
+
+const (
+	// DefaultStallTimeout is how long a transfer may deliver no byte before the
+	// attempt fails. It is not a limit on the whole download.
+	DefaultStallTimeout = 60 * time.Second
+	// DefaultRetries is the number of automatic retries after a failed attempt.
+	DefaultRetries = 3
+	// DefaultRetryBase is the wait before the first retry; it doubles each time.
+	DefaultRetryBase = 2 * time.Second
+
+	bufSize = 256 << 10
+)
+
+// Options describes one download. Zero values are safe: no retries, the
+// default stall timeout, no progress reports.
+type Options struct {
+	Client *http.Client // no Client.Timeout: that would cap the whole transfer
+	URL    string
+	Dest   string // final name; the data goes to Dest+".partial" first
+	SHA256 string // lowercase or uppercase hex; empty skips the check
+
+	UserAgent string
+	Accept    string // sent only when set
+	Label     string // how errors name the server; default is the URL
+
+	ExpectedSize int64 // a partial file larger than this is thrown away; 0 = unknown
+	// DiskHint is appended to the "is the disk full?" message, e.g. the size the
+	// model needs.
+	DiskHint string
+
+	StallTimeout time.Duration // 0 = DefaultStallTimeout
+	Retries      int           // automatic retries after the first attempt
+	RetryBase    time.Duration // 0 = DefaultRetryBase; doubles per retry
+
+	// DiscardPartialOnFailure removes the partial file when the download fails
+	// for good (never on cancel). A SHA-256 mismatch removes it regardless.
+	DiscardPartialOnFailure bool
+
+	// Callbacks, all optional, all called from the goroutine running Fetch.
+	Phase    func(phase string)                         // "checking" (hashing a partial file), "downloading"
+	Progress func(done, total int64)                    // total is 0 when unknown
+	OnResume func(have int64)                           // a partial file of have bytes is being continued
+	OnRetry  func(n int, err error, wait time.Duration) // retry number n (1-based) starts after wait
+}
+
+// HashMismatchError reports a finished file whose SHA-256 is not the pinned
+// one. The partial file is deleted.
+type HashMismatchError struct{ Name string }
+
+func (e *HashMismatchError) Error() string {
+	return fmt.Sprintf("SHA-256 mismatch: the downloaded %s does not match the pinned checksum and was deleted; try again", e.Name)
+}
+
+// StatusError is an HTTP answer other than the expected 200/206.
+type StatusError struct {
+	Label string
+	Code  int
+}
+
+func (e *StatusError) Error() string { return fmt.Sprintf("%s answered HTTP %d", e.Label, e.Code) }
+
+// ErrStalled is wrapped by the error of an attempt that received no data for
+// the stall timeout.
+var ErrStalled = errors.New("download stalled")
+
+// permanent marks an error no retry can fix (disk, rename, hash, bad range).
+type permanent struct{ err error }
+
+func (p *permanent) Error() string { return p.err.Error() }
+func (p *permanent) Unwrap() error { return p.err }
+
+// errRestart is internal: the partial file was discarded, try again from zero.
+var errRestart = errors.New("restart from the beginning")
+
+// Fetch downloads o.URL to o.Dest. On success the file exists under its final
+// name with a verified SHA-256 and no partial file is left. On failure no file
+// has the final name; the partial file stays (for a later resume) unless it
+// failed the hash check or DiscardPartialOnFailure is set. A cancelled ctx
+// returns ctx.Err() and keeps the partial file.
+func Fetch(ctx context.Context, o Options) error {
+	if o.StallTimeout <= 0 {
+		o.StallTimeout = DefaultStallTimeout
+	}
+	if o.RetryBase <= 0 {
+		o.RetryBase = DefaultRetryBase
+	}
+	if o.Label == "" {
+		o.Label = o.URL
+	}
+	partial := o.Dest + ".partial"
+	restarted := false
+	var err error
+	for attempt := 0; ; {
+		err = once(ctx, &o, partial)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(err, errRestart) && !restarted {
+			restarted = true
+			continue
+		}
+		if !retryable(err) || attempt >= o.Retries {
+			break
+		}
+		wait := o.RetryBase << attempt
+		attempt++
+		if o.OnRetry != nil {
+			o.OnRetry(attempt, err, wait)
+		}
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+	if errors.Is(err, errRestart) {
+		err = &StatusError{Label: o.Label, Code: http.StatusRequestedRangeNotSatisfiable}
+	}
+	if o.DiscardPartialOnFailure {
+		_ = os.Remove(partial)
+	}
+	return err
+}
+
+func retryable(err error) bool {
+	var p *permanent
+	if errors.As(err, &p) {
+		return false
+	}
+	if errors.Is(err, ErrStalled) {
+		return true
+	}
+	var se *StatusError
+	if errors.As(err, &se) {
+		return se.Code >= 500 || se.Code == http.StatusRequestTimeout || se.Code == http.StatusTooManyRequests
+	}
+	// A *url.Error is a net.Error for every cause (a refused https->http
+	// redirect, a blocked test host), so look at what it wraps.
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne)
+}
+
+// once is one attempt: hash what is on disk, request the rest, append it.
+func once(ctx context.Context, o *Options, partial string) error {
+	h := sha256.New()
+	var have int64
+	if info, err := os.Stat(partial); err == nil && info.Mode().IsRegular() {
+		if o.Phase != nil {
+			o.Phase("checking")
+		}
+		n, err := hashFile(ctx, partial, h)
+		if err != nil {
+			return err
+		}
+		have = n
+		if o.ExpectedSize > 0 && have > o.ExpectedSize {
+			// Longer than the file can be: it is not a prefix of it.
+			if err := os.Remove(partial); err != nil {
+				return &permanent{err}
+			}
+			h.Reset()
+			have = 0
+		}
+	}
+	if o.Phase != nil {
+		o.Phase("downloading")
+	}
+	if o.Progress != nil {
+		o.Progress(have, o.ExpectedSize)
+	}
+	if have > 0 && o.OnResume != nil {
+		o.OnResume(have)
+	}
+
+	// The stall timer covers the connect, the headers and every read.
+	actx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var stalled atomic.Bool
+	timer := time.AfterFunc(o.StallTimeout, func() { stalled.Store(true); cancel() })
+	defer timer.Stop()
+	stallErr := func() error {
+		return fmt.Errorf("%w: no data from %s for %s", ErrStalled, o.Label, o.StallTimeout)
+	}
+
+	req, err := http.NewRequestWithContext(actx, http.MethodGet, o.URL, nil)
+	if err != nil {
+		return &permanent{err}
+	}
+	if o.UserAgent != "" {
+		req.Header.Set("User-Agent", o.UserAgent)
+	}
+	if o.Accept != "" {
+		req.Header.Set("Accept", o.Accept)
+	}
+	if have > 0 {
+		req.Header.Set("Range", "bytes="+strconv.FormatInt(have, 10)+"-")
+	}
+	resp, err := o.Client.Do(req)
+	if err != nil {
+		if stalled.Load() && ctx.Err() == nil {
+			return stallErr()
+		}
+		return fmt.Errorf("could not reach %s: %w", o.Label, err)
+	}
+	defer resp.Body.Close()
+
+	flags := os.O_CREATE | os.O_WRONLY
+	total := o.ExpectedSize // for progress
+	var declared int64      // what this response says the body ends at; 0 = unknown
+	switch resp.StatusCode {
+	case http.StatusOK:
+		if have > 0 { // the server ignored the range: start again
+			h.Reset()
+			have = 0
+		}
+		flags |= os.O_TRUNC
+		if resp.ContentLength > 0 {
+			total, declared = resp.ContentLength, resp.ContentLength
+		}
+	case http.StatusPartialContent:
+		start, _, size, ok := ParseContentRange(resp.Header.Get("Content-Range"))
+		if !ok || start != have {
+			return &permanent{fmt.Errorf("%s answered with a range that does not continue the partial file (%q)", o.Label, resp.Header.Get("Content-Range"))}
+		}
+		if size > 0 {
+			total, declared = size, size
+		}
+		flags |= os.O_APPEND
+	case http.StatusRequestedRangeNotSatisfiable:
+		if have == 0 {
+			return &StatusError{Label: o.Label, Code: resp.StatusCode}
+		}
+		// The partial file may already be everything: accept it if it checks out,
+		// otherwise it is useless and the next try starts from zero.
+		if o.SHA256 != "" && strings.EqualFold(hex.EncodeToString(h.Sum(nil)), o.SHA256) {
+			return finish(o, partial, h, have)
+		}
+		if err := os.Remove(partial); err != nil {
+			return &permanent{err}
+		}
+		return errRestart
+	default:
+		return &StatusError{Label: o.Label, Code: resp.StatusCode}
+	}
+	if o.Progress != nil {
+		o.Progress(have, total)
+	}
+
+	f, err := os.OpenFile(partial, flags, 0o644)
+	if err != nil {
+		return &permanent{fmt.Errorf("could not write %s: %w", partial, err)}
+	}
+	buf := make([]byte, bufSize)
+	var copyErr error
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			timer.Reset(o.StallTimeout)
+			if _, werr := f.Write(buf[:n]); werr != nil {
+				hint := ""
+				if o.DiskHint != "" {
+					hint = " " + o.DiskHint
+				}
+				copyErr = &permanent{fmt.Errorf("could not write %s (is the disk full?%s): %w", filepath.Base(partial), hint, werr)}
+				break
+			}
+			h.Write(buf[:n])
+			have += int64(n)
+			if o.Progress != nil {
+				o.Progress(have, total)
+			}
+		}
+		if rerr != nil {
+			if rerr != io.EOF {
+				copyErr = rerr
+			}
+			break
+		}
+	}
+	if err := f.Close(); err != nil && copyErr == nil {
+		copyErr = &permanent{err}
+	}
+	if copyErr != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if stalled.Load() {
+			return stallErr()
+		}
+		return copyErr
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if declared > 0 && have < declared {
+		return fmt.Errorf("the connection to %s ended early: %w", o.Label, io.ErrUnexpectedEOF)
+	}
+	return finish(o, partial, h, have)
+}
+
+// finish checks the SHA-256 and gives the file its final name.
+func finish(o *Options, partial string, h hash.Hash, have int64) error {
+	if have == 0 {
+		_ = os.Remove(partial)
+		return &permanent{fmt.Errorf("empty download: %s", o.Label)}
+	}
+	if o.SHA256 != "" && !strings.EqualFold(hex.EncodeToString(h.Sum(nil)), o.SHA256) {
+		_ = os.Remove(partial)
+		return &permanent{&HashMismatchError{Name: filepath.Base(o.Dest)}}
+	}
+	// A file of that name left by an earlier broken download is replaced.
+	if info, err := os.Stat(o.Dest); err == nil && info.Mode().IsRegular() {
+		_ = os.Remove(o.Dest)
+	}
+	if err := os.Rename(partial, o.Dest); err != nil {
+		return &permanent{err}
+	}
+	return nil
+}
+
+// hashFile feeds the file to h and returns its length, stopping when ctx is cancelled.
+func hashFile(ctx context.Context, path string, h hash.Hash) (int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	buf := make([]byte, 1<<20)
+	var n int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return n, err
+		}
+		k, err := f.Read(buf)
+		if k > 0 {
+			h.Write(buf[:k])
+			n += int64(k)
+		}
+		if err == io.EOF {
+			return n, nil
+		}
+		if err != nil {
+			return n, err
+		}
+	}
+}
+
+// ParseContentRange reads "bytes 100-199/200"; size is 0 when the total is "*".
+func ParseContentRange(v string) (start, end, size int64, ok bool) {
+	v = strings.TrimSpace(strings.TrimPrefix(v, "bytes "))
+	rng, tot, found := strings.Cut(v, "/")
+	if !found {
+		return 0, 0, 0, false
+	}
+	a, b, found := strings.Cut(rng, "-")
+	if !found {
+		return 0, 0, 0, false
+	}
+	var err error
+	if start, err = strconv.ParseInt(a, 10, 64); err != nil {
+		return 0, 0, 0, false
+	}
+	if end, err = strconv.ParseInt(b, 10, 64); err != nil {
+		return 0, 0, 0, false
+	}
+	if tot != "*" {
+		if size, err = strconv.ParseInt(tot, 10, 64); err != nil {
+			return 0, 0, 0, false
+		}
+	}
+	return start, end, size, true
+}

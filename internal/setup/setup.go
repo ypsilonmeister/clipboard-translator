@@ -22,8 +22,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
+	"github.com/ypsilonmeister/clipboard-translator/internal/download"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
@@ -51,6 +53,11 @@ type runner struct {
 	client *http.Client
 	root   string
 	entry  models.Entry // the model being installed, for the final messages
+
+	// Download tuning; tests shorten it. Run sets retries to the default.
+	stall, retryBase time.Duration
+	retries          int
+	now              func() time.Time // progress clock
 }
 
 // Run performs the whole setup in opt.Root and returns the process exit
@@ -61,7 +68,8 @@ func Run(opt Options) int {
 	if r.out == nil {
 		r.out = os.Stdout
 	}
-	r.client = &http.Client{Transport: opt.Transport}
+	r.client = &http.Client{Transport: opt.Transport} // no Timeout: the stall check is per read
+	r.retries = download.DefaultRetries
 	if err := r.run(); err != nil {
 		fmt.Fprintf(os.Stderr, "setup: %v\n", err)
 		return 1
@@ -255,20 +263,23 @@ func modelBaseURL(e models.Entry) string {
 
 func (r *runner) installModel(e models.Entry) error {
 	dest := e.Path(r.root)
-	if _, err := os.Stat(dest); errors.Is(err, os.ErrNotExist) {
-		r.printf("Downloading %s", e.File)
-		if err := r.download(modelBaseURL(e)+e.File, dest, e.Sha256); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
 	info, err := os.Stat(dest)
-	if err != nil {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		r.printf("Downloading %s (%s)", e.File, e.SizeLabel)
+	case err != nil:
+		return err
+	case info.Size() < e.MinBytes:
+		// A broken earlier file: the download replaces it once its SHA-256 matches.
+		r.printf("%s is incomplete; downloading it again (%s)", e.File, e.SizeLabel)
+	default:
+		return nil
+	}
+	if err := r.download(modelBaseURL(e)+e.File, dest, e.Sha256); err != nil {
 		return err
 	}
-	if info.Size() < e.MinBytes {
-		return fmt.Errorf("incomplete file; remove it and retry: %s", dest)
+	if info, err := os.Stat(dest); err != nil || info.Size() < e.MinBytes {
+		return fmt.Errorf("incomplete file after download: %s", dest)
 	}
 	return nil
 }

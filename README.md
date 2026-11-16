@@ -445,7 +445,9 @@ written to `translator.log`.
   download (`Setup.cmd`, `setup.ps1`, the first-run offer, the install script;
   both model and llama.cpp versions are pinned and verified against hard-coded
   SHA-256 hashes) and *Check for updates* / *Update*. There is no telemetry and no
-  background check.
+  background check. Setup prints its progress (percent and MB, one line a second). If the
+  connection drops or delivers nothing for 60 seconds it retries up to three times, and if it
+  still fails, running setup again continues from the partial file instead of starting over.
 - *Settings...* opens a page served by the app itself on `127.0.0.1` (a free port,
   only while the page is open; it closes a few minutes after the last request or
   with *Close this page*). It is protected by a random token in its address and
@@ -454,7 +456,8 @@ written to `translator.log`.
   `huggingface.co`, only when you click *Download*, only the pinned revision of
   that model, and the file is used only if its SHA-256 matches the pinned value.
   A download goes on after the page is closed and can be cancelled on the page;
-  a cancelled or failed download keeps its partial file and continues next time.
+  a cancelled or failed download keeps its partial file and continues next time. A
+  connection that delivers nothing for 60 seconds counts as failed.
 - The optional ChromeOS translation endpoint is off by default and is Linux-only, binds loopback (plus the container address under Crostini, with a logged wildcard fallback) on IPv4 port 18121 over plain HTTP when enabled, and requires a token; use it in the ChromeOS/Linux environment on trusted networks; see the ChromeOS section for its bind address and forwarding scope. It makes no outbound network calls.
 - Logs record errors but not the text you translate. Translation history lives in
   memory only and is gone when the app quits.

@@ -1,68 +1,102 @@
 package setup
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"context"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"path/filepath"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/download"
 )
 
-// download fetches url into dest through dest+".partial" and gives it its
-// final name only after its SHA-256 matches want (an empty want skips the
-// check, as in the scripts). A failed download leaves neither the final
-// file nor a stale partial behind, so a later run cannot mistake either
-// for an installed file.
-func (r *runner) download(url, dest, want string) error {
-	partial := dest + ".partial"
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+// progressInterval is the least time between two progress lines. They are
+// plain lines, not a rewritten status line: on macOS the output goes to a
+// log file, where "\r" updates would pile up on one line.
+const progressInterval = time.Second
+
+// download fetches rawURL into dest through the shared downloader
+// (internal/download): it continues a "<dest>.partial" left by an earlier
+// run, retries a few times when the connection drops or stalls, and gives the
+// file its final name only after its SHA-256 matches want (an empty want
+// skips the check, as in the scripts). A failed run leaves no file under the
+// final name; the partial file is kept for the next run, except one that
+// failed the hash check.
+func (r *runner) download(rawURL, dest, want string) error {
+	name := dest
+	if i := strings.LastIndexAny(dest, `/\`); i >= 0 {
+		name = dest[i+1:]
+	}
+	pr := &progressPrinter{r: r, name: name, last: r.clock()}
+	o := download.Options{
+		Client:       r.client,
+		URL:          rawURL,
+		Dest:         dest,
+		SHA256:       want,
+		UserAgent:    "ClipboardTranslatorSetup",
+		StallTimeout: r.stall,
+		Retries:      r.retries,
+		RetryBase:    r.retryBase,
+		Progress:     pr.update,
+		OnResume: func(have int64) {
+			r.printf("Continuing %s from %s of an earlier download", name, megabytes(have))
+		},
+		OnRetry: func(n int, err error, wait time.Duration) {
+			r.printf("Download of %s was interrupted (%v); retrying in %s (%d of %d)", name, err, wait.Round(time.Second), n, r.retries)
+		},
+	}
+	// Only GitHub's own API wants this media type; Hugging Face does not.
+	if isGitHub(rawURL) {
+		o.Accept = "application/vnd.github+json"
+	}
+	err := download.Fetch(context.Background(), o)
 	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "ClipboardTranslatorSetup")
-	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("could not reach %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("the server answered HTTP %d for %s", resp.StatusCode, url)
-	}
-	out, err := os.Create(partial)
-	if err != nil {
-		return err
-	}
-	h := sha256.New()
-	_, copyErr := io.Copy(io.MultiWriter(out, h), resp.Body)
-	closeErr := out.Close()
-	if copyErr == nil {
-		copyErr = closeErr
-	}
-	if copyErr != nil {
-		_ = os.Remove(partial)
-		return fmt.Errorf("download of %s failed: %w", url, copyErr)
-	}
-	info, err := os.Stat(partial)
-	if err != nil {
-		_ = os.Remove(partial)
-		return err
-	}
-	if info.Size() == 0 {
-		_ = os.Remove(partial)
-		return fmt.Errorf("empty download: %s", url)
-	}
-	if want != "" {
-		if got := hex.EncodeToString(h.Sum(nil)); got != want {
-			_ = os.Remove(partial)
-			return fmt.Errorf("SHA-256 mismatch: %s", filepath.Base(dest))
+		var se *download.StatusError
+		var hm *download.HashMismatchError
+		if !errors.As(err, &se) && !errors.As(err, &hm) {
+			return fmt.Errorf("download of %s failed: %w", rawURL, err)
 		}
 	}
-	if err := os.Rename(partial, dest); err != nil {
-		_ = os.Remove(partial)
-		return err
+	return err
+}
+
+func isGitHub(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
 	}
-	return nil
+	h := u.Hostname()
+	return h == "github.com" || strings.HasSuffix(h, ".github.com")
+}
+
+// progressPrinter writes "  42% 756.0 / 1800.0 MB" at most once per
+// progressInterval (percent left out when the size is unknown).
+type progressPrinter struct {
+	r    *runner
+	name string
+	last time.Time
+}
+
+func (p *progressPrinter) update(done, total int64) {
+	now := p.r.clock()
+	if now.Sub(p.last) < progressInterval {
+		return
+	}
+	p.last = now
+	if total > 0 && done <= total {
+		p.r.printf("  %3d%%  %s / %s", done*100/total, megabytes(done), megabytes(total))
+		return
+	}
+	p.r.printf("  %s", megabytes(done))
+}
+
+func megabytes(n int64) string { return fmt.Sprintf("%.1f MB", float64(n)/(1<<20)) }
+
+// clock is time.Now unless a test replaced it.
+func (r *runner) clock() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
 }
