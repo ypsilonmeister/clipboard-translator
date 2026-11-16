@@ -35,7 +35,7 @@ func fixVulkan(t *testing.T, a *app) {
 	copyFile(t, self, vulkan)
 }
 
-func countNotes(tray *fakeTray, sub string) int {
+func notesWith(tray *fakeTray, sub string) int {
 	n := 0
 	for _, note := range tray.notes {
 		if strings.Contains(note, sub) {
@@ -48,7 +48,7 @@ func countNotes(tray *fakeTray, sub string) int {
 func TestFallbackIsAnnouncedOnce(t *testing.T) {
 	a := startOnFallback(t)
 	tray := a.tray.(*fakeTray)
-	if n := countNotes(tray, "did not start"); n != 1 {
+	if n := notesWith(tray, "did not start"); n != 1 {
 		t.Fatalf("want one notice, got %d: %v", n, tray.notes)
 	}
 	if !strings.Contains(tray.lastNote(), "GPU (Vulkan)") || !strings.Contains(tray.lastNote(), "CPU") {
@@ -62,7 +62,7 @@ func TestFallbackIsAnnouncedOnce(t *testing.T) {
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
-	if n := countNotes(tray, "did not start"); n != 1 {
+	if n := notesWith(tray, "did not start"); n != 1 {
 		t.Fatalf("a reload must not repeat the notice, got %d", n)
 	}
 }
@@ -116,7 +116,7 @@ func TestNoEngineLineWithoutFallback(t *testing.T) {
 	if got := engineMenuLine(a); got != "" {
 		t.Errorf("unexpected engine line: %q", got)
 	}
-	if n := countNotes(tray, "did not start"); n != 0 {
+	if n := notesWith(tray, "did not start"); n != 0 {
 		t.Errorf("unexpected notice: %v", tray.notes)
 	}
 }
@@ -177,7 +177,7 @@ func TestRestartAfterFallbackStartsOnlyTheCPUBuild(t *testing.T) {
 	if len(starts) != 1 || starts[0] != a.paths.Fallback {
 		t.Fatalf("want one start, of %q; got %q", a.paths.Fallback, starts)
 	}
-	if n := countNotes(tray, "did not start"); n != 1 {
+	if n := notesWith(tray, "did not start"); n != 1 {
 		t.Errorf("the restart must not repeat the notice, got %d", n)
 	}
 	if !strings.Contains(tray.lastNote(), "back") {
@@ -199,7 +199,7 @@ func TestRestartThatFallsBackKeepsTheFallbackNotice(t *testing.T) {
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
-	if a.runningBackend() != "vulkan" || countNotes(tray, "did not start") != 0 {
+	if a.runningBackend() != "vulkan" || notesWith(tray, "did not start") != 0 {
 		t.Fatalf("precondition: vulkan runs without a notice (running %q, notes %v)", a.runningBackend(), tray.notes)
 	}
 	a.sup.Stop()
