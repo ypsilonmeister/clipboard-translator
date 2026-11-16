@@ -311,6 +311,14 @@ func (a *app) onFallback() bool {
 	return a.sup.Running() && a.paths.Server != a.paths.Fallback && a.sup.BinaryPath() == a.paths.Fallback
 }
 
+// fallbackInUse reports whether the CPU build stands in for the configured
+// engine: it runs now, or it is what the next load starts. The two differ
+// after a model switch on the fallback, which runs the CPU build but lets the
+// next load try the preferred engine again, and while the model is unloaded.
+func (a *app) fallbackInUse() bool {
+	return a.fallbackPinned || a.onFallback()
+}
+
 // startFallback starts the CPU fallback build.
 func (a *app) startFallback() error {
 	defer a.beginServerWork()()
@@ -419,6 +427,7 @@ func (a *app) serviceTrayWhileBusy() {
 // false) when the user quits or the server keeps dying.
 func (a *app) restartServer() bool {
 	defer a.beginServerWork()()
+	fellBack := false // this restart announced a CPU fallback
 	for {
 		if !a.limiter.Allow(time.Now()) {
 			a.failed(fmt.Errorf("The translation server keeps stopping (%d times in %s), so the app is quitting",
@@ -434,7 +443,9 @@ func (a *app) restartServer() bool {
 			log.Print("quit requested during restart")
 			return false
 		}
+		announced := a.fallbackNotified
 		err := a.startServer()
+		fellBack = fellBack || a.fallbackNotified != announced
 		if err == nil {
 			break
 		}
@@ -447,7 +458,11 @@ func (a *app) restartServer() bool {
 	log.Print("server restarted; ready")
 	a.cancelTransientStatus()
 	a.tray.SetStatus(a.readyTip)
-	a.tray.Notify("Clipboard Translator", "The translation server is back. Ready.", false)
+	if !fellBack {
+		// The fallback notice already says that a server runs, and on which
+		// engine; "back" right after it would take its place on the screen.
+		a.tray.Notify("Clipboard Translator", "The translation server is back. Ready.", false)
+	}
 	return true
 }
 

@@ -90,7 +90,7 @@ func (a *app) buildMenu() []platform.MenuItem {
 	if a.translating || a.capturing != nil || a.pendingRead != nil || a.pendingResult != nil {
 		items = append(items, platform.MenuItem{ID: cmdCancel, Label: "Cancel translation"}, platform.MenuItem{Separator: true})
 	}
-	if a.fallbackPinned {
+	if a.fallbackInUse() {
 		items = append(items, platform.MenuItem{Label: "Engine: CPU - " + backendLabel(config.CurrentBackend(a.conf.ServerFile)) + " did not start", Disabled: true})
 	}
 	items = append(items, platform.MenuItem{ID: cmdUnloadModel, Label: "Unload model", Disabled: !a.canUnloadModel()})

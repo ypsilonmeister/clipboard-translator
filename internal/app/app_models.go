@@ -190,7 +190,10 @@ func (a *app) switchModel(e models.Entry) error {
 	defer a.beginServerWork()()
 	oldModel := a.sup.Model
 	oldTemplate := a.sup.Template
-	wasFallback := a.onFallback()
+	// The CPU build is in use when it runs, and also when the model is unloaded
+	// after a fallback: the preferred engine failed this session, and starting
+	// it here, without a fallback, would refuse the switch for that reason.
+	wasFallback := a.onFallback() || (a.fallbackPinned && a.paths.Server != a.paths.Fallback)
 	newConf := a.conf
 	newConf.ModelFile = "models/" + e.File
 	saveMap := map[string]any{"model_file": newConf.ModelFile}
