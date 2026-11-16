@@ -13,9 +13,32 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/textstruct"
 )
 
-// defaultChunkBudget is the target chunk character count (~300-600 tokens),
-// providing a massive safety margin below the 4096 context tokens ceiling.
+// defaultChunkBudget is the target chunk size in source characters. It keeps
+// the prompt far below context_tokens, and for most targets the answer below
+// max_tokens; targetChunkBudgets and the split on truncation cover the rest.
 const defaultChunkBudget = 1200
+
+// targetChunkBudgets lowers the budget for target languages on which the PLaMo
+// tokenizer spends about three tokens per character, so that the answer to a
+// full chunk passes max_tokens (2048) although the source is short (#195).
+// Measured with the 2B model on English text: a 1,223-character paragraph took
+// 1,991 completion tokens into ta and was cut off into ml, km and my; 600
+// characters took 1,586 (ml) and 1,864 (km) tokens and were cut off into my.
+// The values aim at roughly 1,200 answer tokens for English source text. Other
+// combinations that still overflow are handled by splitting on truncation.
+var targetChunkBudgets = map[string]int{
+	"ta": 700,
+	"ml": 450,
+	"km": 400,
+	"my": 300,
+}
+
+// Splitting on truncation: a request cut off at max_tokens is translated again
+// in halves, to this depth (1/8 of the chunk) and not below this size.
+const (
+	maxTruncationSplits = 3
+	minSplitChars       = 40
+)
 
 // chunkBudget returns the chunk target character limit clamped to maxChars if lower.
 func chunkBudget(maxChars int) int {
@@ -23,6 +46,14 @@ func chunkBudget(maxChars int) int {
 		return maxChars
 	}
 	return defaultChunkBudget
+}
+
+// targetBudget lowers budget for a target language with a token-heavy script.
+func targetBudget(budget int, target string) int {
+	if b, ok := targetChunkBudgets[target]; ok && b < budget {
+		return b
+	}
+	return budget
 }
 
 // chunkTask is one llama-server request. A task with paras set is a group of
@@ -186,7 +217,7 @@ func recombineTranslatedParagraphs(results [][]string, structure []paraStructure
 // still cancels the whole job.
 func (a *app) translatePrompt(ctx context.Context, g uint64, key string, promptText string, direction languages.Direction, maxTokens, budget int, timeout time.Duration) (string, error) {
 	run := &chunkRun{endpoint: a.endpoint, key: key, direction: direction, maxTokens: maxTokens, timeout: timeout}
-	return run.translateText(ctx, promptText, budget, func(index, total int) {
+	return run.translateText(ctx, promptText, targetBudget(budget, direction.Target), 0, func(index, total int) {
 		a.reportProgress(translationProgress{generation: g, chunkIndex: index, totalChunks: total})
 	})
 }
@@ -207,13 +238,15 @@ var errRequestTimeout = errors.New("llama-server did not answer within translati
 
 // translateText plans text into chunks, translates them in order and puts the
 // translation back together. progress (may be nil) is told which chunk starts.
-func (r *chunkRun) translateText(ctx context.Context, text string, budget int, progress func(index, total int)) (string, error) {
+// splits is how many times an enclosing chunk was already halved after a
+// truncated answer; only the outermost call (0) says which chunk failed.
+func (r *chunkRun) translateText(ctx context.Context, text string, budget, splits int, progress func(index, total int)) (string, error) {
 	tasks, structure := planChunks(text, budget)
 	if len(tasks) == 0 {
 		return "", nil
 	}
 	if len(tasks) == 1 && len(tasks[0].paras) == 0 {
-		out, err := r.translateTask(ctx, tasks[0])
+		out, err := r.translateTask(ctx, tasks[0], splits)
 		if err != nil {
 			return "", err
 		}
@@ -232,9 +265,9 @@ func (r *chunkRun) translateText(ctx context.Context, text string, budget int, p
 		if progress != nil {
 			progress(taskIdx+1, len(tasks))
 		}
-		translated, err := r.translateTask(ctx, task)
+		translated, err := r.translateTask(ctx, task, splits)
 		if err != nil {
-			if len(tasks) == 1 {
+			if len(tasks) == 1 || splits > 0 {
 				return "", err
 			}
 			return "", &chunkError{
@@ -272,8 +305,19 @@ func (r *chunkRun) translate(ctx context.Context, text string) (string, error) {
 
 // translateTask translates one task and returns one translation per paragraph
 // of the task (a single element unless the task is a paragraph group).
-func (r *chunkRun) translateTask(ctx context.Context, task chunkTask) ([]string, error) {
+func (r *chunkRun) translateTask(ctx context.Context, task chunkTask, splits int) ([]string, error) {
 	translated, err := r.translate(ctx, task.text)
+	if errors.Is(err, llamaserver.ErrTruncated) {
+		// The answer needs more tokens than max_tokens allows, which depends on
+		// the target language rather than on the source length (#195). Plan this
+		// text again with half its size as the budget: paragraphs, lines and
+		// sentences are split and put back together by the usual rules.
+		half := (len([]rune(task.text)) + 1) / 2
+		if splits < maxTruncationSplits && half >= minSplitChars {
+			log.Printf("translation cut off at the token limit; translating the chunk again in parts of up to %d characters", half)
+			translated, err = r.translateText(ctx, task.text, half, splits+1, nil)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +337,7 @@ func (r *chunkRun) translateTask(ctx context.Context, task chunkTask) ([]string,
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		sub, err := r.translateTask(ctx, chunkTask{text: para})
+		sub, err := r.translateTask(ctx, chunkTask{text: para}, splits)
 		if err != nil {
 			return nil, err
 		}
