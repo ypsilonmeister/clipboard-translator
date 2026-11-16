@@ -230,6 +230,9 @@ type chunkRun struct {
 	direction languages.Direction
 	maxTokens int
 	timeout   time.Duration
+	// splitAbove is the size that the job learned from a truncated answer: a
+	// later chunk above it is split before it is sent (0 = nothing learned).
+	splitAbove int
 }
 
 // errRequestTimeout marks a request that ran into translation_timeout_seconds,
@@ -308,16 +311,29 @@ func (r *chunkRun) translate(ctx context.Context, text string) (string, error) {
 // translateTask translates one task and returns one translation per paragraph
 // of the task (a single element unless the task is a paragraph group).
 func (r *chunkRun) translateTask(ctx context.Context, task chunkTask, splits int) ([]string, error) {
-	translated, err := r.translate(ctx, task.text)
-	if errors.Is(err, llamaserver.ErrTruncated) {
-		// The answer needs more tokens than max_tokens allows, which depends on
-		// the target language rather than on the source length (#195). Plan this
-		// text again with half its size as the budget: paragraphs, lines and
-		// sentences are split and put back together by the usual rules.
-		half := (len([]rune(task.text)) + 1) / 2
-		if splits < maxTruncationSplits && half >= minSplitChars {
-			log.Printf("translation cut off at the token limit; translating the chunk again in parts of up to %d characters", half)
-			translated, err = r.translateText(ctx, task.text, half, splits+1, nil)
+	var translated string
+	var err error
+	size := len([]rune(task.text))
+	if r.splitAbove > 0 && size > r.splitAbove && splits < maxTruncationSplits {
+		// An earlier chunk of this job was cut off at a size like this one, and
+		// a cut-off answer is the slowest request there is (max_tokens of
+		// output, thrown away). Do not pay for it once per chunk: split first.
+		translated, err = r.translateText(ctx, task.text, r.splitAbove, splits+1, nil)
+	} else {
+		translated, err = r.translate(ctx, task.text)
+		if errors.Is(err, llamaserver.ErrTruncated) {
+			// The answer needs more tokens than max_tokens allows, which depends on
+			// the target language rather than on the source length (#195). Plan this
+			// text again with half its size as the budget: paragraphs, lines and
+			// sentences are split and put back together by the usual rules.
+			half := (size + 1) / 2
+			if splits < maxTruncationSplits && half >= minSplitChars {
+				log.Printf("translation cut off at the token limit; translating the chunk again in parts of up to %d characters", half)
+				if r.splitAbove == 0 || half < r.splitAbove {
+					r.splitAbove = half
+				}
+				translated, err = r.translateText(ctx, task.text, half, splits+1, nil)
+			}
 		}
 	}
 	if err != nil {

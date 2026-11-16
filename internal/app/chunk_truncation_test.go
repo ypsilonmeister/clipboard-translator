@@ -96,10 +96,51 @@ func TestChunkCoordinator_SplitsParagraphGroupOnTruncation(t *testing.T) {
 	if got != strings.Join(want, "\n\n") {
 		t.Errorf("bilingual output mismatch:\nGOT:  %q\nWANT: %q", got, strings.Join(want, "\n\n"))
 	}
-	// 3 groups (12, 12 and 6 paragraphs): the two large ones are cut off and
-	// translated again in two halves each.
-	if n := len(srv.requests()); n != 3+2*2 {
-		t.Errorf("got %d requests, want 7", n)
+	// 3 groups (12, 12 and 6 paragraphs): the first is cut off and translated
+	// again in two halves; the second is split before it is sent.
+	if n := len(srv.requests()); n != 1+2+2+1 {
+		t.Errorf("got %d requests, want 6", n)
+	}
+}
+
+// A cut-off answer is paid for once per job, not once per chunk: after the
+// first one, chunks of that size are split before they are sent.
+func TestChunkCoordinator_TruncationIsLearnedWithinTheJob(t *testing.T) {
+	const limit = 500
+	srv := newChunkServer(t, truncatingReply(limit))
+	a := profilesApp(t, config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}})
+	a.endpoint = srv.URL
+	paras := []string{sentences("a", 16), sentences("b", 16), sentences("c", 16), sentences("d", 6)} // 3 x ~900, ~340
+	input := strings.Join(paras, "\n\n")
+
+	got, err := a.translatePrompt(context.Background(), 1, "", input, languages.Direction{Source: "en", Target: "hi"}, 2048, 1200, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.ReplaceAll(input, "Sentence", "Satz"); got != want {
+		t.Errorf("output mismatch:\nGOT:  %q\nWANT: %q", got, want)
+	}
+	cutOff := 0
+	for _, p := range srv.requests() {
+		if len([]rune(p)) > limit {
+			cutOff++
+		}
+	}
+	if cutOff != 1 {
+		t.Errorf("%d requests were cut off, want 1 (the first chunk only)", cutOff)
+	}
+	// The short last paragraph is below what was learned and is sent whole.
+	if reqs := srv.requests(); reqs[len(reqs)-1] != paras[3] {
+		t.Errorf("the last request = %q, want the whole last paragraph", reqs[len(reqs)-1])
+	}
+
+	// What one job learned does not carry over to the next one.
+	before := len(srv.requests())
+	if _, err := a.translatePrompt(context.Background(), 2, "", paras[0], languages.Direction{Source: "en", Target: "hi"}, 2048, 1200, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if first := srv.requests()[before]; first != paras[0] {
+		t.Errorf("a new job must start with the whole chunk, got %q", first)
 	}
 }
 
