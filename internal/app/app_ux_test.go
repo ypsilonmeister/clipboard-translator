@@ -664,23 +664,97 @@ func TestHandleResultDiscardedOutcome(t *testing.T) {
 }
 
 func TestHandleResultClipboardWriteError(t *testing.T) {
-	a, tray, cb, _, _ := uxApp(t)
-	cb.err = errors.New("clipboard locked by another process")
-	cb.text = "source"
-	g := pending(a)
+	for _, output := range []string{config.OutputReplace, config.OutputBilingual} {
+		t.Run(output, func(t *testing.T) {
+			a, tray, cb, pastes, _ := uxApp(t)
+			a.conf.AutoPaste = true
+			cb.err = errors.New("clipboard locked by another process")
+			cb.text = "source"
+			dir := languages.Direction{Source: "en", Target: "ja"}
+			g := pending(a)
+			a.handleResult(result{
+				original:      "source",
+				translated:    "translated",
+				direction:     dir,
+				generation:    g,
+				window:        100,
+				fromSelection: true,
+				output:        output,
+			})
+			if len(tray.notes) != 1 {
+				t.Fatalf("write error must show 1 notification, got %d", len(tray.notes))
+			}
+			if !tray.lastError() {
+				t.Fatal("write error notification must be an error (isError = true)")
+			}
+			note := tray.lastNote()
+			if !strings.Contains(note, "clipboard locked") {
+				t.Fatalf("notification must contain the error, got %q", note)
+			}
+			if !strings.Contains(note, "Recent translations") {
+				t.Fatalf("notification must explain recovery via Recent translations, got %q", note)
+			}
+			if cb.text != "source" || cb.writes != 0 || *pastes != 0 || a.pendingResult != nil {
+				t.Fatalf("clipboard error must preserve clipboard and never paste/pend: text=%q writes=%d pastes=%d pending=%v", cb.text, cb.writes, *pastes, a.pendingResult != nil)
+			}
+			items := a.hist.Items()
+			if len(items) != 1 || items[0].Source != "source" || items[0].Translated != "translated" || items[0].Direction != dir {
+				t.Fatalf("completed result must be retained separately in history, got %+v", items)
+			}
+
+			cb.err = nil
+			a.handleCommand(cmdHistoryBase)
+			if cb.text != "translated" || *pastes != 0 {
+				t.Fatalf("history replace recovery: clipboard=%q pastes=%d", cb.text, *pastes)
+			}
+			a.handleCommand(cmdHistorySourceBase)
+			if cb.text != "source" || *pastes != 0 {
+				t.Fatalf("history original recovery: clipboard=%q pastes=%d", cb.text, *pastes)
+			}
+			a.handleCommand(cmdHistoryBilingualBase)
+			if cb.text != "source\ntranslated" || *pastes != 0 {
+				t.Fatalf("history bilingual recovery: clipboard=%q pastes=%d", cb.text, *pastes)
+			}
+		})
+	}
+}
+
+func TestClipboardErrorRetainsOnlyCompletedCurrentResult(t *testing.T) {
+	a := apiUnitApp(t)
+	cb := &testClipboard{
+		text: "Hello",
+		err:  errors.New("clipboard is busy"),
+	}
+	a.cb = cb
+	a.translating = true
 	a.handleResult(result{
-		original:   "source",
-		translated: "translated",
-		generation: g,
+		original:   "Hello",
+		translated: "こんにちは",
+		generation: a.generation,
 	})
-	if len(tray.notes) != 1 {
-		t.Fatalf("write error must show 1 notification, got %d", len(tray.notes))
+	if cb.text != "Hello" || cb.writes != 0 || a.pendingResult != nil {
+		t.Fatalf("clipboard=%q writes=%d pending=%v", cb.text, cb.writes, a.pendingResult != nil)
 	}
-	if !tray.lastError() {
-		t.Fatal("write error notification must be an error (isError = true)")
+	items := a.hist.Items()
+	if len(items) != 1 || items[0].Source != "Hello" || items[0].Translated != "こんにちは" {
+		t.Fatalf("completed translation lost or altered on clipboard error: %+v", items)
 	}
-	if !strings.Contains(tray.lastNote(), "clipboard locked") {
-		t.Fatalf("notification must contain the error, got %q", tray.lastNote())
+
+	a.hist.Clear()
+	g := pending(a)
+	for _, res := range []result{
+		{original: "failed", generation: g, err: errors.New("boom")},
+		{original: "truncated", generation: g, err: llamaserver.ErrTruncated},
+		{original: "cancelled", generation: g, err: context.Canceled},
+		{original: "stale", translated: "古い", generation: g - 1},
+	} {
+		if res.generation == g {
+			a.translating = true
+		}
+		a.handleResult(res)
+	}
+	if len(a.hist.Items()) != 0 {
+		t.Fatalf("failed, truncated, cancelled, and stale results must stay out of history, got %+v", a.hist.Items())
 	}
 }
 

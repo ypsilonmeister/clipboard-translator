@@ -1189,9 +1189,10 @@ func (a *app) handleResult(res result) {
 	}
 	a.pendingResult = nil
 	if err != nil {
+		a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
 		log.Printf("clipboard check/write failed: %v", err)
 		a.tray.SetStatus(a.readyTip)
-		a.tray.Notify("Clipboard Translator", "Could not write translation to the clipboard: "+err.Error(), true)
+		a.tray.Notify("Clipboard Translator", "Could not write translation to the clipboard: "+err.Error()+". Copy the translation from Recent translations in the tray menu.", true)
 		return
 	}
 	if !applied {
