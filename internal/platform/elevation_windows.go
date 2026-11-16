@@ -26,42 +26,52 @@ const (
 // case SendInput's Ctrl+C is dropped without any error.
 func windowElevated(win uintptr) bool {
 	return windowMoreElevated(win, integrityOps{
-		windowLevel: func(win uintptr) (uint32, bool, bool) {
-			var pid uint32
-			procGetWindowThreadProcessId.Call(win, uintptr(unsafe.Pointer(&pid)))
-			if pid == 0 {
-				return 0, false, false
-			}
-			h, _, err := procOpenProcess.Call(processQueryLimitedInformation, 0, uintptr(pid))
-			if h == 0 {
-				return 0, errors.Is(err, syscall.ERROR_ACCESS_DENIED), false
-			}
-			defer syscall.CloseHandle(syscall.Handle(h))
-			level, ok := tokenIntegrity(h)
-			return level, false, ok
-		},
+		windowLevel: win32TokenCalls.windowLevel,
 		selfLevel: func() (uint32, bool) {
 			h, _, _ := procGetCurrentProcess.Call() // a pseudo handle: nothing to close
-			return tokenIntegrity(h)
+			// Our own token always opens; should it not, the level is unknown and
+			// only a window we are refused access to counts as higher.
+			level, _, ok := win32TokenCalls.processLevel(h)
+			return level, ok
 		},
 	})
 }
 
-// tokenIntegrity reads the integrity level of the process handle h. A token
-// that cannot be opened or read is "unknown", not "higher": only a process that
-// cannot be opened at all is taken for an elevated one (see windowMoreElevated).
-func tokenIntegrity(process uintptr) (uint32, bool) {
-	var tok syscall.Handle
-	if r, _, _ := procOpenProcessToken.Call(process, tokenQuery, uintptr(unsafe.Pointer(&tok))); r == 0 {
-		return 0, false
-	}
-	defer syscall.CloseHandle(tok)
+// accessDenied tells a refusal from every other failure of a system call.
+func accessDenied(err error) bool {
+	return errors.Is(err, syscall.ERROR_ACCESS_DENIED)
+}
+
+var win32TokenCalls = tokenCalls{
+	pidOf: func(win uintptr) uint32 {
+		var pid uint32
+		procGetWindowThreadProcessId.Call(win, uintptr(unsafe.Pointer(&pid)))
+		return pid
+	},
+	openProcess: func(pid uint32) (uintptr, bool) {
+		h, _, err := procOpenProcess.Call(processQueryLimitedInformation, 0, uintptr(pid))
+		return h, h == 0 && accessDenied(err)
+	},
+	openToken: func(process uintptr) (uintptr, bool) {
+		var tok syscall.Handle
+		r, _, err := procOpenProcessToken.Call(process, tokenQuery, uintptr(unsafe.Pointer(&tok)))
+		if r == 0 {
+			return 0, accessDenied(err)
+		}
+		return uintptr(tok), false
+	},
+	level:       tokenLevel,
+	closeHandle: func(h uintptr) { syscall.CloseHandle(syscall.Handle(h)) },
+}
+
+// tokenLevel reads the integrity level of an open token.
+func tokenLevel(tok uintptr) (uint32, bool) {
 	// TOKEN_MANDATORY_LABEL followed by the SID its pointer refers to. The words
 	// give the buffer the alignment of that struct (a byte array promises none).
 	var words [16]uint64
 	buf := unsafe.Slice((*byte)(unsafe.Pointer(&words[0])), len(words)*8)
 	var n uint32
-	if r, _, _ := procGetTokenInformation.Call(uintptr(tok), tokenIntegrityLevel, uintptr(unsafe.Pointer(&words[0])), uintptr(len(buf)), uintptr(unsafe.Pointer(&n))); r == 0 {
+	if r, _, _ := procGetTokenInformation.Call(tok, tokenIntegrityLevel, uintptr(unsafe.Pointer(&words[0])), uintptr(len(buf)), uintptr(unsafe.Pointer(&n))); r == 0 {
 		return 0, false
 	}
 	if int(n) > len(buf) {

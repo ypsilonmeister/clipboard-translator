@@ -2,6 +2,7 @@ package platform
 
 import (
 	"encoding/binary"
+	"syscall"
 	"testing"
 	"unsafe"
 )
@@ -54,16 +55,41 @@ func TestIntegrityFromLabel(t *testing.T) {
 // a level, and it must be one of the mandatory-label RIDs.
 func TestTokenIntegrityOfThisProcess(t *testing.T) {
 	h, _, _ := procGetCurrentProcess.Call()
-	level, ok := tokenIntegrity(h)
-	if !ok {
+	level, denied, ok := win32TokenCalls.processLevel(h)
+	if !ok || denied {
 		t.Fatal("cannot read this process's integrity level")
 	}
 	if level < 0x1000 || level > 0x5000 {
 		t.Fatalf("level = %#x, want a mandatory level between low (0x1000) and protected (0x5000)", level)
 	}
-	again, ok := tokenIntegrity(h)
+	again, _, ok := win32TokenCalls.processLevel(h)
 	if !ok || again != level {
 		t.Fatalf("second read = %#x ok=%v, want %#x", again, ok, level)
+	}
+}
+
+// Only ERROR_ACCESS_DENIED is a refusal; Call always returns an Errno, also on
+// success.
+func TestAccessDenied(t *testing.T) {
+	if !accessDenied(syscall.ERROR_ACCESS_DENIED) {
+		t.Fatal("ERROR_ACCESS_DENIED must count as denied")
+	}
+	for _, err := range []error{nil, syscall.Errno(0), syscall.Errno(87), syscall.Errno(6), syscall.ERROR_FILE_NOT_FOUND} {
+		if accessDenied(err) {
+			t.Errorf("%v must not count as denied", err)
+		}
+	}
+}
+
+// A pid that does not exist is a failure, but not a refusal.
+func TestOpenProcessOfAMissingPidIsNotDenied(t *testing.T) {
+	h, denied := win32TokenCalls.openProcess(0xFFFFFFFC)
+	if h != 0 {
+		win32TokenCalls.closeHandle(h)
+		t.Skip("the pid exists")
+	}
+	if denied {
+		t.Fatal("a missing process must not look like an administrator window")
 	}
 }
 
