@@ -14,11 +14,12 @@ import (
 
 // scriptedCapture is a capture that finishes when done() says so.
 type scriptedCapture struct {
-	steps int
-	done  func() bool
-	text  string
-	fresh bool
-	err   error
+	steps    int
+	done     func() bool
+	text     string
+	fresh    bool
+	fallback platform.CaptureFallback
+	err      error
 }
 
 func (c *scriptedCapture) Step() (bool, string, bool, error) {
@@ -29,7 +30,8 @@ func (c *scriptedCapture) Step() (bool, string, bool, error) {
 	return true, c.text, c.fresh, c.err
 }
 
-func (c *scriptedCapture) Wait() time.Duration { return time.Millisecond }
+func (c *scriptedCapture) Fallback() platform.CaptureFallback { return c.fallback }
+func (c *scriptedCapture) Wait() time.Duration                { return time.Millisecond }
 
 func translateStub(t *testing.T, out string) *httptest.Server {
 	t.Helper()

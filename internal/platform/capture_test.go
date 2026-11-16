@@ -398,7 +398,10 @@ func TestCaptureWithPrimaryOwnerMatches(t *testing.T) {
 		selectedIn:  func(win uintptr) bool { return win == 10 },
 		readPrimary: func() string { return "fresh selection" },
 	}
-	got, fresh, err := captureWithPrimary(cb, 10, ops)
+	got, fresh, fb, err := captureWithPrimary(cb, 10, ops)
+	if fb != FallbackNone {
+		t.Fatalf("fallback = %v, want FallbackNone", fb)
+	}
 	if err != nil || got != "fresh selection" || !fresh {
 		t.Fatalf("got=%q fresh=%v err=%v; want fresh selection", got, fresh, err)
 	}
@@ -415,7 +418,10 @@ func TestCaptureWithPrimaryOtherWindowKeepsTextButIsNotFresh(t *testing.T) {
 		selectedIn:  func(win uintptr) bool { return false },
 		readPrimary: func() string { return "selection from window 5" },
 	}
-	got, fresh, err := captureWithPrimary(cb, 10, ops)
+	got, fresh, fb, err := captureWithPrimary(cb, 10, ops)
+	if fb != FallbackNone {
+		t.Fatalf("fallback = %v, want FallbackNone", fb)
+	}
 	if err != nil || got != "selection from window 5" || fresh {
 		t.Fatalf("got=%q fresh=%v err=%v; want the selection text, not fresh", got, fresh, err)
 	}
@@ -430,7 +436,10 @@ func TestCaptureWithPrimaryOwnerMatchesEmptyText(t *testing.T) {
 		selectedIn:  func(win uintptr) bool { return true },
 		readPrimary: func() string { return "" },
 	}
-	got, fresh, err := captureWithPrimary(cb, 10, ops)
+	got, fresh, fb, err := captureWithPrimary(cb, 10, ops)
+	if fb != FallbackNoCopy {
+		t.Fatalf("fallback = %v, want FallbackNoCopy", fb)
+	}
 	if err != nil || got != "existing clipboard" || fresh {
 		t.Fatalf("got=%q fresh=%v err=%v; want empty selection falling back to clipboard", got, fresh, err)
 	}
@@ -445,7 +454,8 @@ func TestCaptureWithPrimaryZeroWindow(t *testing.T) {
 		selectedIn:  func(win uintptr) bool { return true },
 		readPrimary: func() string { return "selection" },
 	}
-	got, fresh, err := captureWithPrimary(cb, 0, ops)
+	got, fresh, fb, err := captureWithPrimary(cb, 0, ops)
+	_ = fb
 	if err != nil || got != "selection" || fresh {
 		t.Fatalf("got=%q fresh=%v err=%v; want the selection text, not fresh, when the window is unknown", got, fresh, err)
 	}
@@ -465,7 +475,8 @@ func TestCaptureWithPrimaryWriteError(t *testing.T) {
 		selectedIn:  func(win uintptr) bool { return true },
 		readPrimary: func() string { return "selection" },
 	}
-	got, fresh, err := captureWithPrimary(cb, 10, ops)
+	got, fresh, fb, err := captureWithPrimary(cb, 10, ops)
+	_ = fb
 	if err == nil || got != "" || fresh {
 		t.Fatalf("got=%q fresh=%v err=%v; want write error", got, fresh, err)
 	}

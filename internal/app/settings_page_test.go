@@ -1515,7 +1515,7 @@ func TestTranslationMaxTokensConfigRace(t *testing.T) {
 
 	keys := []string{"E", "K"}
 	for i := 0; i < 20; i++ {
-		a.translateCaptured(a.conf.Profiles[0], 0, "hello", false, nil)
+		a.translateCaptured(a.conf.Profiles[0], 0, "hello", false, platform.FallbackNone, nil)
 		p, err := settings.FormFromProfile(a.conf.Profiles[0], "windows")
 		if err != nil {
 			t.Fatal(err)

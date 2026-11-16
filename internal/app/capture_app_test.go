@@ -60,7 +60,7 @@ func TestCaptureFailureNotificationMentionsHotkeyOnlyWithHotkeys(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a, tray, base, _, _ := uxApp(t)
 			a.cb = &asyncDesktopClipboard{testClipboard: base, state: tc.state}
-			a.translateCaptured(a.conf.Profiles[0], 0, "", false, platform.ErrClipboardNoValue)
+			a.translateCaptured(a.conf.Profiles[0], 0, "", false, platform.FallbackNone, platform.ErrClipboardNoValue)
 			note := tray.lastNote()
 			if !strings.Contains(note, "Nothing was translated") {
 				t.Fatalf("note = %q", note)

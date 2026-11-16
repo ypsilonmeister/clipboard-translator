@@ -15,12 +15,14 @@ type portalCapture struct {
 	deadline, releaseAt, stableSince time.Time
 	before, last                     uint32
 	keys                             *portalKeys
+	fallback                         CaptureFallback
 }
 
 func beginPortalCapture(r *portalRemote, released func() bool) CaptureTask {
 	return &portalCapture{remote: r, released: released, session: r.session, phase: "modifiers", deadline: r.client.now().Add(time.Second)}
 }
-func (j *portalCapture) Wait() time.Duration { return capturePollStep }
+func (j *portalCapture) Fallback() CaptureFallback { return j.fallback }
+func (j *portalCapture) Wait() time.Duration       { return capturePollStep }
 func (j *portalCapture) Step() (bool, string, bool, error) {
 	r := j.remote
 	r.Step()
