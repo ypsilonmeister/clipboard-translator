@@ -160,27 +160,31 @@ func primarySelectedIn(win uintptr) bool {
 	return C.ct_primary_selected_in(C.ulong(win)) != 0
 }
 
-// BeginSelectionCapture is nil on X11: PRIMARY is read at once, nothing waits.
-func BeginSelectionCapture(cb Clipboard, _ uintptr) CaptureTask {
+// BeginSelectionCapture on X11 reads PRIMARY at once, so the task it returns is
+// already done (nothing waits). It is nil on Wayland without a portal session.
+func BeginSelectionCapture(cb Clipboard, win uintptr) CaptureTask {
 	if d, ok := cb.(*portalDesktop); ok && d.remote != nil {
 		return beginPortalCapture(d.remote, d.hotkeys.AllReleased)
 	}
-	return nil
-}
-
-func CaptureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
 	if linuxWayland {
-		text, err := cb.Read()
-		return text, false, err
+		return nil
 	}
-	text, fresh, err := captureWithPrimary(cb, win, primaryOps{
+	c := newPrimaryCapture(cb, win, primaryOps{
 		selectedIn:  primarySelectedIn,
 		readPrimary: func() string { return readX11Text(true) },
 	})
-	if err == nil && fresh {
+	if c.err == nil && c.fresh {
 		linuxSelectionSequence++
 	}
-	return text, fresh, err
+	return c
+}
+
+func CaptureSelectedText(cb Clipboard, win uintptr) (string, bool, error) {
+	if task := BeginSelectionCapture(cb, win); task != nil {
+		return runCapture(task)
+	}
+	text, err := cb.Read()
+	return text, false, err
 }
 func readX11Text(primary bool) string {
 	p := C.ct_read(C.int(boolInt(primary)))

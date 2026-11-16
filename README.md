@@ -515,7 +515,14 @@ Everything else stays in `config.json`.
 
 ## Limitations
 
-- Some apps block the synthetic Ctrl+C used to read the selection.
+- Some apps block the synthetic Ctrl+C used to read the selection. A window that
+  runs as administrator (an elevated terminal, Task Manager, an installer) always
+  does: Windows drops keystrokes sent from a normal program to it, so the
+  selection cannot be copied. Press Ctrl+C yourself, then the hotkey; the app
+  notices the administrator window and translates the clipboard text at once,
+  without the 2 s wait. When no selection was copied for any other reason, the
+  text already on the clipboard is translated, the tray tooltip says so, and a
+  notification explains it once per run.
 - Reading the selection changes the clipboard. The translation only replaces it
   if the clipboard text is still the text that was captured.
 - One language pair per hotkey; the two languages must use different scripts (en ↔ de, or Simplified ↔ Traditional Chinese, cannot be told apart from the text; give each its own `target` profile instead). With Japanese and Chinese in one pair, text with only Han characters is read as Chinese; kana makes it Japanese. When a text mixes Latin with the other script, the other language wins, unless the text is clearly Latin with a few quoted words or names (a sentence of at least 5 lowercase Latin words, with 1.5 times as many Latin words as the other script's characters, or words for scripts that put spaces between words): English with one Japanese name stays English. Product names, lists and commands inside the other language do not count as such a sentence, and neither does Japanese with spaces around its particles (`git push origin main する`). Text whose first or last word is in the other script is also read as that language. In doubt, the other language wins. URLs are not translated. When text cannot be translated (empty selection, URL-only, wrong language pair), the tray tooltip shows why; text over the character limit also shows a notification.

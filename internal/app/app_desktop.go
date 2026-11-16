@@ -64,7 +64,7 @@ func (a *app) tickClipboard() {
 			}
 		}
 		a.pendingRead = nil
-		a.translateCaptured(p.profile, p.win, text, false, err)
+		a.translateCaptured(p.profile, p.win, text, false, platform.FallbackNone, err)
 	}
 	if p := a.pendingResult; p != nil {
 		if p.generation != a.generation {
@@ -110,7 +110,7 @@ func (a *app) startClipboardTranslation() {
 		a.pendingRead = &pendingClipboardRead{profile: p, deadline: a.timeNow().Add(8 * time.Second)}
 		return
 	}
-	a.translateCaptured(p, 0, source, false, err)
+	a.translateCaptured(p, 0, source, false, platform.FallbackNone, err)
 }
 
 func (a *app) chromeOSProfile() bool {

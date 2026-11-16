@@ -32,8 +32,9 @@ type result struct {
 	generation           uint64
 	err                  error
 	direction            languages.Direction
-	window               uintptr // foreground window when the hotkey was pressed
-	fromSelection        bool    // the text was a fresh selection, not the old clipboard
+	window               uintptr                  // foreground window when the hotkey was pressed
+	fromSelection        bool                     // the text was a fresh selection, not the old clipboard
+	fallback             platform.CaptureFallback // why the old clipboard text was used instead of a selection
 	output               string
 	capturedAt           time.Time
 }

@@ -12,6 +12,20 @@ var (
 	ErrCaptureFocusChanged  = errors.New("the focused window changed before the selection could be copied")
 )
 
+// CaptureFallback says why a capture ended on the text that was already on the
+// clipboard instead of a fresh selection. The text is still translated (the
+// user may have copied it on purpose); the app only has to say so, because a
+// copy that silently did not happen is otherwise indistinguishable from one
+// that did. It is deliberately separate from fromSelection: an X11 PRIMARY
+// selection made in another window is not fresh either, yet it is a selection.
+type CaptureFallback int
+
+const (
+	FallbackNone     CaptureFallback = iota // a selection was captured (fresh or not)
+	FallbackNoCopy                          // the copy changed nothing (or could not be sent): the old clipboard text is used
+	FallbackElevated                        // the window runs with a higher integrity level, so Ctrl+C was not sent
+)
+
 // captureOps are the OS pieces of selection capture, so the ordering rules in
 // captureJob can be tested without a desktop.
 type captureOps struct {
@@ -23,7 +37,8 @@ type captureOps struct {
 	copyTimeout     time.Duration
 	settleTime      time.Duration
 	now             func() time.Time
-	sleep           func(time.Duration) // only captureWith sleeps; the app polls instead
+	sleep           func(time.Duration)    // only captureWith sleeps; the app polls instead
+	elevated        func(win uintptr) bool // optional: win cannot receive our synthetic keys (UIPI)
 }
 
 // CaptureTask is a selection capture in progress. The UI thread calls step
@@ -32,6 +47,10 @@ type captureOps struct {
 type CaptureTask interface {
 	Step() (done bool, text string, fromSelection bool, err error)
 	Wait() time.Duration
+	// Fallback is read once Step has reported done: whether the text is the old
+	// clipboard text because no selection was copied. FallbackElevated is also
+	// reported together with an error (the clipboard could not be read).
+	Fallback() CaptureFallback
 }
 
 // captureJob copies the selection of window win and reports the clipboard text
@@ -49,6 +68,8 @@ type captureJob struct {
 	win uintptr
 	ops captureOps
 
+	fallback    CaptureFallback
+	elevChecked bool
 	copying     bool // Ctrl+C has been sent
 	modDeadline time.Time
 	deadline    time.Time // for the copy
@@ -70,6 +91,9 @@ func newCaptureJob(cb Clipboard, win uintptr, ops captureOps) *captureJob {
 	return &captureJob{cb: cb, win: win, ops: ops, modDeadline: ops.now().Add(ops.modifierTimeout)}
 }
 
+// Fallback implements CaptureTask.
+func (j *captureJob) Fallback() CaptureFallback { return j.fallback }
+
 func (j *captureJob) focusLost() bool {
 	return j.ops.foreground != nil && j.ops.foreground() != j.win
 }
@@ -78,6 +102,21 @@ func (j *captureJob) focusLost() bool {
 // clipboard another program holds may retry briefly, as every Read does).
 func (j *captureJob) Step() (done bool, text string, fromSelection bool, err error) {
 	if !j.copying {
+		if !j.elevChecked {
+			j.elevChecked = true
+			if j.ops.elevated != nil && j.ops.elevated(j.win) {
+				// The keys we would send are dropped silently: do not wait for a copy
+				// that cannot happen, use what the user copied themselves. The mark
+				// is set before the read: a clipboard without text is still a press
+				// in an administrator window, and the app says so.
+				j.fallback = FallbackElevated
+				old, err := j.cb.Read()
+				if err != nil {
+					return true, "", false, err
+				}
+				return true, old, false, nil
+			}
+		}
 		if !j.ops.modifiersUp() {
 			if !j.ops.now().Before(j.modDeadline) {
 				return true, "", false, ErrCaptureModifiersHeld
@@ -93,6 +132,7 @@ func (j *captureJob) Step() (done bool, text string, fromSelection bool, err err
 			return true, "", false, ErrCaptureFocusChanged
 		}
 		if err := j.ops.sendCopy(); err != nil {
+			j.fallback = FallbackNoCopy
 			return true, old, false, nil // cannot inject keys: fall back to the existing clipboard text
 		}
 		j.copying, j.old, j.lastSeq = true, old, j.before
@@ -106,6 +146,7 @@ func (j *captureJob) Step() (done bool, text string, fromSelection bool, err err
 	seq := j.ops.sequence()
 	if seq == j.before {
 		if !now.Before(j.deadline) {
+			j.fallback = FallbackNoCopy
 			return true, j.old, false, nil
 		}
 		return false, "", false, nil
@@ -182,24 +223,44 @@ type primaryOps struct {
 // was pressed in, had the focus. If PRIMARY was last changed somewhere else, or
 // that cannot be told, the text is still translated but reported as not fresh:
 // PRIMARY may be left over from a window the user is no longer in, and
-// auto-paste must never act on it.
+// auto-paste must never act on it. That is still a selection, so it is not a
+// fallback.
 //
 // Translating the text regardless keeps this safe if the freshness test is
 // wrong: dropping the selection would translate the stale clipboard text
 // instead of what the user just selected. If PRIMARY is empty, the existing
-// clipboard text is used.
-func captureWithPrimary(cb Clipboard, win uintptr, ops primaryOps) (string, bool, error) {
+// clipboard text is used and the result is a FallbackNoCopy.
+func captureWithPrimary(cb Clipboard, win uintptr, ops primaryOps) (string, bool, CaptureFallback, error) {
 	text := ""
 	if ops.readPrimary != nil {
 		text = ops.readPrimary()
 	}
 	if text == "" {
 		text, err := cb.Read()
-		return text, false, err
+		return text, false, FallbackNoCopy, err
 	}
 	if err := cb.Write(text); err != nil {
-		return "", false, err
+		return "", false, FallbackNone, err
 	}
 	fresh := win != 0 && ops.selectedIn != nil && ops.selectedIn(win)
-	return text, fresh, nil
+	return text, fresh, FallbackNone, nil
 }
+
+// primaryCapture is captureWithPrimary as an already-finished CaptureTask, so
+// X11 reports the fallback through the same interface as the other platforms.
+type primaryCapture struct {
+	text     string
+	fresh    bool
+	fallback CaptureFallback
+	err      error
+}
+
+func newPrimaryCapture(cb Clipboard, win uintptr, ops primaryOps) *primaryCapture {
+	c := &primaryCapture{}
+	c.text, c.fresh, c.fallback, c.err = captureWithPrimary(cb, win, ops)
+	return c
+}
+
+func (c *primaryCapture) Step() (bool, string, bool, error) { return true, c.text, c.fresh, c.err }
+func (c *primaryCapture) Wait() time.Duration               { return 0 }
+func (c *primaryCapture) Fallback() CaptureFallback         { return c.fallback }

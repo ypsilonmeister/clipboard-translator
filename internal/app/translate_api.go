@@ -246,7 +246,7 @@ func (a *app) handleAPITranslation(req settings.Request) {
 	a.abortTranslation()
 	a.apiReply = req.Reply
 	a.apiContext = req.Context
-	a.translateCaptured(p, 0, req.Text, false, nil)
+	a.translateCaptured(p, 0, req.Text, false, platform.FallbackNone, nil)
 	// Reload failures or a canceled startup must not leave an HTTP caller waiting.
 	if !a.translating && a.apiReply != nil {
 		a.finishAPI("", errors.New("Translation did not start"))

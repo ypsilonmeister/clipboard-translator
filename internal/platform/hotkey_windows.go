@@ -251,6 +251,7 @@ func BeginSelectionCapture(cb Clipboard, win uintptr) CaptureTask {
 		modifiersUp:     func() bool { return !modifierPressed() }, // keep Ctrl+Alt+E from contaminating the simulated Ctrl+C
 		sequence:        clipboardSequence,
 		sendCopy:        sendCopy,
+		elevated:        windowElevated, // UIPI drops our Ctrl+C for an administrator window
 		modifierTimeout: 900 * time.Millisecond,
 		copyTimeout:     windowsCopyTimeout,
 		settleTime:      80 * time.Millisecond,
