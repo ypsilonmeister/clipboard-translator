@@ -293,8 +293,8 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 		}
 	}
 
-	// The manual workflow edits only profile zero's languages. Never accept
-	// hidden hotkey/output fields back from this page.
+	// The manual workflow edits profile zero's translation options. Never accept
+	// hidden hotkey/input fields back from this page.
 	if a.chromeOSProfile() && hasField("profiles") {
 		if len(form.Profiles) == 0 {
 			return nil, errors.New("Choose translation languages")
@@ -308,6 +308,7 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 			}
 			if i == 0 {
 				f.Languages, f.Target = language.Languages, language.Target
+				f.Output, f.CleanupNewlines = language.Output, language.CleanupNewlines
 			}
 			form.Profiles = append(form.Profiles, f)
 		}
@@ -320,6 +321,7 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 		language := cand.Profiles[0]
 		cand.Profiles = append([]config.Profile(nil), a.conf.Profiles...)
 		cand.Profiles[0].Languages, cand.Profiles[0].Target = language.Languages, language.Target
+		cand.Profiles[0].Output, cand.Profiles[0].CleanupNewlines = language.Output, language.CleanupNewlines
 		cand.NormalizeProfiles()
 	}
 	sameProf := sameProfiles(cand.Profiles, a.conf.Profiles)

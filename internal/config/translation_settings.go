@@ -25,6 +25,12 @@ func UpdateTranslationSettings(dir string, p Profile, languageChanged bool, glob
 			langs, _ := json.Marshal(p.Languages)
 			target, _ := json.Marshal(p.Target)
 			fields := map[string]json.RawMessage{}
+			if p.Output != "" {
+				fields["output"], _ = json.Marshal(p.Output)
+			}
+			if p.CleanupNewlines != "" {
+				fields["cleanup_newlines"], _ = json.Marshal(p.CleanupNewlines)
+			}
 			if len(p.Languages) > 0 {
 				fields["languages"] = langs
 			}
@@ -67,14 +73,16 @@ func UpdateTranslationSettings(dir string, p Profile, languageChanged bool, glob
 			} else {
 				// Patch legacy fields when there is no first profile, even for an
 				// empty array. Load still rejects explicit empty profile arrays.
-				if p.Target != "" {
+				if p.Target != "" || p.Output != "" || p.CleanupNewlines != "" {
 					profiles, err := json.Marshal([]Profile{p})
 					if err != nil {
 						return nil, err
 					}
 					set["profiles"] = profiles
 				}
-				set["languages"] = langs
+				if len(p.Languages) > 0 {
+					set["languages"] = langs
+				}
 			}
 		}
 		return patchObject(raw, set)
