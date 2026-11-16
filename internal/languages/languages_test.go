@@ -84,6 +84,16 @@ func TestDirectionForPairs(t *testing.T) {
 		{[]string{"en", "ar"}, "شغّل npm run build and then npm run test", "ar", "arabic verb and command", "en", true},
 		{[]string{"en", "hi"}, "पहले npm run build and then npm run test", "hi", "hindi lead and command", "en", true},
 		{[]string{"ja", "en"}, "コーヒー", "ja", "katakana", "en", true},
+		// A flag, URL or path at either end is not a word and leaves the
+		// boundary where the last real word put it (#208).
+		{[]string{"en", "ru"}, "npm run build and then npm run test не работает --verbose", "ru", "trailing flag", "en", true},
+		{[]string{"en", "ru"}, "npm run build and then npm run test не работает https://example.com", "ru", "trailing url", "en", true},
+		{[]string{"en", "ru"}, "--verbose Запусти npm run build and then npm run test", "ru", "leading flag", "en", true},
+		{[]string{"en", "ru"}, "npm run build and then npm run test не работает -v", "ru", "trailing short flag", "en", true},
+		{[]string{"en", "ru"}, "npm run build and then npm run test не работает (https://example.com)", "ru", "trailing url in parens", "en", true},
+		{[]string{"en", "ru"}, "npm run build and then npm run test не работает src/main.go", "ru", "trailing path", "en", true},
+		{[]string{"en", "ru"}, "The Russian word тоска has no exact equivalent in English. --verbose", "en", "english then flag", "ru", true},
+		{[]string{"en", "ru"}, "The Russian word тоска has no exact equivalent in English. См. https://example.com", "ru", "english then cyrillic then url", "en", true},
 		// Two non-Latin scripts.
 		{[]string{"ja", "ko"}, "こんにちは", "ja", "kana", "ko", true},
 		{[]string{"ja", "ko"}, "안녕하세요", "ko", "hangul", "ja", true},

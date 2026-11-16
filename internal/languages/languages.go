@@ -210,7 +210,9 @@ func proseWord(tok string) bool {
 // the counts say: a command is made of lowercase words too, so "Запусти npm
 // run build and then npm run test" and "npm run build and then npm run test
 // не работает" cannot be told from an English sentence with a foreign word at
-// either end.
+// either end. Tokens that cannot be a word of either language (a flag, a URL,
+// a path; see nonWordToken) are counted but do not move that boundary, so a
+// trailing "--verbose" or link does not turn the command into English (#208).
 func latinIsSkeleton(s, other string) bool {
 	byChar := unspaced[languages[other].script]
 	w, prose, u := 0, 0, 0
@@ -232,11 +234,11 @@ func latinIsSkeleton(s, other string) bool {
 				hasLatin = true
 			}
 		}
-		if first && n > 0 {
-			return false
-		}
-		first = first && !hasLatin
-		if n > 0 || hasLatin {
+		if (n > 0 || hasLatin) && !nonWordToken(tok) {
+			if first && n > 0 {
+				return false
+			}
+			first = false
 			endsOther = n > 0
 		}
 		switch {
@@ -252,6 +254,16 @@ func latinIsSkeleton(s, other string) bool {
 		}
 	}
 	return !endsOther && prose >= minProseWords && w*latinWordsDen >= u*latinWordsNum
+}
+
+// nonWordToken reports whether tok cannot be a word of running text in any
+// language: a command-line flag ("-v", "--verbose"), a URL, a path or an
+// assignment ("src/main.go", "C:\work", "DEBUG=1"). Surrounding brackets and
+// quotes are ignored, so "(https://example.com)" is still a URL. Tokens
+// without a letter are not the question: they never count anywhere.
+func nonWordToken(tok string) bool {
+	tok = strings.Trim(tok, "([{<\"'“‘")
+	return strings.HasPrefix(tok, "-") || IsURL(tok) || strings.ContainsAny(tok, `/\=`)
 }
 
 func IsURL(s string) bool {
