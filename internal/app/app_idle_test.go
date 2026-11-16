@@ -299,8 +299,13 @@ func TestUnloadReloadFailureStaysUnloaded(t *testing.T) {
 	var failure string
 	a.showErr = func(msg string) { failure = msg }
 	a.startTranslation(0)
-	if failure == "" || !strings.Contains(failure, "server.log") {
-		t.Fatalf("reload error not actionable: %q", failure)
+	// The app keeps running, so the failure is a notification, not a modal box
+	// that would come back at every hotkey press (Issue #198).
+	if failure != "" {
+		t.Fatalf("failed reload opened a modal box: %q", failure)
+	}
+	if !tray.lastError() || !strings.Contains(tray.lastNote(), "server.log") {
+		t.Fatalf("reload error not actionable: %q", tray.lastNote())
 	}
 	if a.translating || a.sup.Running() || !a.modelUnloaded || !strings.Contains(tray.status, "model unloaded") {
 		t.Fatal("failed reload must stay unloaded for retry")
