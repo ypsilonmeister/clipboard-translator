@@ -298,7 +298,9 @@ func (r *chunkRun) translate(ctx context.Context, text string) (string, error) {
 	}
 	out, err := llamaserver.Translate(reqCtx, r.endpoint, r.key, text, r.direction, r.maxTokens)
 	if err != nil && ctx.Err() == nil && errors.Is(reqCtx.Err(), context.DeadlineExceeded) {
-		return "", fmt.Errorf("%w: %v", errRequestTimeout, err)
+		// Keep context.DeadlineExceeded in the chain: the translation
+		// endpoint answers 504 for it.
+		return "", fmt.Errorf("%w: %w", errRequestTimeout, errors.Join(context.DeadlineExceeded, err))
 	}
 	return out, err
 }

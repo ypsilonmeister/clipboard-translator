@@ -15,6 +15,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 )
 
 // chunkServer is a fake llama-server whose answer is computed from the prompt.
@@ -153,6 +154,67 @@ func TestPlanChunks_GroupsAroundOversizedParagraph(t *testing.T) {
 	}
 }
 
+// A group is filled up to the budget exactly, counting the blank lines.
+func TestPlanChunks_GroupBudgetBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		second int // length of the second paragraph
+		want   string
+	}{
+		{598, "0/2 2/0"},     // 600 + 2 + 598 = 1200: fits
+		{599, "0/0 1/0 2/0"}, // 1201: one over; the third (700) fits with neither
+	} {
+		input := strings.Repeat("A", 600) + "\n\n" + strings.Repeat("B", tc.second) + "\n\n" + strings.Repeat("C", 700)
+		tasks, _ := planChunks(input, 1200)
+		var got []string
+		for _, task := range tasks {
+			got = append(got, fmt.Sprintf("%d/%d", task.paraIndex, len(task.paras)))
+		}
+		if strings.Join(got, " ") != tc.want {
+			t.Errorf("second paragraph of %d: tasks (para/group size) = %v, want %s", tc.second, got, tc.want)
+		}
+	}
+}
+
+// What the model does to the blank lines of a group decides between using the
+// answer and translating the group again.
+func TestTranslateTask_GroupAnswerShapes(t *testing.T) {
+	paras := []string{"one", "two", "three"}
+	for _, tc := range []struct {
+		name         string
+		answer       string
+		wantRequests int
+		want         []string
+	}{
+		{"kept", "T1\n\nT2\n\nT3", 1, []string{"T1", "T2", "T3"}},
+		{"extra blank lines and CRLF", "T1\n\n\n\nT2\r\n\r\nT3\n", 1, []string{"T1", "T2", "T3"}},
+		{"blank line with spaces", "T1\n  \nT2\n\nT3", 1, []string{"T1", "T2", "T3"}},
+		{"merged into one", "T1 T2 T3", 4, []string{"T:one", "T:two", "T:three"}},
+		{"single newlines only", "T1\nT2\nT3", 4, []string{"T:one", "T:two", "T:three"}},
+		{"two merged", "T1 T2\n\nT3", 4, []string{"T:one", "T:two", "T:three"}},
+		{"one split in two", "T1\n\nT2a\n\nT2b\n\nT3", 4, []string{"T:one", "T:two", "T:three"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newChunkServer(t, func(p string) (string, string) {
+				if strings.Contains(p, "\n\n") {
+					return tc.answer, ""
+				}
+				return "T:" + p, ""
+			})
+			r := &chunkRun{endpoint: srv.URL, direction: languages.Direction{Source: "en", Target: "ja"}, maxTokens: 2048}
+			got, err := r.translateTask(context.Background(), chunkTask{text: strings.Join(paras, "\n\n"), paras: paras}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+			if n := len(srv.requests()); n != tc.wantRequests {
+				t.Errorf("got %d requests, want %d", n, tc.wantRequests)
+			}
+		})
+	}
+}
+
 // Issue #173 acceptance: about 3 requests for 30 short paragraphs, and the
 // bilingual output still pairs paragraph with paragraph.
 func TestChunkCoordinator_GroupedParagraphsBilingual(t *testing.T) {
@@ -231,7 +293,10 @@ func TestChunkCoordinator_ChunkTimeoutMessage(t *testing.T) {
 	release := make(chan struct{})
 	srv := newChunkServer(t, func(p string) (string, string) {
 		if strings.HasPrefix(p, "B") {
-			<-release
+			select { // bounded, so a broken timeout fails the test instead of hanging it
+			case <-release:
+			case <-time.After(5 * time.Second):
+			}
 		}
 		return "訳文", ""
 	})
@@ -243,6 +308,17 @@ func TestChunkCoordinator_ChunkTimeoutMessage(t *testing.T) {
 	_, err := a.translatePrompt(context.Background(), a.generation, "", input, languages.Direction{Source: "en", Target: "ja"}, 2048, 1200, 100*time.Millisecond)
 	if !errors.Is(err, errRequestTimeout) {
 		t.Fatalf("err = %v, want the request timeout", err)
+	}
+	// The translation endpoint maps a timeout to 504 by this error.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want context.DeadlineExceeded in the chain", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/translate", strings.NewReader(`{"text":"x"}`))
+	req.Header.Set(translateTokenHeader, "tok")
+	translateAPIHandler("tok", func(settings.Request) settings.Reply { return settings.Reply{Err: err} }).ServeHTTP(rec, req)
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Errorf("translation endpoint answered %d for a chunk timeout, want 504", rec.Code)
 	}
 	if n := len(srv.requests()); n != 2 {
 		t.Errorf("got %d requests, want 2 (the job stops at the chunk that timed out)", n)
