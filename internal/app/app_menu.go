@@ -90,6 +90,9 @@ func (a *app) buildMenu() []platform.MenuItem {
 	if a.translating || a.capturing != nil || a.pendingRead != nil || a.pendingResult != nil {
 		items = append(items, platform.MenuItem{ID: cmdCancel, Label: "Cancel translation"}, platform.MenuItem{Separator: true})
 	}
+	if a.fallbackInUse() {
+		items = append(items, platform.MenuItem{Label: "Engine: CPU - " + backendLabel(config.CurrentBackend(a.conf.ServerFile)) + " did not start", Disabled: true})
+	}
 	items = append(items, platform.MenuItem{ID: cmdUnloadModel, Label: "Unload model", Disabled: !a.canUnloadModel()})
 	var modelSub []platform.MenuItem
 	modelBusy := a.busy()
@@ -305,6 +308,7 @@ func (a *app) switchBackend(name string) {
 	err = a.sup.Start(paths.Server, newConf.GPULayers, "switching engine")
 	if err == nil {
 		a.conf, a.paths = newConf, paths
+		a.clearFallback()
 		a.activeBackend = name
 		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
@@ -350,6 +354,7 @@ func (a *app) keepRunningBackend(name string) {
 		return
 	}
 	a.conf, a.paths = conf, paths
+	a.clearFallback()
 	a.activeBackend = name
 	a.saveConfig(map[string]any{"server_file": a.conf.ServerFile, "gpu_layers": a.conf.GPULayers})
 	log.Printf("engine %s (already running) is now the configured one", name)
