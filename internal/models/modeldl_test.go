@@ -341,26 +341,6 @@ func TestDownloadsCannotReachTheRealHostInTests(t *testing.T) {
 	}
 }
 
-func TestContentRangeParsing(t *testing.T) {
-	cases := []struct {
-		in                string
-		start, end, total int64
-		ok                bool
-	}{
-		{"bytes 100-199/200", 100, 199, 200, true},
-		{"bytes 0-9/*", 0, 9, 0, true},
-		{"", 0, 0, 0, false},
-		{"bytes x-9/10", 0, 0, 0, false},
-		{"bytes 1-2", 0, 0, 0, false},
-	}
-	for _, c := range cases {
-		s, e, n, ok := parseContentRange(c.in)
-		if ok != c.ok || (ok && (s != c.start || e != c.end || n != c.total)) {
-			t.Errorf("%q: %d %d %d %v", c.in, s, e, n, ok)
-		}
-	}
-}
-
 // The catalog is pinned in four places. The Python test checks the two Unix
 // scripts against setup.ps1; this one checks the Go copy against setup.ps1.
 func TestCatalogMatchesSetupScript(t *testing.T) {
@@ -403,4 +383,31 @@ func minBytesLiteral(n int64) string {
 		return fmt.Sprintf("%dGB", n>>30)
 	}
 	return fmt.Sprintf("%dMB", n>>20)
+}
+
+// A host that stops sending must not keep the download "downloading" forever.
+func TestDownloadFailsWhenTheHostStopsSending(t *testing.T) {
+	f := newDLFixture(t)
+	f.Gate = make(chan struct{}) // half of the body, then silence
+	f.m.stall = 200 * time.Millisecond
+	f.m.Start("t1")
+	s := f.wait("failed")
+	if !strings.Contains(s.Error, "stalled") {
+		t.Errorf("error: %q", s.Error)
+	}
+	if _, err := os.Stat(f.Path("test-model.gguf")); err == nil {
+		t.Error("a stalled download produced a model")
+	}
+	// The partial file stays, and the next click continues from it.
+	if info, err := os.Stat(f.Path("test-model.gguf.partial")); err != nil || info.Size() == 0 {
+		t.Fatalf("partial file: %v", err)
+	}
+	f.Mu.Lock()
+	f.Gate = nil
+	f.Mu.Unlock()
+	f.m.Start("t1")
+	f.wait("done")
+	if got, _ := os.ReadFile(f.Path("test-model.gguf")); !bytes.Equal(got, f.Model) {
+		t.Fatal("the continued file differs from the model")
+	}
 }

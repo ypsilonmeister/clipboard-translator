@@ -2,19 +2,16 @@ package models
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
-	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
+	"time"
+
+	"github.com/ypsilonmeister/clipboard-translator/internal/download"
 )
 
 // The download manager fetches a model from Hugging Face when the user asks for
@@ -46,6 +43,7 @@ type Manager struct {
 	baseURL string
 	version string // for the User-Agent
 	client  *http.Client
+	stall   time.Duration      // no-data limit of a transfer; 0 = download.DefaultStallTimeout
 	events  chan DownloadState // final states, for the main loop
 
 	mu       sync.Mutex
@@ -235,188 +233,36 @@ func (m *Manager) run(ctx context.Context, e Entry) {
 	m.finish(e.Key, nil)
 }
 
-// fetch downloads url to dest through dest+".partial", continuing a partial file
-// from an earlier attempt, and renames it only after its SHA-256 matches want.
+// fetch downloads url to dest through the shared downloader: it continues a
+// partial file from an earlier attempt, gives up on a connection that stops
+// delivering, and renames only after the SHA-256 matches want. There is no
+// automatic retry here: a failed download is shown on the page and the user
+// decides to click Download again (which then continues from the partial file).
 func (m *Manager) fetch(ctx context.Context, e Entry, url, dest, want string, track bool) error {
-	partial := dest + ".partial"
-	h := sha256.New()
-	var have int64
-	if info, err := os.Stat(partial); err == nil && info.Mode().IsRegular() {
-		if track {
-			m.set(func(s *DownloadState) { s.Phase = "checking" })
-		}
-		n, err := hashFile(ctx, partial, h)
-		if err != nil {
-			return err
-		}
-		have = n
+	o := download.Options{
+		Client:       m.client,
+		URL:          url,
+		Dest:         dest,
+		SHA256:       want,
+		UserAgent:    "ClipboardTranslator/" + m.version,
+		Label:        "the model host",
+		ExpectedSize: 0,
+		DiskHint:     fmt.Sprintf("%s needs about %s", e.Name, e.SizeLabel),
+		StallTimeout: m.stall,
+		// A template is small; do not keep a broken partial of it around.
+		DiscardPartialOnFailure: !track,
 	}
 	if track {
-		m.set(func(s *DownloadState) { s.Phase, s.Done = "downloading", have })
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "ClipboardTranslator/"+m.version)
-	if have > 0 {
-		req.Header.Set("Range", "bytes="+strconv.FormatInt(have, 10)+"-")
-	}
-	resp, err := m.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("could not reach the model host: %w", err)
-	}
-	defer resp.Body.Close()
-
-	flags := os.O_CREATE | os.O_WRONLY
-	total := e.Bytes
-	switch resp.StatusCode {
-	case http.StatusOK:
-		if have > 0 { // the server ignored the range: start again
-			h.Reset()
-			have = 0
-			flags |= os.O_TRUNC
-		}
-		if resp.ContentLength > 0 {
-			total = resp.ContentLength
-		}
-		flags |= os.O_APPEND
-	case http.StatusPartialContent:
-		start, _, size, ok := parseContentRange(resp.Header.Get("Content-Range"))
-		if !ok || start != have {
-			return fmt.Errorf("the model host answered with a range that does not continue the partial file (%q)", resp.Header.Get("Content-Range"))
-		}
-		if size > 0 {
-			total = size
-		}
-		flags |= os.O_APPEND
-	case http.StatusRequestedRangeNotSatisfiable:
-		// The partial file may already be everything: fall through to the check.
-		if have == 0 {
-			return errors.New("the model host refused the request (HTTP 416)")
-		}
-		return m.verifyAndMove(e, partial, dest, want, h)
-	default:
-		if !track {
-			_ = os.Remove(partial)
-		}
-		return fmt.Errorf("the model host answered HTTP %d", resp.StatusCode)
-	}
-	if track {
-		m.set(func(s *DownloadState) { s.Done, s.Total = have, total })
-	}
-
-	f, err := os.OpenFile(partial, flags, 0o644)
-	if err != nil {
-		if !track {
-			_ = os.Remove(partial)
-		}
-		return fmt.Errorf("could not write %s: %w", partial, err)
-	}
-	buf := make([]byte, 256<<10)
-	var copyErr error
-	for {
-		n, rerr := resp.Body.Read(buf)
-		if n > 0 {
-			if _, werr := f.Write(buf[:n]); werr != nil {
-				copyErr = fmt.Errorf("could not write %s (is the disk full? %s needs about %s): %w", filepath.Base(partial), e.Name, e.SizeLabel, werr)
-				break
-			}
-			h.Write(buf[:n])
-			have += int64(n)
-			if track {
-				m.set(func(s *DownloadState) { s.Done = have })
-			}
-		}
-		if rerr != nil {
-			if rerr != io.EOF {
-				copyErr = rerr
-			}
-			break
+		o.ExpectedSize = e.Bytes
+		o.Phase = func(p string) { m.set(func(s *DownloadState) { s.Phase = p }) }
+		o.Progress = func(done, total int64) {
+			m.set(func(s *DownloadState) {
+				s.Done = done
+				if total > 0 {
+					s.Total = total
+				}
+			})
 		}
 	}
-	if err := f.Close(); err != nil && copyErr == nil {
-		copyErr = err
-	}
-	if copyErr != nil {
-		if ctx.Err() != nil {
-			return ctx.Err() // cancelled: the partial file stays for the next try
-		}
-		if !track {
-			_ = os.Remove(partial)
-		}
-		return copyErr
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return m.verifyAndMove(e, partial, dest, want, h)
-}
-
-// verifyAndMove gives the downloaded file its final name only if its SHA-256 is
-// the pinned one. A file that does not match is deleted.
-func (m *Manager) verifyAndMove(e Entry, partial, dest, want string, h hash.Hash) error {
-	if got := hex.EncodeToString(h.Sum(nil)); !strings.EqualFold(got, want) {
-		_ = os.Remove(partial)
-		return fmt.Errorf("the downloaded %s does not match the expected SHA-256 and was deleted; try again", filepath.Base(dest))
-	}
-	// A file of that name that is too small is a broken earlier download.
-	if info, err := os.Stat(dest); err == nil && info.Mode().IsRegular() {
-		_ = os.Remove(dest)
-	}
-	return os.Rename(partial, dest)
-}
-
-// hashFile feeds the file to h and returns its length, stopping when ctx is cancelled.
-func hashFile(ctx context.Context, path string, h hash.Hash) (int64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-	buf := make([]byte, 1<<20)
-	var n int64
-	for {
-		if err := ctx.Err(); err != nil {
-			return n, err
-		}
-		k, err := f.Read(buf)
-		if k > 0 {
-			h.Write(buf[:k])
-			n += int64(k)
-		}
-		if err == io.EOF {
-			return n, nil
-		}
-		if err != nil {
-			return n, err
-		}
-	}
-}
-
-// parseContentRange reads "bytes 100-199/200".
-func parseContentRange(v string) (start, end, size int64, ok bool) {
-	v = strings.TrimSpace(strings.TrimPrefix(v, "bytes "))
-	rng, tot, found := strings.Cut(v, "/")
-	if !found {
-		return 0, 0, 0, false
-	}
-	a, b, found := strings.Cut(rng, "-")
-	if !found {
-		return 0, 0, 0, false
-	}
-	var err error
-	if start, err = strconv.ParseInt(a, 10, 64); err != nil {
-		return 0, 0, 0, false
-	}
-	if end, err = strconv.ParseInt(b, 10, 64); err != nil {
-		return 0, 0, 0, false
-	}
-	if tot != "*" {
-		if size, err = strconv.ParseInt(tot, 10, 64); err != nil {
-			return 0, 0, 0, false
-		}
-	}
-	return start, end, size, true
+	return download.Fetch(ctx, o)
 }
