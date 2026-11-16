@@ -490,14 +490,14 @@ func TestChunkLinesWithBoundaries_Recombination(t *testing.T) {
 			input:          strings.Repeat("語 ", 600) + "尾\n次",
 			budget:         1200,
 			wantBoundaries: []Boundary{BoundarySpace, BoundaryNewline},
-			wantRejoined:   strings.Repeat("語 ", 600) + "尾\n次",
+			wantRejoined:   strings.Repeat("語 ", 599) + "語尾\n次",
 		},
 		{
 			name:           "CJK long line with space on right",
 			input:          strings.Repeat("語", 1200) + " 尾\n次",
 			budget:         1200,
 			wantBoundaries: []Boundary{BoundarySpace, BoundaryNewline},
-			wantRejoined:   strings.Repeat("語", 1200) + " 尾\n次",
+			wantRejoined:   strings.Repeat("語", 1200) + "尾\n次",
 		},
 		{
 			name:           "CRLF line at exact rune budget keeps CR with line",
@@ -582,6 +582,110 @@ func TestChunkParagraphWithBoundaries_Recombination(t *testing.T) {
 			}
 			if got := JoinChunks(chunks, boundaries); got != tc.input {
 				t.Fatalf("JoinChunks(untrimmed) mismatch:\nGOT:  %q\nWANT: %q", got, tc.input)
+			}
+		})
+	}
+}
+
+func TestJoinChunks_SpaceBoundaryTargetScript(t *testing.T) {
+	source := strings.Repeat("word ", 240) + "tail"
+	chunks, boundaries := ChunkParagraphWithBoundaries(source, 1200)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(chunks))
+	}
+	wantBoundaries := []Boundary{BoundarySpace}
+	if !reflect.DeepEqual(boundaries, wantBoundaries) {
+		t.Fatalf("boundaries = %v, want %v", boundaries, wantBoundaries)
+	}
+
+	cases := []struct {
+		name   string
+		pieces []string
+		want   string
+	}{
+		{
+			name:   "CJK target pieces gain no space",
+			pieces: []string{"これは日本語", "です"},
+			want:   "これは日本語です",
+		},
+		{
+			name:   "Latin target pieces gain space",
+			pieces: []string{"word", "tail"},
+			want:   "word tail",
+		},
+		{
+			name:   "mixed CJK then Latin gains no space",
+			pieces: []string{"これは日本語", "tail"},
+			want:   "これは日本語tail",
+		},
+		{
+			name:   "mixed Latin then CJK gains no space",
+			pieces: []string{"word", "です"},
+			want:   "wordです",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := JoinChunks(tc.pieces, boundaries); got != tc.want {
+				t.Fatalf("JoinChunks(%v, %v) = %q, want %q", tc.pieces, boundaries, got, tc.want)
+			}
+		})
+	}
+
+	_, lineBoundaries := ChunkLinesWithBoundaries(source+"\nnext", 1200)
+	wantLineBoundaries := []Boundary{BoundarySpace, BoundaryNewline}
+	if !reflect.DeepEqual(lineBoundaries, wantLineBoundaries) {
+		t.Fatalf("lineBoundaries = %v, want %v", lineBoundaries, wantLineBoundaries)
+	}
+	if got := JoinChunks([]string{"これは日本語", "です", "次の行"}, lineBoundaries); got != "これは日本語です\n次の行" {
+		t.Fatalf("JoinChunks(multi-line CJK target) = %q, want %q", got, "これは日本語です\n次の行")
+	}
+}
+
+func TestJoinChunks_PieceCountMismatchAndEmptyChunks(t *testing.T) {
+	cases := []struct {
+		name       string
+		chunks     []string
+		boundaries []Boundary
+		want       string
+	}{
+		{
+			name:       "fewer boundaries than gaps joins trailing pieces directly",
+			chunks:     []string{"alpha", "beta", "gamma"},
+			boundaries: []Boundary{BoundarySpace},
+			want:       "alpha betagamma",
+		},
+		{
+			name:       "nil boundaries joins all pieces directly",
+			chunks:     []string{"alpha", "beta"},
+			boundaries: nil,
+			want:       "alphabeta",
+		},
+		{
+			name:       "more boundaries than gaps ignores trailing boundaries",
+			chunks:     []string{"alpha", "beta"},
+			boundaries: []Boundary{BoundarySpace, BoundaryNewline, BoundarySpace},
+			want:       "alpha beta",
+		},
+		{
+			name:       "empty left chunk at space boundary inserts no leading space",
+			chunks:     []string{"", "tail"},
+			boundaries: []Boundary{BoundarySpace},
+			want:       "tail",
+		},
+		{
+			name:       "empty right chunk at space boundary inserts no trailing space",
+			chunks:     []string{"head", ""},
+			boundaries: []Boundary{BoundarySpace},
+			want:       "head",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := JoinChunks(tc.chunks, tc.boundaries); got != tc.want {
+				t.Fatalf("JoinChunks(%v, %v) = %q, want %q", tc.chunks, tc.boundaries, got, tc.want)
 			}
 		})
 	}

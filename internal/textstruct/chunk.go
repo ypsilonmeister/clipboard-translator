@@ -107,7 +107,7 @@ type Boundary uint8
 const (
 	// BoundaryNone is a hard rune-budget split with no whitespace on either side.
 	BoundaryNone Boundary = iota
-	// BoundarySpace is an intra-line split where whitespace existed at the boundary.
+	// BoundarySpace is an intra-line split where whitespace existed at the source boundary.
 	BoundarySpace
 	// BoundaryNewline is an explicit line break ("\n") between lines.
 	BoundaryNewline
@@ -138,8 +138,25 @@ func hasLeadingSpace(s string) bool {
 	return unicode.IsSpace(r)
 }
 
+func shouldInsertSpace(left, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	last, _ := utf8.DecodeLastRuneInString(left)
+	first, _ := utf8.DecodeRuneInString(right)
+	if unicode.IsSpace(last) || unicode.IsSpace(first) {
+		return false
+	}
+	return !isCJK(last) && !isCJK(first)
+}
+
 // JoinChunks reassembles translated sub-chunks of a paragraph according to the
-// boundary metadata recorded when the paragraph was split.
+// boundary metadata recorded when the paragraph was split. Each boundaries[i-1]
+// describes the boundary before chunks[i]. For BoundarySpace and
+// BoundarySentence, a space is inserted only when both adjacent pieces are
+// non-empty, neither edge already carries whitespace, and neither adjacent
+// rune is CJK. Any extra chunks beyond len(boundaries)+1 are concatenated
+// directly without a separator.
 func JoinChunks(chunks []string, boundaries []Boundary) string {
 	var out strings.Builder
 	for i, chunk := range chunks {
@@ -147,17 +164,9 @@ func JoinChunks(chunks []string, boundaries []Boundary) string {
 			switch boundaries[i-1] {
 			case BoundaryNewline:
 				out.WriteByte('\n')
-			case BoundarySpace:
-				if out.Len() > 0 && chunk != "" && !hasTrailingSpace(out.String()) && !hasLeadingSpace(chunk) {
+			case BoundarySpace, BoundarySentence:
+				if shouldInsertSpace(out.String(), chunk) {
 					out.WriteByte(' ')
-				}
-			case BoundarySentence:
-				if out.Len() > 0 && chunk != "" && !hasTrailingSpace(out.String()) && !hasLeadingSpace(chunk) {
-					last, _ := utf8.DecodeLastRuneInString(out.String())
-					first, _ := utf8.DecodeRuneInString(chunk)
-					if !isCJK(last) && !isCJK(first) {
-						out.WriteByte(' ')
-					}
 				}
 			case BoundaryNone:
 			}

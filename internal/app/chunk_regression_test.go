@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
+	"github.com/ypsilonmeister/clipboard-translator/internal/textstruct"
 )
 
 func TestChunkStructuredBoundaries(t *testing.T) {
@@ -88,6 +90,7 @@ func TestPlanAndRecombine_BoundaryMetadataCases(t *testing.T) {
 	cases := []struct {
 		name   string
 		source string
+		want   string
 	}{
 		{
 			name:   "space on left side of intra-line boundary",
@@ -120,10 +123,12 @@ func TestPlanAndRecombine_BoundaryMetadataCases(t *testing.T) {
 		{
 			name:   "CJK long line with space on left of boundary",
 			source: strings.Repeat("語 ", 600) + "尾\n次",
+			want:   strings.Repeat("語 ", 599) + "語尾\n次",
 		},
 		{
 			name:   "CJK long line with space on right of boundary",
 			source: strings.Repeat("語", 1200) + " 尾\n次",
+			want:   strings.Repeat("語", 1200) + "尾\n次",
 		},
 		{
 			name:   "CJK sentences across chunks",
@@ -145,9 +150,13 @@ func TestPlanAndRecombine_BoundaryMetadataCases(t *testing.T) {
 				// Model llamaserver.Translate trimming each chunk response.
 				results[task.paraIndex][task.subIndex] = strings.TrimSpace(task.text)
 			}
+			want := tc.want
+			if want == "" {
+				want = tc.source
+			}
 			got := recombineTranslatedParagraphs(results, structure)
-			if got != tc.source {
-				t.Fatalf("recombined mismatch:\nGOT:  %q\nWANT: %q", got, tc.source)
+			if got != want {
+				t.Fatalf("recombined mismatch:\nGOT:  %q\nWANT: %q", got, want)
 			}
 		})
 	}
@@ -177,6 +186,7 @@ func TestChunkCoordinator_HTTPTrimmingBoundaryCases(t *testing.T) {
 	cases := []struct {
 		name   string
 		source string
+		want   string
 	}{
 		{
 			name:   "space on left side of boundary",
@@ -209,10 +219,12 @@ func TestChunkCoordinator_HTTPTrimmingBoundaryCases(t *testing.T) {
 		{
 			name:   "CJK long line with space on left of boundary",
 			source: strings.Repeat("語 ", 600) + "尾\n次",
+			want:   strings.Repeat("語 ", 599) + "語尾\n次",
 		},
 		{
 			name:   "CJK long line with space on right of boundary",
 			source: strings.Repeat("語", 1200) + " 尾\n次",
+			want:   strings.Repeat("語", 1200) + "尾\n次",
 		},
 		{
 			name:   "CJK sentences across chunks",
@@ -237,7 +249,11 @@ func TestChunkCoordinator_HTTPTrimmingBoundaryCases(t *testing.T) {
 			if len(srv.requests()) < 2 {
 				t.Fatalf("expected >= 2 HTTP requests, got %d", len(srv.requests()))
 			}
-			want := stubBoundaryTransform(tc.source)
+			wantSource := tc.want
+			if wantSource == "" {
+				wantSource = tc.source
+			}
+			want := stubBoundaryTransform(wantSource)
 			if got != want {
 				t.Fatalf("HTTP recombined mismatch:\nGOT:  %q\nWANT: %q", got, want)
 			}
@@ -281,4 +297,69 @@ func TestChunkCoordinator_HTTPBilingualAndHistoryKeepOriginalText(t *testing.T) 
 	if items[0].Translated != wantTranslated {
 		t.Fatalf("history translation mismatch:\nGOT:  %q\nWANT: %q", items[0].Translated, wantTranslated)
 	}
+}
+
+func TestChunkCoordinator_EnglishSourceToJapaneseTargetSpaceBoundary(t *testing.T) {
+	t.Run("single-line long English paragraph to Japanese and Latin targets", func(t *testing.T) {
+		source := strings.Repeat("word ", 240) + "tail"
+		tasks, structure := planChunks(source, 1200)
+		if len(tasks) != 2 {
+			t.Fatalf("expected 2 tasks, got %d", len(tasks))
+		}
+		if len(structure) != 1 || !reflect.DeepEqual(structure[0].boundaries, []textstruct.Boundary{textstruct.BoundarySpace}) {
+			t.Fatalf("structure[0].boundaries = %v, want [BoundarySpace]", structure[0].boundaries)
+		}
+
+		if got := recombineTranslatedParagraphs([][]string{{"これは日本語", "です"}}, structure); got != "これは日本語です" {
+			t.Fatalf("recombine CJK target = %q, want %q", got, "これは日本語です")
+		}
+		if got := recombineTranslatedParagraphs([][]string{{"word", "tail"}}, structure); got != "word tail" {
+			t.Fatalf("recombine Latin target = %q, want %q", got, "word tail")
+		}
+
+		replies := []string{"  これは日本語 \n", " \n です  "}
+		idx := 0
+		srv := newChunkServer(t, func(string) (string, string) {
+			reply := replies[idx]
+			idx++
+			return reply, ""
+		})
+		a := profilesApp(t, config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"en", "ja"}})
+		a.endpoint = srv.URL
+
+		got, err := a.translatePrompt(context.Background(), 1, "", source, languages.Direction{Source: "en", Target: "ja"}, 2048, 1200, time.Minute)
+		if err != nil {
+			t.Fatalf("translatePrompt failed: %v", err)
+		}
+		if len(srv.requests()) != 2 {
+			t.Fatalf("expected 2 HTTP requests, got %d", len(srv.requests()))
+		}
+		if got != "これは日本語です" {
+			t.Fatalf("end-to-end EN->JA single-line = %q, want %q", got, "これは日本語です")
+		}
+	})
+
+	t.Run("multi-line long English line to Japanese target", func(t *testing.T) {
+		source := strings.Repeat("word ", 240) + "tail\nnext line"
+		replies := []string{"  これは日本語 ", " です ", " 次の行 "}
+		idx := 0
+		srv := newChunkServer(t, func(string) (string, string) {
+			reply := replies[idx]
+			idx++
+			return reply, ""
+		})
+		a := profilesApp(t, config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"en", "ja"}})
+		a.endpoint = srv.URL
+
+		got, err := a.translatePrompt(context.Background(), 1, "", source, languages.Direction{Source: "en", Target: "ja"}, 2048, 1200, time.Minute)
+		if err != nil {
+			t.Fatalf("translatePrompt failed: %v", err)
+		}
+		if len(srv.requests()) != 3 {
+			t.Fatalf("expected 3 HTTP requests, got %d", len(srv.requests()))
+		}
+		if got != "これは日本語です\n次の行" {
+			t.Fatalf("end-to-end EN->JA multi-line = %q, want %q", got, "これは日本語です\n次の行")
+		}
+	})
 }
