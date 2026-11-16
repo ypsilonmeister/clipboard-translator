@@ -129,12 +129,17 @@ func hasScript(s, script string) bool {
 		if unicode.In(r, tables...) {
 			return true
 		}
-		// Half-width katakana is not in unicode.Katakana.
-		if script == "ja" && r >= 0xFF66 && r <= 0xFF9D {
+		if script == "ja" && kanaExtra(r) {
 			return true
 		}
 	}
 	return false
+}
+
+// kanaExtra covers what unicode.Hiragana and unicode.Katakana leave out:
+// half-width katakana and the long vowel mark.
+func kanaExtra(r rune) bool {
+	return (r >= 0xFF66 && r <= 0xFF9D) || r == 'ー'
 }
 
 // uses reports whether s contains the script of lang. For Japanese that includes
@@ -144,15 +149,123 @@ func uses(s, lang string) bool {
 	return hasScript(s, l.script) || (lang == "ja" && hasScript(s, "han"))
 }
 
+// inScript reports whether r belongs to the script of lang (for Japanese that
+// includes Han, as in uses).
+func inScript(r rune, lang string) bool {
+	if unicode.In(r, scriptTables[languages[lang].script]...) {
+		return true
+	}
+	if lang == "ja" {
+		return unicode.Is(unicode.Han, r) || kanaExtra(r)
+	}
+	return false
+}
+
+// unspaced lists the scripts whose words are not separated by spaces (or, for
+// Hangul, that attach particles to words), so the amount of such text is
+// counted in characters. Other scripts are counted in space-separated tokens.
+var unspaced = map[string]bool{
+	"han": true, "ja": true, "hangul": true, "thai": true, "khmer": true, "myanmar": true,
+}
+
+// Thresholds for text that mixes Latin with the other script of the pair.
+// The text is read as Latin only when Latin is clearly its skeleton; where
+// unsure, the result stays "other -> Latin", as before this rule.
+//
+//   - minProseWords: product names and identifiers do not make a sentence
+//     ("Windows 11, macOS Sonoma, Red Hat Enterprise Linux" inside Japanese,
+//     Russian or Arabic text), so at least this many Latin words must look like
+//     running prose (see proseWord).
+//   - latinWordsNum/latinWordsDen: Latin words per unit of the other script.
+//     3/2 lets an English sentence of 11 words carry a 6-character name, and
+//     still leaves "git commit してから git push origin main を実行" Japanese.
+const (
+	minProseWords = 5
+	latinWordsNum = 3
+	latinWordsDen = 2
+)
+
+// proseWord reports whether a Latin token looks like a word of running text:
+// lowercase letters only, apart from punctuation around it and ' or - inside.
+// Names, acronyms, versions, paths and identifiers are not.
+func proseWord(tok string) bool {
+	tok = strings.TrimFunc(tok, func(r rune) bool { return !unicode.IsLetter(r) })
+	for _, r := range tok {
+		if !unicode.IsLower(r) && r != 0x27 && r != 0x2019 && r != '-' {
+			return false
+		}
+	}
+	return tok != ""
+}
+
+// latinIsSkeleton reports whether s (known to contain the script of other)
+// is Latin text quoting a little of the other script, rather than the reverse.
+// Over the space-separated tokens of s: w counts those with Latin letters and
+// none of the other script ("Composeを" has a particle attached, which is the
+// other language's grammar, and a URL or code fragment is one token however
+// long), prose counts the w that are proseWords, and u is the amount of the
+// other script (characters, or tokens for space-separated scripts).
+//
+// Text that opens or ends in the other script keeps the old result whatever
+// the counts say: a command is made of lowercase words too, so "Запусти npm
+// run build and then npm run test" and "npm run build and then npm run test
+// не работает" cannot be told from an English sentence with a foreign word at
+// either end.
+func latinIsSkeleton(s, other string) bool {
+	byChar := unspaced[languages[other].script]
+	w, prose, u := 0, 0, 0
+	first := true // no token with a letter of either script yet
+	endsOther := false
+	for _, tok := range strings.Fields(s) {
+		hasLatin, n := false, 0
+		for _, r := range tok {
+			switch {
+			case inScript(r, other):
+				// A token that begins its Japanese with hiragana is a particle or
+				// an inflection ("を", "する", "の比較"): Japanese grammar around
+				// Latin words, however many ("git push origin main する").
+				if n == 0 && other == "ja" && unicode.Is(unicode.Hiragana, r) {
+					return false
+				}
+				n++
+			case unicode.Is(unicode.Latin, r):
+				hasLatin = true
+			}
+		}
+		if first && n > 0 {
+			return false
+		}
+		first = first && !hasLatin
+		if n > 0 || hasLatin {
+			endsOther = n > 0
+		}
+		switch {
+		case n > 0 && byChar:
+			u += n
+		case n > 0:
+			u++
+		case hasLatin:
+			w++
+			if proseWord(tok) {
+				prose++
+			}
+		}
+	}
+	return !endsOther && prose >= minProseWords && w*latinWordsDen >= u*latinWordsNum
+}
+
 func IsURL(s string) bool {
 	l := strings.ToLower(s)
 	return strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "http://")
 }
 
 // DirectionFor says which way s should be translated for the language pair.
-// The language with its own non-Latin script wins when the text mixes scripts
-// (Japanese with an English word is still Japanese). URLs and text without a
-// letter of either script are not translated.
+// For a Latin language paired with a non-Latin one, the non-Latin language wins
+// when the text mixes scripts (Japanese with an English word is still
+// Japanese), unless the Latin side is clearly the skeleton: a sentence of
+// space-separated Latin words around a few characters of the other script
+// (English with a quoted Japanese name is still English; see latinIsSkeleton).
+// URLs and text without a letter of either script are not translated.
 func DirectionFor(pair []string, s string) (Direction, bool) {
 	if len(pair) != 2 {
 		pair = Default
@@ -175,6 +288,9 @@ func DirectionFor(pair []string, s string) (Direction, bool) {
 			latin, other = b, a
 		}
 		if uses(s, other) {
+			if latinIsSkeleton(s, other) {
+				return to(latin, other)
+			}
 			return to(other, latin)
 		}
 		if hasScript(s, "latin") {
