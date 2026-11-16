@@ -147,66 +147,93 @@ func uses(s, lang string) bool {
 // inScript reports whether r belongs to the script of lang (for Japanese that
 // includes Han, as in uses).
 func inScript(r rune, lang string) bool {
-	l := languages[lang]
-	if unicode.In(r, scriptTables[l.script]...) {
+	if unicode.In(r, scriptTables[languages[lang].script]...) {
 		return true
 	}
 	if lang == "ja" {
-		return unicode.Is(unicode.Han, r) || (r >= 0xFF66 && r <= 0xFF9D)
+		// Half-width katakana and the long vowel mark are not in unicode.Katakana.
+		return unicode.Is(unicode.Han, r) || (r >= 0xFF66 && r <= 0xFF9D) || r == 'ー'
 	}
 	return false
 }
 
-// unspaced lists the scripts whose words are not separated by spaces, so the
-// amount of such text is counted in characters. Other scripts are counted in
-// space-separated tokens.
+// unspaced lists the scripts whose words are not separated by spaces (or, for
+// Hangul, that attach particles to words), so the amount of such text is
+// counted in characters. Other scripts are counted in space-separated tokens.
 var unspaced = map[string]bool{
 	"han": true, "ja": true, "hangul": true, "thai": true, "khmer": true, "myanmar": true,
 }
 
 // Thresholds for text that mixes Latin with the other script of the pair.
-// The text is only read as Latin when its skeleton is clearly Latin: at least
-// minLatinWords words that are purely Latin, and at least latinWordsNum per
-// latinWordsDen units of the other script. The bar is high on purpose: a
-// Japanese or Korean sentence often carries many English terms, and attached
-// particles make a Latin-looking token ("Composeを") count for the other side.
-// Where unsure, the result stays "other -> Latin", as before this rule.
-// 3/2 (not 2/1) so that a 6-character name inside an English sentence of
-// 11 words still counts as English.
+// The text is read as Latin only when Latin is clearly its skeleton; where
+// unsure, the result stays "other -> Latin", as before this rule.
+//
+//   - minProseWords: product names and identifiers do not make a sentence
+//     ("Windows 11, macOS Sonoma, Red Hat Enterprise Linux" inside Japanese,
+//     Russian or Arabic text), so at least this many Latin words must look like
+//     running prose (see proseWord). 5 also keeps a 4-word command after one
+//     foreign verb ("Запусти git push origin main") on the old result.
+//   - latinWordsNum/latinWordsDen: Latin words per unit of the other script.
+//     3/2 lets an English sentence of 11 words carry a 6-character name, and
+//     still leaves "git commit してから git push origin main を実行" Japanese.
 const (
-	minLatinWords = 4
+	minProseWords = 5
 	latinWordsNum = 3
 	latinWordsDen = 2
 )
 
+// proseWord reports whether a Latin token looks like a word of running text:
+// lowercase letters only, apart from punctuation around it and ' or - inside.
+// Names, acronyms, versions, paths and identifiers are not.
+func proseWord(tok string) bool {
+	tok = strings.TrimFunc(tok, func(r rune) bool { return !unicode.IsLetter(r) })
+	for _, r := range tok {
+		if !unicode.IsLower(r) && r != 0x27 && r != 0x2019 && r != '-' {
+			return false
+		}
+	}
+	return tok != ""
+}
+
 // latinIsSkeleton reports whether s (known to contain the script of other)
 // is Latin text quoting a little of the other script, rather than the reverse.
-// W counts tokens with Latin letters and none of the other script; U counts the
+// Over the space-separated tokens of s: w counts those with Latin letters and
+// none of the other script ("Composeを" has a particle attached, which is the
+// other language's grammar, and a URL or code fragment is one token however
+// long), prose counts the w that are proseWords, and u is the amount of the
 // other script (characters, or tokens for space-separated scripts).
 func latinIsSkeleton(s, other string) bool {
 	byChar := unspaced[languages[other].script]
-	w, u := 0, 0
+	w, prose, u := 0, 0, 0
 	for _, tok := range strings.Fields(s) {
-		hasLatin, hasOther, n := false, false, 0
+		hasLatin, n := false, 0
 		for _, r := range tok {
 			switch {
 			case inScript(r, other):
-				hasOther = true
+				// A token that begins its Japanese with hiragana is a particle or
+				// an inflection ("を", "する", "の比較"): Japanese grammar around
+				// Latin words, however many ("git push origin main する").
+				if n == 0 && other == "ja" && unicode.Is(unicode.Hiragana, r) {
+					return false
+				}
 				n++
 			case unicode.Is(unicode.Latin, r):
 				hasLatin = true
 			}
 		}
 		switch {
-		case hasOther && byChar:
+		case n > 0 && byChar:
 			u += n
-		case hasOther:
+		case n > 0:
 			u++
 		case hasLatin:
 			w++
+			if proseWord(tok) {
+				prose++
+			}
 		}
 	}
-	return w >= minLatinWords && w*latinWordsDen >= u*latinWordsNum
+	return prose >= minProseWords && w*latinWordsDen >= u*latinWordsNum
 }
 
 func IsURL(s string) bool {
@@ -217,7 +244,7 @@ func IsURL(s string) bool {
 // DirectionFor says which way s should be translated for the language pair.
 // For a Latin language paired with a non-Latin one, the non-Latin language wins
 // when the text mixes scripts (Japanese with an English word is still
-// Japanese), unless the Latin side is clearly the skeleton: several
+// Japanese), unless the Latin side is clearly the skeleton: a sentence of
 // space-separated Latin words around a few characters of the other script
 // (English with a quoted Japanese name is still English; see latinIsSkeleton).
 // URLs and text without a letter of either script are not translated.
