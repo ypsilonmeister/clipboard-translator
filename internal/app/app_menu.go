@@ -140,6 +140,8 @@ func (a *app) buildMenu() []platform.MenuItem {
 	return items
 }
 
+const cancelledStatus = "Clipboard Translator - translation cancelled"
+
 // handleCommand runs one app-specific menu command. It runs on the UI thread.
 func (a *app) handleCommand(id int) {
 	switch {
@@ -169,7 +171,7 @@ func (a *app) handleCommand(id int) {
 		if a.translating {
 			log.Print("translation cancelled from the menu")
 			a.abortTranslation()
-			a.setTransientStatus("Clipboard Translator - translation cancelled")
+			a.setTransientStatus(cancelledStatus)
 		}
 	case id == cmdSettings:
 		a.openSettings()

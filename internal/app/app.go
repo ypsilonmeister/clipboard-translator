@@ -346,10 +346,16 @@ func (a *app) nextCommand() (int, bool) {
 // stop a server and do not begin a translation, so they cannot nest another
 // slow call in this one. "Cancel translation" only bumps the generation; the
 // caller that is loading the model for that translation sees it afterwards.
-func safeWhileBusy(id int) bool {
+//
+// Settings and the quick start guide describe the hotkeys, which the first
+// model load at startup has not registered yet (a.hotkey is nil until then):
+// there they wait, or the guide would promise a hotkey that may turn out taken.
+func (a *app) safeWhileBusy(id int) bool {
 	switch id {
-	case cmdCancel, cmdSettings, cmdQuickstart, cmdOpenConfig, cmdPlamoLicense, cmdHistoryClear:
+	case cmdCancel, cmdOpenConfig, cmdPlamoLicense, cmdHistoryClear:
 		return true
+	case cmdSettings, cmdQuickstart:
+		return a.hotkey != nil
 	}
 	return false
 }
@@ -357,7 +363,10 @@ func safeWhileBusy(id int) bool {
 // serviceTrayWhileBusy runs the menu commands the user picked while the main
 // loop is inside a slow call: PumpMessages lets the menu open there, so its
 // items must not sit unanswered until the model has loaded. Commands that are
-// not safe to run now keep their order and run when the main loop is back.
+// not safe to run now keep their order and run when the main loop is back, and
+// so does everything picked after one of them (a "Clear history" must not
+// overtake the history copy picked before it). Only "Cancel translation" never
+// waits: it is the one command whose point is lost by waiting.
 func (a *app) serviceTrayWhileBusy() {
 	for {
 		if a.quitRequested() {
@@ -367,7 +376,7 @@ func (a *app) serviceTrayWhileBusy() {
 		if !ok {
 			return
 		}
-		if safeWhileBusy(id) {
+		if id == cmdCancel || (len(a.deferredCmds) == 0 && a.safeWhileBusy(id)) {
 			a.handleCommand(id)
 		} else {
 			a.deferredCmds = append(a.deferredCmds, id)
@@ -965,11 +974,15 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 			if !errors.Is(err, llamaserver.ErrQuit) {
 				log.Printf("could not load the model again: %v", err)
 				if !fromAPI {
-					a.tray.Notify("Clipboard Translator", "Nothing was translated: "+err.Error()+"\nSee server.log and translator.log in the app folder.", true)
+					// The pointer to the logs comes first: a notification may cut a long reason short.
+					a.tray.Notify("Clipboard Translator", "Nothing was translated: the model could not be loaded again. See server.log and translator.log in the app folder. "+err.Error(), true)
 				}
 			}
 			return
 		}
+		// A cancel during the load (menu, API caller gone, endpoint switched
+		// off) has already bumped the generation and cleared translating.
+		loadGen := a.generation
 		for {
 			if a.quitRequested() {
 				break
@@ -980,15 +993,38 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 			}
 			a.handleCommand(id)
 		}
-		if a.quitRequested() || !a.translating || a.generation != initialGen {
+		if a.quitRequested() {
 			if a.translating {
 				a.abortTranslation()
 			}
 			return
 		}
+		if a.generation != loadGen {
+			// A command that waited for the load replaced or cancelled this
+			// request; what it started (Translate clipboard) is the newest one.
+			if a.capturing == nil && a.pendingRead == nil {
+				a.refreshStatus() // not "loading model..." any more, unless it translates
+			}
+			return
+		}
 		if pendingProfile >= 0 {
+			// A hotkey pressed during the load is the newest request, also
+			// after a cancel (abortTranslation resets pendingProfile).
 			a.abortTranslation()
 			a.startTranslation(pendingProfile)
+			return
+		}
+		if !a.translating || loadGen != initialGen {
+			if a.translating {
+				a.abortTranslation()
+			}
+			// Not "loading model..." any more, which the load kept writing
+			// over the menu's "cancelled".
+			if a.statusResetAt.IsZero() {
+				a.refreshStatus()
+			} else {
+				a.setTransientStatus(cancelledStatus)
+			}
 			return
 		}
 	}
