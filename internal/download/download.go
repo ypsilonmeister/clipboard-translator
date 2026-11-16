@@ -47,13 +47,19 @@ type Options struct {
 	Client *http.Client // no Client.Timeout: that would cap the whole transfer
 	URL    string
 	Dest   string // final name; the data goes to Dest+".partial" first
-	SHA256 string // lowercase or uppercase hex; empty skips the check
+	// SHA256 is lowercase or uppercase hex; empty skips the check. Without it a
+	// partial file cannot be told from one of another file, so it is never
+	// continued: the download starts from zero.
+	SHA256 string
 
 	UserAgent string
 	Accept    string // sent only when set
 	Label     string // how errors name the server; default is the URL
 
-	ExpectedSize int64 // a partial file larger than this is thrown away; 0 = unknown
+	// ExpectedSize is the exact size of the file, 0 when unknown. A partial file
+	// larger than it is thrown away, a server that sends more is cut off, and a
+	// body that ends before it counts as an interrupted transfer.
+	ExpectedSize int64
 	// DiskHint is appended to the "is the disk full?" message, e.g. the size the
 	// model needs.
 	DiskHint string
@@ -69,7 +75,7 @@ type Options struct {
 	// Callbacks, all optional, all called from the goroutine running Fetch.
 	Phase    func(phase string)                         // "checking" (hashing a partial file), "downloading"
 	Progress func(done, total int64)                    // total is 0 when unknown
-	OnResume func(have int64)                           // a partial file of have bytes is being continued
+	OnResume func(have int64)                           // the server agreed to continue a partial file of have bytes
 	OnRetry  func(n int, err error, wait time.Duration) // retry number n (1-based) starts after wait
 }
 
@@ -98,6 +104,14 @@ type permanent struct{ err error }
 
 func (p *permanent) Error() string { return p.err.Error() }
 func (p *permanent) Unwrap() error { return p.err }
+
+// transient marks an error worth another attempt whatever its type: a body
+// that broke off mid-transfer. HTTP/2 reports those as stream or GOAWAY errors
+// that are neither a net.Error nor io.ErrUnexpectedEOF.
+type transient struct{ err error }
+
+func (t *transient) Error() string { return t.err.Error() }
+func (t *transient) Unwrap() error { return t.err }
 
 // errRestart is internal: the partial file was discarded, try again from zero.
 var errRestart = errors.New("restart from the beginning")
@@ -165,6 +179,10 @@ func retryable(err error) bool {
 	if errors.Is(err, ErrStalled) {
 		return true
 	}
+	var tr *transient
+	if errors.As(err, &tr) {
+		return true
+	}
 	var se *StatusError
 	if errors.As(err, &se) {
 		return se.Code >= 500 || se.Code == http.StatusRequestTimeout || se.Code == http.StatusTooManyRequests
@@ -195,8 +213,9 @@ func once(ctx context.Context, o *Options, partial string) error {
 			return err
 		}
 		have = n
-		if o.ExpectedSize > 0 && have > o.ExpectedSize {
-			// Longer than the file can be: it is not a prefix of it.
+		if o.SHA256 == "" || (o.ExpectedSize > 0 && have > o.ExpectedSize) {
+			// Longer than the file can be, or nothing to check it against: it
+			// cannot be trusted to be a prefix of the file.
 			if err := os.Remove(partial); err != nil {
 				return &permanent{err}
 			}
@@ -209,9 +228,6 @@ func once(ctx context.Context, o *Options, partial string) error {
 	}
 	if o.Progress != nil {
 		o.Progress(have, o.ExpectedSize)
-	}
-	if have > 0 && o.OnResume != nil {
-		o.OnResume(have)
 	}
 
 	// The stall timer covers the connect, the headers and every read.
@@ -234,6 +250,10 @@ func once(ctx context.Context, o *Options, partial string) error {
 	if o.Accept != "" {
 		req.Header.Set("Accept", o.Accept)
 	}
+	// The bytes on disk must be the file itself: without this the transport asks
+	// for gzip on the first request (and not on a Range request), and offsets
+	// and Content-Length would describe two different representations.
+	req.Header.Set("Accept-Encoding", "identity")
 	if have > 0 {
 		req.Header.Set("Range", "bytes="+strconv.FormatInt(have, 10)+"-")
 	}
@@ -245,6 +265,12 @@ func once(ctx context.Context, o *Options, partial string) error {
 		return fmt.Errorf("could not reach %s: %w", o.Label, err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent {
+		if ce := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding"))); ce != "" && ce != "identity" {
+			return &permanent{fmt.Errorf("%s answered with a %s-encoded body although none was asked for", o.Label, ce)}
+		}
+	}
 
 	flags := os.O_CREATE | os.O_WRONLY
 	total := o.ExpectedSize // for progress
@@ -268,6 +294,9 @@ func once(ctx context.Context, o *Options, partial string) error {
 			total, declared = size, size
 		}
 		flags |= os.O_APPEND
+		if have > 0 && o.OnResume != nil {
+			o.OnResume(have)
+		}
 	case http.StatusRequestedRangeNotSatisfiable:
 		if have == 0 {
 			return &StatusError{Label: o.Label, Code: resp.StatusCode}
@@ -294,6 +323,7 @@ func once(ctx context.Context, o *Options, partial string) error {
 	}
 	buf := make([]byte, bufSize)
 	var copyErr error
+	tooLong := false
 	for {
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
@@ -308,19 +338,28 @@ func once(ctx context.Context, o *Options, partial string) error {
 			}
 			h.Write(buf[:n])
 			have += int64(n)
+			if o.ExpectedSize > 0 && have > o.ExpectedSize {
+				// Not the pinned file, and possibly endless: stop here.
+				tooLong = true
+				break
+			}
 			if o.Progress != nil {
 				o.Progress(have, total)
 			}
 		}
 		if rerr != nil {
 			if rerr != io.EOF {
-				copyErr = rerr
+				copyErr = &transient{fmt.Errorf("the connection to %s broke off: %w", o.Label, rerr)}
 			}
 			break
 		}
 	}
 	if err := f.Close(); err != nil && copyErr == nil {
 		copyErr = &permanent{err}
+	}
+	if tooLong {
+		_ = os.Remove(partial)
+		return &permanent{fmt.Errorf("%s sent more than the %d bytes of %s; the partial file was deleted", o.Label, o.ExpectedSize, filepath.Base(o.Dest))}
 	}
 	if copyErr != nil {
 		if ctx.Err() != nil {
@@ -333,6 +372,11 @@ func once(ctx context.Context, o *Options, partial string) error {
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if declared == 0 {
+		// No length in the answer (chunked, or a body that ends with the
+		// connection): a short file is a cut transfer, not a bad download.
+		declared = o.ExpectedSize
 	}
 	if declared > 0 && have < declared {
 		return fmt.Errorf("the connection to %s ended early: %w", o.Label, io.ErrUnexpectedEOF)

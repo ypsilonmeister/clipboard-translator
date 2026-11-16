@@ -143,3 +143,63 @@ func TestAcceptHeaderOnlyForGitHub(t *testing.T) {
 		}
 	}
 }
+
+// With the size known (a model of the catalog) a resumed download shows a
+// percentage that includes the partial file even when the server sends no
+// length, says it continues only after the server agreed, and ends on a
+// 100% line instead of wherever the rate limit left it.
+func TestSetupDownloadSizedShowsPercentOnResumeAndFinishes(t *testing.T) {
+	half := len(bigPayload) / 2
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Range") != fmt.Sprintf("bytes=%d-", half) {
+			t.Errorf("Range = %q", r.Header.Get("Range"))
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/*", half, len(bigPayload)-1))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(bigPayload[half:])
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	r := &runner{out: &out, client: srv.Client()}
+	var tick int64
+	base := time.Unix(1000, 0)
+	r.now = func() time.Time { return base.Add(time.Duration(atomic.AddInt64(&tick, 1)) * 2 * time.Second) }
+	dest := filepath.Join(t.TempDir(), "m.bin")
+	os.WriteFile(dest+".partial", bigPayload[:half], 0o644)
+	if err := r.downloadSized(srv.URL+"/m.bin", dest, sha256Hex(bigPayload), int64(len(bigPayload))); err != nil {
+		t.Fatal(err)
+	}
+	lines := progressLines(out.String())
+	if len(lines) < 2 {
+		t.Fatalf("output: %q", out.String())
+	}
+	if !strings.Contains(lines[0], " 50%") {
+		t.Errorf("first progress line %q does not count the partial file", lines[0])
+	}
+	if last := lines[len(lines)-1]; !strings.Contains(last, "100%") || !strings.Contains(last, "4.0 MB") {
+		t.Errorf("last progress line %q", last)
+	}
+	if !strings.Contains(out.String(), "Continuing m.bin from 2.0 MB") {
+		t.Errorf("output does not say it continued: %q", out.String())
+	}
+}
+
+// A server that ignores the Range starts from zero; the output must not claim
+// the download was continued.
+func TestSetupDownloadDoesNotClaimToContinueOnA200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(bigPayload) }))
+	defer srv.Close()
+	var out bytes.Buffer
+	r := &runner{out: &out, client: srv.Client()}
+	dest := filepath.Join(t.TempDir(), "m.bin")
+	os.WriteFile(dest+".partial", bigPayload[:1000], 0o644)
+	if err := r.download(srv.URL+"/m.bin", dest, sha256Hex(bigPayload)); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(dest); !bytes.Equal(b, bigPayload) {
+		t.Fatal("file differs")
+	}
+	if strings.Contains(out.String(), "Continuing") {
+		t.Errorf("output: %q", out.String())
+	}
+}

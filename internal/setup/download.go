@@ -24,6 +24,13 @@ const progressInterval = time.Second
 // final name; the partial file is kept for the next run, except one that
 // failed the hash check.
 func (r *runner) download(rawURL, dest, want string) error {
+	return r.downloadSized(rawURL, dest, want, 0)
+}
+
+// downloadSized is download for a file whose exact size is known (a model of
+// the catalog): progress shows a percentage from the first line, also when
+// the server sends no length, and a server that sends more is cut off.
+func (r *runner) downloadSized(rawURL, dest, want string, size int64) error {
 	name := dest
 	if i := strings.LastIndexAny(dest, `/\`); i >= 0 {
 		name = dest[i+1:]
@@ -35,12 +42,13 @@ func (r *runner) download(rawURL, dest, want string) error {
 		Dest:         dest,
 		SHA256:       want,
 		UserAgent:    "ClipboardTranslatorSetup",
+		ExpectedSize: size,
 		StallTimeout: r.stall,
 		Retries:      r.retries,
 		RetryBase:    r.retryBase,
 		Progress:     pr.update,
 		OnResume: func(have int64) {
-			r.printf("Continuing %s from %s of an earlier download", name, megabytes(have))
+			r.printf("Continuing %s from %s already downloaded", name, megabytes(have))
 		},
 		OnRetry: func(n int, err error, wait time.Duration) {
 			r.printf("Download of %s was interrupted (%v); retrying in %s (%d of %d)", name, err, wait.Round(time.Second), n, r.retries)
@@ -51,6 +59,11 @@ func (r *runner) download(rawURL, dest, want string) error {
 		o.Accept = "application/vnd.github+json"
 	}
 	err := download.Fetch(context.Background(), o)
+	if err == nil && pr.printed {
+		// The rate limit usually swallows the last update; do not leave the
+		// output standing at "97%".
+		r.printf("  100%%  %s (verified)", megabytes(pr.done))
+	}
 	if err != nil {
 		var se *download.StatusError
 		var hm *download.HashMismatchError
@@ -76,14 +89,18 @@ type progressPrinter struct {
 	r    *runner
 	name string
 	last time.Time
+
+	done    int64 // the latest report, printed or not
+	printed bool  // a progress line was written
 }
 
 func (p *progressPrinter) update(done, total int64) {
+	p.done = done
 	now := p.r.clock()
 	if now.Sub(p.last) < progressInterval {
 		return
 	}
-	p.last = now
+	p.last, p.printed = now, true
 	if total > 0 && done <= total {
 		p.r.printf("  %3d%%  %s / %s", done*100/total, megabytes(done), megabytes(total))
 		return

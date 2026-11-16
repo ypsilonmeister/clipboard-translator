@@ -275,7 +275,7 @@ func (r *runner) installModel(e models.Entry) error {
 	default:
 		return nil
 	}
-	if err := r.download(modelBaseURL(e)+e.File, dest, e.Sha256); err != nil {
+	if err := r.downloadSized(modelBaseURL(e)+e.File, dest, e.Sha256, e.Bytes); err != nil {
 		return err
 	}
 	if info, err := os.Stat(dest); err != nil || info.Size() < e.MinBytes {

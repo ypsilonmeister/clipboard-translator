@@ -21,7 +21,7 @@ type Entry struct {
 	TemplateSha256  string
 	SizeLabel       string
 	MinBytes        int64 // a file smaller than this is not a complete model
-	Bytes           int64 // expected size, when known (progress if the server sends no length)
+	Bytes           int64 // exact size, 0 when unknown: progress total, and a download that is longer is refused
 }
 
 // Only Q4_K_M is offered, and not the 31B model (about 20 GB).

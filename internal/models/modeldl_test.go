@@ -341,6 +341,8 @@ func TestDownloadsCannotReachTheRealHostInTests(t *testing.T) {
 	}
 }
 
+// The catalog is pinned in four places. The Python test checks the two Unix
+// scripts against setup.ps1; this one checks the Go copy against setup.ps1.
 func TestCatalogMatchesSetupScript(t *testing.T) {
 	ps1, err := os.ReadFile(filepath.Join("..", "..", "setup.ps1"))
 	if err != nil {
