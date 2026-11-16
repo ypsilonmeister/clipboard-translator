@@ -81,6 +81,7 @@ func (j *portalCapture) Step() (bool, string, bool, error) {
 		seq := r.clip.seq
 		if seq == j.before {
 			if !now.Before(j.deadline) {
+				j.fallback = FallbackNoCopy // Ctrl+C changed nothing: the old clipboard text is used
 				return true, j.old, false, nil
 			}
 			return false, "", false, nil

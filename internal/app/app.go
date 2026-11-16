@@ -865,6 +865,14 @@ func (a *app) stepCapture() {
 // by a selection capture, so an input "clipboard" profile is never affected.
 func (a *app) translateCaptured(profile config.Profile, win uintptr, source string, fromSelection bool, fallback platform.CaptureFallback, err error) {
 	capturedAt := a.timeNow()
+	switch fallback {
+	case platform.FallbackNoCopy:
+		log.Print("no selection was copied; using the text already on the clipboard")
+	case platform.FallbackElevated:
+		// Said now, whatever becomes of the clipboard text: the advice (copy
+		// yourself) is what the user needs, also when there is nothing to translate.
+		a.noteElevatedWindow()
+	}
 	if err != nil {
 		if profile.InputMode() == config.InputClipboard {
 			log.Printf("cannot read the clipboard: %v", err)
@@ -873,6 +881,10 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		}
 		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
+		if fallback == platform.FallbackElevated {
+			// The notice shows once per run; the tooltip says it every time.
+			a.setTransientStatus("Clipboard Translator - cannot copy from an administrator window; press Ctrl+C, then the hotkey")
+		}
 		if a.desktopStatus().Wayland || errors.Is(err, platform.ErrCaptureModifiersHeld) || errors.Is(err, platform.ErrCaptureFocusChanged) {
 			// Say so: translating the old clipboard text instead would be a silent wrong answer.
 			msg := "Nothing was translated: " + err.Error() + "."
@@ -883,7 +895,6 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		}
 		return
 	}
-	a.noteCaptureFallback(fallback)
 	reason, direction := profile.Check(source, a.conf.MaxChars)
 	if reason != config.SkipNone {
 		count := utf8.RuneCountInString(source)
@@ -1088,6 +1099,11 @@ func (a *app) handleResult(res result) {
 		log.Print("translation ready in clipboard (", platform.PasteShortcut(), " to paste)")
 		a.tray.SetStatus(readyStatus)
 	}
+	// The fallback notice replaces the completion notice for this result: a
+	// second balloon would take the place of the first on Windows.
+	if res.fallback == platform.FallbackNoCopy && a.noteNoCopy() {
+		return
+	}
 	if a.conf.NotifyOnComplete && action == pasteNone {
 		title, msg := platform.CompletionNotification()
 		a.tray.Notify(title, msg, false)
@@ -1108,24 +1124,30 @@ func (a *app) readyStatus(fallback platform.CaptureFallback) string {
 	return "Clipboard Translator - translation ready " + tail
 }
 
-// noteCaptureFallback tells the user once per run that the clipboard text, not
-// the selection, was translated. The translation still happens (copying first
-// on purpose is a normal way to use the hotkey), so this is only a notice.
-func (a *app) noteCaptureFallback(fallback platform.CaptureFallback) {
-	switch fallback {
-	case platform.FallbackNoCopy:
-		log.Print("no selection was copied; the text already on the clipboard is translated")
-		if !a.noCopyNotified {
-			a.noCopyNotified = true
-			a.tray.Notify("Clipboard Translator", "No selection was copied, so the text already on the clipboard was translated. If you copy first on purpose, set this hotkey's text source to the clipboard in Settings to skip the wait.", false)
-		}
-	case platform.FallbackElevated:
-		log.Print("the foreground window runs as administrator; the text already on the clipboard is translated")
-		if !a.elevatedNotified {
-			a.elevatedNotified = true
-			a.tray.Notify("Clipboard Translator", "Cannot copy the selection from a window that runs as administrator. Press Ctrl+C yourself, then the hotkey.", false)
-		}
+// noteNoCopy tells the user once per run that the clipboard text, not the
+// selection, was translated, and reports whether it did. It is called when that
+// translation is on the clipboard and nowhere earlier: a press that ends in a
+// skip, a failure or a dropped result must neither claim a translation nor use
+// up the one notice. Copying first on purpose is a normal way to use the
+// hotkey, so this is only a notice.
+func (a *app) noteNoCopy() bool {
+	if a.noCopyNotified {
+		return false
 	}
+	a.noCopyNotified = true
+	a.tray.Notify("Clipboard Translator", "No selection was copied, so the text already on the clipboard was translated. If you copy first on purpose, set \"Text from\" to Clipboard for this hotkey in Settings.", false)
+	return true
+}
+
+// noteElevatedWindow tells the user once per run why the selection of an
+// administrator window was not copied, and what to do instead.
+func (a *app) noteElevatedWindow() {
+	log.Print("the foreground window runs as administrator; using the text already on the clipboard")
+	if a.elevatedNotified {
+		return
+	}
+	a.elevatedNotified = true
+	a.tray.Notify("Clipboard Translator", "Cannot copy the selection from a window that runs as administrator. Press Ctrl+C yourself, then the hotkey.", false)
 }
 
 // pasteIntoForeground waits for the hotkey's modifiers to be released and then

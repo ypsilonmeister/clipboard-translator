@@ -321,6 +321,34 @@ func TestPortalCaptureNeverAutoPastes(t *testing.T) {
 	if !done || text != "selected text" || fresh || err != nil {
 		t.Fatal("Wayland selection capture must never authorize auto-paste")
 	}
+	if task.Fallback() != FallbackNone {
+		t.Fatal("a copied selection is not a fallback")
+	}
+}
+
+// A Ctrl+C that changes nothing ends on the old clipboard text, and the task
+// must say so: the app cannot tell it from a copied selection otherwise.
+func TestPortalCaptureReportsNoCopyFallback(t *testing.T) {
+	r, w, now := remoteFixture(t)
+	authorizeRemote(t, r, w)
+	primeClipboard(t, r, w, "old clipboard")
+	task := beginPortalCapture(r, func() bool { return true }).(*portalCapture)
+	task.Step()
+	*now = now.Add(160 * time.Millisecond)
+	task.Step()
+	finishRemoteKeys(t, r, w, task.keys)
+	task.Step()
+	if done, _, _, _ := task.Step(); done || task.Fallback() != FallbackNone {
+		t.Fatal("the capture must wait for the copy before it falls back")
+	}
+	*now = now.Add(2 * time.Second)
+	done, text, fresh, err := task.Step()
+	if !done || text != "old clipboard" || fresh || err != nil {
+		t.Fatalf("done=%v text=%q fresh=%v err=%v; want the old clipboard text", done, text, fresh, err)
+	}
+	if task.Fallback() != FallbackNoCopy {
+		t.Fatal("a copy that changed nothing must be reported as FallbackNoCopy")
+	}
 }
 func TestPortalCaptureHeldModifiersAndCopyFailure(t *testing.T) {
 	r, w, now := remoteFixture(t)

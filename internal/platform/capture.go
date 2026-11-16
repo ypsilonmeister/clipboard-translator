@@ -48,7 +48,8 @@ type CaptureTask interface {
 	Step() (done bool, text string, fromSelection bool, err error)
 	Wait() time.Duration
 	// Fallback is read once Step has reported done: whether the text is the old
-	// clipboard text because no selection was copied.
+	// clipboard text because no selection was copied. FallbackElevated is also
+	// reported together with an error (the clipboard could not be read).
 	Fallback() CaptureFallback
 }
 
@@ -105,12 +106,14 @@ func (j *captureJob) Step() (done bool, text string, fromSelection bool, err err
 			j.elevChecked = true
 			if j.ops.elevated != nil && j.ops.elevated(j.win) {
 				// The keys we would send are dropped silently: do not wait for a copy
-				// that cannot happen, use what the user copied themselves.
+				// that cannot happen, use what the user copied themselves. The mark
+				// is set before the read: a clipboard without text is still a press
+				// in an administrator window, and the app says so.
+				j.fallback = FallbackElevated
 				old, err := j.cb.Read()
 				if err != nil {
 					return true, "", false, err
 				}
-				j.fallback = FallbackElevated
 				return true, old, false, nil
 			}
 		}
