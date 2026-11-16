@@ -129,12 +129,17 @@ func hasScript(s, script string) bool {
 		if unicode.In(r, tables...) {
 			return true
 		}
-		// Half-width katakana is not in unicode.Katakana.
-		if script == "ja" && r >= 0xFF66 && r <= 0xFF9D {
+		if script == "ja" && kanaExtra(r) {
 			return true
 		}
 	}
 	return false
+}
+
+// kanaExtra covers what unicode.Hiragana and unicode.Katakana leave out:
+// half-width katakana and the long vowel mark.
+func kanaExtra(r rune) bool {
+	return (r >= 0xFF66 && r <= 0xFF9D) || r == 'ー'
 }
 
 // uses reports whether s contains the script of lang. For Japanese that includes
@@ -151,8 +156,7 @@ func inScript(r rune, lang string) bool {
 		return true
 	}
 	if lang == "ja" {
-		// Half-width katakana and the long vowel mark are not in unicode.Katakana.
-		return unicode.Is(unicode.Han, r) || (r >= 0xFF66 && r <= 0xFF9D) || r == 'ー'
+		return unicode.Is(unicode.Han, r) || kanaExtra(r)
 	}
 	return false
 }
@@ -171,8 +175,7 @@ var unspaced = map[string]bool{
 //   - minProseWords: product names and identifiers do not make a sentence
 //     ("Windows 11, macOS Sonoma, Red Hat Enterprise Linux" inside Japanese,
 //     Russian or Arabic text), so at least this many Latin words must look like
-//     running prose (see proseWord). 5 also keeps a 4-word command after one
-//     foreign verb ("Запусти git push origin main") on the old result.
+//     running prose (see proseWord).
 //   - latinWordsNum/latinWordsDen: Latin words per unit of the other script.
 //     3/2 lets an English sentence of 11 words carry a 6-character name, and
 //     still leaves "git commit してから git push origin main を実行" Japanese.
@@ -202,9 +205,17 @@ func proseWord(tok string) bool {
 // other language's grammar, and a URL or code fragment is one token however
 // long), prose counts the w that are proseWords, and u is the amount of the
 // other script (characters, or tokens for space-separated scripts).
+//
+// Text that opens or ends in the other script keeps the old result whatever
+// the counts say: a command is made of lowercase words too, so "Запусти npm
+// run build and then npm run test" and "npm run build and then npm run test
+// не работает" cannot be told from an English sentence with a foreign word at
+// either end.
 func latinIsSkeleton(s, other string) bool {
 	byChar := unspaced[languages[other].script]
 	w, prose, u := 0, 0, 0
+	first := true // no token with a letter of either script yet
+	endsOther := false
 	for _, tok := range strings.Fields(s) {
 		hasLatin, n := false, 0
 		for _, r := range tok {
@@ -221,6 +232,13 @@ func latinIsSkeleton(s, other string) bool {
 				hasLatin = true
 			}
 		}
+		if first && n > 0 {
+			return false
+		}
+		first = first && !hasLatin
+		if n > 0 || hasLatin {
+			endsOther = n > 0
+		}
 		switch {
 		case n > 0 && byChar:
 			u += n
@@ -233,7 +251,7 @@ func latinIsSkeleton(s, other string) bool {
 			}
 		}
 	}
-	return prose >= minProseWords && w*latinWordsDen >= u*latinWordsNum
+	return !endsOther && prose >= minProseWords && w*latinWordsDen >= u*latinWordsNum
 }
 
 func IsURL(s string) bool {

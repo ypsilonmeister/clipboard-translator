@@ -30,7 +30,7 @@ func TestDirectionForPairs(t *testing.T) {
 		{[]string{"ja", "en"}, "The word 侘寂 has no direct English equivalent.", "en", "quoted word", "ja", true},
 		{[]string{"en", "zh-hans"}, "Our Shanghai (上海) team will join the call at 3 pm.", "en", "han name", "zh-hans", true},
 		{[]string{"en", "ko"}, "Samsung (삼성) announced a new phone today.", "en", "hangul name", "ko", true},
-		{[]string{"ru", "en"}, "Привет, this is a test of the new system", "en", "one cyrillic word", "ru", true},
+		{[]string{"ru", "en"}, "The Russian word тоска has no exact equivalent in English.", "en", "one cyrillic word", "ru", true},
 		{[]string{"ja", "en"}, "Hi Tanaka-san (田中太郎さん), could you review the attached proposal by Friday? Thanks!", "en", "six-char name", "ja", true},
 		// The other script stays the skeleton: unchanged results.
 		{[]string{"ja", "en"}, "このAPIはJSONを返します", "ja", "particles", "en", true},
@@ -46,7 +46,7 @@ func TestDirectionForPairs(t *testing.T) {
 		{[]string{"ru", "en"}, "Это тест of the system", "ru", "cyrillic skeleton", "en", true},
 		// More Latin skeletons, in other scripts and positions.
 		{[]string{"ja", "en"}, "Our office has moved. The new address is 〒100-0001 東京都千代田区千代田1-1 and the phone number is unchanged. Please update your records.", "en", "address in english", "ja", true},
-		{[]string{"ja", "en"}, "Please forward the attached file to 田中さん", "en", "ends with a name", "ja", true},
+		{[]string{"ja", "en"}, "1. The word 侘寂 has no direct equivalent in other languages.", "en", "list number first", "ja", true},
 		{[]string{"de", "ja"}, "Das Wort 侘寂 hat keine direkte deutsche Entsprechung und ist schwer zu erklären.", "de", "german", "ja", true},
 		{[]string{"en", "th"}, "The dish called ต้มยำ is a hot and sour soup from Thailand.", "en", "thai word", "th", true},
 		{[]string{"en", "ar"}, "The Arabic greeting مرحبا is used in many countries across the region.", "en", "arabic word", "ar", true},
@@ -68,6 +68,22 @@ func TestDirectionForPairs(t *testing.T) {
 		{[]string{"en", "ru"}, "Запусти git push origin main", "ru", "cyrillic verb and command", "en", true},
 		{[]string{"en", "ar"}, "حمّل Visual Studio Code و GitHub Desktop", "ar", "arabic product names", "en", true},
 		{[]string{"en", "hi"}, "Visual Studio Code में GitHub Copilot install करें", "hi", "hindi product names", "en", true},
+		// Text that opens or ends in the other script: unchanged results.
+		{[]string{"ru", "en"}, "Привет, this is a test of the new system", "ru", "opens in cyrillic", "en", true},
+		{[]string{"en", "ru"}, "Запусти npm run build and then npm run test", "ru", "cyrillic verb and long command", "en", true},
+		{[]string{"en", "ru"}, "npm run build and then npm run test не работает", "ru", "command, ends in cyrillic", "en", true},
+		{[]string{"en", "zh-hans"}, "试试 pip install requests numpy pandas", "zh-hans", "han verb and long command", "en", true},
+		{[]string{"en", "zh-hant"}, "執行 docker compose up and then check the logs", "zh-hant", "han verb and long command", "en", true},
+		{[]string{"ja", "en"}, "実行: npm run build and then npm run test", "ja", "kanji label and command", "en", true},
+		{[]string{"ja", "en"}, "以下を翻訳: The quick brown fox jumps over the lazy dog", "ja", "opens in japanese", "en", true},
+		{[]string{"ja", "en"}, "田中さん, could you review the attached proposal by Friday?", "ja", "opens with a name", "en", true},
+		{[]string{"ja", "en"}, "Please forward the attached file to 田中さん", "ja", "ends with a name", "en", true},
+		{[]string{"en", "ko"}, "먼저 npm run build and then npm run test", "ko", "hangul lead and command", "en", true},
+		{[]string{"en", "ko"}, "npm run build 후에 npm run test 실행", "ko", "command, ends in hangul", "en", true},
+		{[]string{"en", "th"}, "รัน npm run build and then npm run test", "th", "thai verb and command", "en", true},
+		{[]string{"en", "ar"}, "شغّل npm run build and then npm run test", "ar", "arabic verb and command", "en", true},
+		{[]string{"en", "hi"}, "पहले npm run build and then npm run test", "hi", "hindi lead and command", "en", true},
+		{[]string{"ja", "en"}, "コーヒー", "ja", "katakana", "en", true},
 		// Two non-Latin scripts.
 		{[]string{"ja", "ko"}, "こんにちは", "ja", "kana", "ko", true},
 		{[]string{"ja", "ko"}, "안녕하세요", "ko", "hangul", "ja", true},
@@ -79,6 +95,7 @@ func TestDirectionForPairs(t *testing.T) {
 		{[]string{"ja", "ko"}, "Hello", "", "latin is neither", "", false},
 		{[]string{"ja", "en"}, "https://example.com/日本語", "", "url", "", false},
 		{[]string{"ja", "en"}, "12345", "", "digits", "", false},
+		{[]string{"ja", "ko"}, "ー", "ja", "long vowel mark is kana", "ko", true},
 		{nil, "Hello", "en", "missing pair uses ja/en", "ja", true},
 	}
 	for _, tc := range cases {
