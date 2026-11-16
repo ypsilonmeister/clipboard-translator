@@ -35,7 +35,7 @@ func (r *runner) downloadSized(rawURL, dest, want string, size int64) error {
 	if i := strings.LastIndexAny(dest, `/\`); i >= 0 {
 		name = dest[i+1:]
 	}
-	pr := &progressPrinter{r: r, name: name, last: r.clock()}
+	pr := &progressPrinter{r: r, last: r.clock()}
 	o := download.Options{
 		Client:       r.client,
 		URL:          rawURL,
@@ -62,7 +62,7 @@ func (r *runner) downloadSized(rawURL, dest, want string, size int64) error {
 	if err == nil && pr.printed {
 		// The rate limit usually swallows the last update; do not leave the
 		// output standing at "97%".
-		r.printf("  100%%  %s (verified)", megabytes(pr.done))
+		pr.finish()
 	}
 	if err != nil {
 		var se *download.StatusError
@@ -87,15 +87,24 @@ func isGitHub(rawURL string) bool {
 // progressInterval (percent left out when the size is unknown).
 type progressPrinter struct {
 	r    *runner
-	name string
 	last time.Time
 
-	done    int64 // the latest report, printed or not
-	printed bool  // a progress line was written
+	done, total int64 // the latest report, printed or not; total is 0 when unknown
+	printed     bool  // a progress line was written
+}
+
+// finish is the last line of a successful download. Without a known size
+// there was no percentage before, so there is none here either.
+func (p *progressPrinter) finish() {
+	if p.total > 0 {
+		p.r.printf("  100%%  %s (verified)", megabytes(p.done))
+		return
+	}
+	p.r.printf("  %s (verified)", megabytes(p.done))
 }
 
 func (p *progressPrinter) update(done, total int64) {
-	p.done = done
+	p.done, p.total = done, total
 	now := p.r.clock()
 	if now.Sub(p.last) < progressInterval {
 		return

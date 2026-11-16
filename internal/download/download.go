@@ -38,13 +38,50 @@ const (
 	// DefaultRetryBase is the wait before the first retry; it doubles each time.
 	DefaultRetryBase = 2 * time.Second
 
+	// maxRetryWait caps the doubling wait between two attempts.
+	maxRetryWait = 5 * time.Minute
+
 	bufSize = 256 << 10
 )
 
-// Options describes one download. Zero values are safe: no retries, the
-// default stall timeout, no progress reports.
+// defaultClient is used when Options.Client is nil. Like the callers' own
+// clients it has no Timeout (the stall check is per read) and follows a
+// redirect to another host (the CDN), but not one that steps down from https
+// to http.
+var defaultClient = &http.Client{
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("too many redirects")
+		}
+		if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+			return errors.New("refusing a redirect from https to http")
+		}
+		return nil
+	},
+}
+
+// retryWait is base doubled attempt times, capped at maxRetryWait. It never
+// overflows, whatever the number of retries a caller asks for.
+func retryWait(base time.Duration, attempt int) time.Duration {
+	if base >= maxRetryWait {
+		return maxRetryWait
+	}
+	w := base
+	for i := 0; i < attempt; i++ {
+		w *= 2
+		if w >= maxRetryWait {
+			return maxRetryWait
+		}
+	}
+	return w
+}
+
+// Options describes one download. Zero values are safe: a default client, no
+// retries, the default stall timeout, no progress reports.
 type Options struct {
-	Client *http.Client // no Client.Timeout: that would cap the whole transfer
+	// Client must have no Timeout: that would cap the whole transfer. nil uses a
+	// client that refuses a redirect from https to http.
+	Client *http.Client
 	URL    string
 	Dest   string // final name; the data goes to Dest+".partial" first
 	// SHA256 is lowercase or uppercase hex; empty skips the check. Without it a
@@ -66,7 +103,7 @@ type Options struct {
 
 	StallTimeout time.Duration // 0 = DefaultStallTimeout
 	Retries      int           // automatic retries after the first attempt
-	RetryBase    time.Duration // 0 = DefaultRetryBase; doubles per retry
+	RetryBase    time.Duration // 0 = DefaultRetryBase; doubles per retry, up to 5 minutes
 
 	// DiscardPartialOnFailure removes the partial file when the download fails
 	// for good (never on cancel). A SHA-256 mismatch removes it regardless.
@@ -122,6 +159,9 @@ var errRestart = errors.New("restart from the beginning")
 // failed the hash check or DiscardPartialOnFailure is set. A cancelled ctx
 // returns ctx.Err() and keeps the partial file.
 func Fetch(ctx context.Context, o Options) error {
+	if o.Client == nil {
+		o.Client = defaultClient
+	}
 	if o.StallTimeout <= 0 {
 		o.StallTimeout = DefaultStallTimeout
 	}
@@ -149,7 +189,7 @@ func Fetch(ctx context.Context, o Options) error {
 		if !retryable(err) || attempt >= o.Retries {
 			break
 		}
-		wait := o.RetryBase << attempt
+		wait := retryWait(o.RetryBase, attempt)
 		attempt++
 		if o.OnRetry != nil {
 			o.OnRetry(attempt, err, wait)
@@ -288,7 +328,10 @@ func once(ctx context.Context, o *Options, partial string) error {
 	case http.StatusPartialContent:
 		start, _, size, ok := ParseContentRange(resp.Header.Get("Content-Range"))
 		if !ok || start != have {
-			return &permanent{fmt.Errorf("%s answered with a range that does not continue the partial file (%q)", o.Label, resp.Header.Get("Content-Range"))}
+			// What the body holds is unknown, so nothing is written. The partial
+			// file is not at fault and stays: throwing away what may be several
+			// GB because of one bad answer costs more than failing here.
+			return &permanent{fmt.Errorf("%s answered with a range that does not continue the partial file (Content-Range %q); try again, and if it keeps happening delete %s to start over", o.Label, resp.Header.Get("Content-Range"), filepath.Base(partial))}
 		}
 		if size > 0 {
 			total, declared = size, size
@@ -431,9 +474,21 @@ func hashFile(ctx context.Context, path string, h hash.Hash) (int64, error) {
 	}
 }
 
-// ParseContentRange reads "bytes 100-199/200"; size is 0 when the total is "*".
+// ParseContentRange reads the Content-Range of a 206 answer, "bytes 100-199/200";
+// size is 0 when the total is "*". The unit is matched without regard to case
+// and blanks around the unit, "-" and "/" are allowed, but the numbers have to
+// make sense: start <= end, and end < size when the size is given. The
+// unsatisfied form "bytes */200" is not a range and is refused.
 func ParseContentRange(v string) (start, end, size int64, ok bool) {
-	v = strings.TrimSpace(strings.TrimPrefix(v, "bytes "))
+	v = strings.TrimSpace(v)
+	const unit = "bytes"
+	if len(v) <= len(unit) || !strings.EqualFold(v[:len(unit)], unit) {
+		return 0, 0, 0, false
+	}
+	v = v[len(unit):]
+	if v[0] != ' ' && v[0] != '	' { // "bytes100-199/200" is not the unit
+		return 0, 0, 0, false
+	}
 	rng, tot, found := strings.Cut(v, "/")
 	if !found {
 		return 0, 0, 0, false
@@ -442,17 +497,31 @@ func ParseContentRange(v string) (start, end, size int64, ok bool) {
 	if !found {
 		return 0, 0, 0, false
 	}
-	var err error
-	if start, err = strconv.ParseInt(a, 10, 64); err != nil {
+	if start, ok = parseOffset(a); !ok {
 		return 0, 0, 0, false
 	}
-	if end, err = strconv.ParseInt(b, 10, 64); err != nil {
+	if end, ok = parseOffset(b); !ok || end < start {
 		return 0, 0, 0, false
 	}
-	if tot != "*" {
-		if size, err = strconv.ParseInt(tot, 10, 64); err != nil {
+	if tot = strings.TrimSpace(tot); tot != "*" {
+		if size, ok = parseOffset(tot); !ok || end >= size {
 			return 0, 0, 0, false
 		}
 	}
 	return start, end, size, true
+}
+
+// parseOffset reads a byte position: digits only (no sign), blanks around it allowed.
+func parseOffset(s string) (int64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	return n, err == nil
 }

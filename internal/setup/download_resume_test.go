@@ -203,3 +203,45 @@ func TestSetupDownloadDoesNotClaimToContinueOnA200(t *testing.T) {
 		t.Errorf("output: %q", out.String())
 	}
 }
+
+// The closing line shows a percentage only when the size was known.
+func TestSetupDownloadFinalLineWithoutSizeHasNoPercent(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		length  bool
+		percent bool
+	}{
+		{"size unknown", false, false},
+		{"size from Content-Length", true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if c.length {
+					w.Header().Set("Content-Length", fmt.Sprint(len(bigPayload)))
+				}
+				w.Write(bigPayload) // larger than the server's buffer: chunked without the header
+			}))
+			defer srv.Close()
+			var out bytes.Buffer
+			r := &runner{out: &out, client: srv.Client()}
+			var tick int64
+			base := time.Unix(1000, 0)
+			r.now = func() time.Time { return base.Add(time.Duration(atomic.AddInt64(&tick, 1)) * 2 * time.Second) }
+			dest := filepath.Join(t.TempDir(), "m.bin")
+			if err := r.download(srv.URL+"/m.bin", dest, sha256Hex(bigPayload)); err != nil {
+				t.Fatal(err)
+			}
+			lines := progressLines(out.String())
+			if len(lines) == 0 {
+				t.Fatalf("output: %q", out.String())
+			}
+			last := lines[len(lines)-1]
+			if !strings.Contains(last, "4.0 MB") || !strings.Contains(last, "verified") {
+				t.Errorf("last line %q", last)
+			}
+			if got := strings.Contains(out.String(), "%"); got != c.percent {
+				t.Errorf("percent shown = %v, want %v: %q", got, c.percent, out.String())
+			}
+		})
+	}
+}

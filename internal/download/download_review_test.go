@@ -293,3 +293,137 @@ func TestCancelDuringTheRetryWait(t *testing.T) {
 		t.Fatal("Fetch did not return after the cancel")
 	}
 }
+
+// "Zero values are safe" includes the client.
+func TestNilClientUsesADefaultInsteadOfPanicking(t *testing.T) {
+	s := newServer(t, func(_ *server, _ int, w http.ResponseWriter, r *http.Request) { w.Write(payload) })
+	o := Options{URL: s.URL + "/f", Dest: filepath.Join(t.TempDir(), "f.bin"), SHA256: sum(payload)}
+	if err := Fetch(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	assertInstalled(t, o)
+}
+
+// The default client keeps the callers' rule: another host is fine (the CDN),
+// a step down from https to http is not.
+func TestDefaultClientRefusesARedirectFromHTTPSToHTTP(t *testing.T) {
+	req := func(u string) *http.Request {
+		r, err := http.NewRequest(http.MethodGet, u, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	via := []*http.Request{req("https://host.invalid/f")}
+	if err := defaultClient.CheckRedirect(req("http://cdn.invalid/f"), via); err == nil {
+		t.Error("https -> http was followed")
+	}
+	if err := defaultClient.CheckRedirect(req("https://cdn.invalid/f"), via); err != nil {
+		t.Errorf("https -> https on another host: %v", err)
+	}
+	if err := defaultClient.CheckRedirect(req("https://cdn.invalid/f"), make([]*http.Request, 10)); err == nil {
+		t.Error("an endless redirect chain was followed")
+	}
+	if defaultClient.Timeout != 0 {
+		t.Error("a Client.Timeout would cap the whole transfer")
+	}
+}
+
+func TestContentRangeTolerantButStrict(t *testing.T) {
+	cases := []struct {
+		in                string
+		start, end, total int64
+		ok                bool
+	}{
+		// Legal variation.
+		{"bytes 100-199/200", 100, 199, 200, true},
+		{"  bytes 100-199/200  ", 100, 199, 200, true},
+		{"Bytes 100-199/200", 100, 199, 200, true},
+		{"BYTES 100-199/200", 100, 199, 200, true},
+		{"bytes  100 - 199 / 200", 100, 199, 200, true},
+		{"bytes\t100-199/200", 100, 199, 200, true},
+		{"bytes 100-199/*", 100, 199, 0, true},
+		{"bytes 100-199 / * ", 100, 199, 0, true},
+		{"bytes 0-0/1", 0, 0, 1, true},
+		// Still refused.
+		{"", 0, 0, 0, false},
+		{"bytes", 0, 0, 0, false},
+		{"bytes100-199/200", 0, 0, 0, false},
+		{"items 100-199/200", 0, 0, 0, false},
+		{"100-199/200", 0, 0, 0, false},
+		{"bytes 100-199", 0, 0, 0, false},
+		{"bytes */200", 0, 0, 0, false},
+		{"bytes 199-100/200", 0, 0, 0, false},
+		{"bytes 100-200/200", 0, 0, 0, false},
+		{"bytes 100-199/100", 0, 0, 0, false},
+		{"bytes -100-199/200", 0, 0, 0, false},
+		{"bytes +100-199/200", 0, 0, 0, false},
+		{"bytes 1 00-199/200", 0, 0, 0, false},
+		{"bytes 100-199/2e2", 0, 0, 0, false},
+		{"bytes 100-199/", 0, 0, 0, false},
+		{"bytes 100-/200", 0, 0, 0, false},
+		{"bytes 100-199/99999999999999999999", 0, 0, 0, false},
+	}
+	for _, c := range cases {
+		s, e, tot, ok := ParseContentRange(c.in)
+		if ok != c.ok || s != c.start || e != c.end || tot != c.total {
+			t.Errorf("%q -> %d %d %d %v, want %d %d %d %v", c.in, s, e, tot, ok, c.start, c.end, c.total, c.ok)
+		}
+	}
+}
+
+// A header that differs only in spelling continues the download; the start
+// is still compared with what was asked for.
+func TestResumeAcceptsASpellingVariantOfContentRange(t *testing.T) {
+	const have = 1000
+	answer := func(cr string) func(*http.Request) *http.Response {
+		return func(*http.Request) *http.Response {
+			resp := full(206, payload[have:], int64(len(payload)-have))
+			resp.Header = http.Header{"Content-Range": {cr}}
+			return resp
+		}
+	}
+	t.Run("accepted", func(t *testing.T) {
+		tr := &scripted{answers: []func(*http.Request) *http.Response{
+			answer(fmt.Sprintf(" Bytes %d - %d / %d", have, len(payload)-1, len(payload))),
+		}}
+		o := scriptedOpts(tr, t.TempDir())
+		os.WriteFile(o.Dest+".partial", payload[:have], 0o644)
+		if err := Fetch(context.Background(), o); err != nil {
+			t.Fatal(err)
+		}
+		assertInstalled(t, o)
+	})
+	t.Run("another start is still refused and the partial kept", func(t *testing.T) {
+		tr := &scripted{answers: []func(*http.Request) *http.Response{
+			answer(fmt.Sprintf(" Bytes %d - %d / %d", have+1, len(payload)-1, len(payload))),
+		}}
+		o := scriptedOpts(tr, t.TempDir())
+		os.WriteFile(o.Dest+".partial", payload[:have], 0o644)
+		err := Fetch(context.Background(), o)
+		if err == nil || !strings.Contains(err.Error(), "f.bin.partial") || len(tr.reqs) != 1 {
+			t.Fatalf("err = %v, requests = %d", err, len(tr.reqs))
+		}
+		assertNoFinal(t, o)
+		if info, err := os.Stat(o.Dest + ".partial"); err != nil || info.Size() != have {
+			t.Errorf("the partial file must stay as it was: %v", err)
+		}
+	})
+}
+
+func TestRetryWaitDoublesAndSaturates(t *testing.T) {
+	if got := []time.Duration{retryWait(2*time.Second, 0), retryWait(2*time.Second, 1), retryWait(2*time.Second, 2)}; got[0] != 2*time.Second || got[1] != 4*time.Second || got[2] != 8*time.Second {
+		t.Errorf("waits = %v, want 2s 4s 8s", got)
+	}
+	for _, attempt := range []int{8, 30, 62, 63, 64, 1000, 1 << 30} {
+		if got := retryWait(2*time.Second, attempt); got != maxRetryWait {
+			t.Errorf("attempt %d: wait %v, want the cap %v", attempt, got, maxRetryWait)
+		}
+	}
+	if got := retryWait(time.Hour, 0); got != maxRetryWait {
+		t.Errorf("a base above the cap: %v", got)
+	}
+	if got := retryWait(1, 200); got <= 0 || got > maxRetryWait {
+		t.Errorf("1ns doubled 200 times: %v", got)
+	}
+}
