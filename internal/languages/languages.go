@@ -257,13 +257,76 @@ func latinIsSkeleton(s, other string) bool {
 }
 
 // nonWordToken reports whether tok cannot be a word of running text in any
-// language: a command-line flag ("-v", "--verbose"), a URL, a path or an
-// assignment ("src/main.go", "C:\work", "DEBUG=1"). Surrounding brackets and
-// quotes are ignored, so "(https://example.com)" is still a URL. Tokens
-// without a letter are not the question: they never count anywhere.
+// language, so it must not mark where the text opens or ends. Brackets,
+// quotes and sentence punctuation around the token are ignored first, so
+// "(https://example.com)" and "（--verbose）" count. A non-word is:
+//
+//   - a flag: "-v", "--verbose", "--config=file", also with the dash an
+//     editor lengthened ("—verbose");
+//   - a URL, a domain, an email, a mention or a hashtag: "https://x.y",
+//     "www.example.com", "example.com", "support@example.com", "@user",
+//     "#golang". "e.g.", "i.e." and "U.S." stay words: a domain's last label
+//     has at least two lowercase letters;
+//   - a path or an assignment: "src/main.go", "/usr/bin", "C:uild",
+//     "DEBUG=1". A slash between plain letters is prose ("and/or", "w/o",
+//     "c/o"); "docs/readme" is then taken for a word too, the cheaper error;
+//   - an identifier mixing letters and digits: "v1.2.3", "oauth2", "sha256".
+//     A number with a short ordinal or unit suffix ("2nd", "90s", "3D",
+//     "5pm") stays a word; "covid19" does not, which is the safe side: a word
+//     mistaken for an identifier only hands the boundary to the previous
+//     real word, while an identifier mistaken for a word hides a boundary
+//     in the other script (#208).
 func nonWordToken(tok string) bool {
-	tok = strings.Trim(tok, "([{<\"'“‘")
-	return strings.HasPrefix(tok, "-") || IsURL(tok) || strings.ContainsAny(tok, `/\=`)
+	tok = strings.TrimLeft(tok, "([{<\"'“‘（［【「『《〈")
+	tok = strings.TrimRight(tok, ")]}>\"'”’）］】」』》〉.,;:!?。、，：！？")
+	if tok == "" {
+		return false
+	}
+	if strings.HasPrefix(tok, "-") || strings.HasPrefix(tok, "–") || strings.HasPrefix(tok, "—") {
+		return true // flag
+	}
+	if IsURL(tok) || strings.Contains(tok, "://") || strings.HasPrefix(strings.ToLower(tok), "www.") {
+		return true
+	}
+	if strings.ContainsAny(tok, "@=\\") || strings.HasPrefix(tok, "#") {
+		return true // email, mention, assignment, Windows path, hashtag
+	}
+	if strings.Contains(tok, "/") {
+		plain := strings.IndexFunc(tok, func(r rune) bool { return r != '/' && !unicode.IsLetter(r) }) < 0
+		if !plain || strings.HasPrefix(tok, "/") || strings.HasSuffix(tok, "/") {
+			return true // path
+		}
+	}
+	if i := strings.LastIndexByte(tok, '.'); i > 0 {
+		label := tok[i+1:]
+		lower := strings.IndexFunc(label, func(r rune) bool { return !unicode.IsLower(r) }) < 0
+		if lower && len(label) >= 2 {
+			return true // domain
+		}
+	}
+	return identifier(tok)
+}
+
+// identifier reports whether tok mixes letters and digits, except a number
+// with up to two letters after it ("2nd", "90s", "3D", "5pm", "10x").
+func identifier(tok string) bool {
+	letters, digits := 0, 0
+	for _, r := range tok {
+		switch {
+		case unicode.IsLetter(r):
+			letters++
+		case unicode.IsDigit(r):
+			digits++
+		}
+	}
+	if letters == 0 || digits == 0 {
+		return false
+	}
+	rest := strings.TrimLeftFunc(tok, unicode.IsDigit)
+	if len(rest) > 2 || len(rest) == 0 || strings.IndexFunc(rest, func(r rune) bool { return !unicode.IsLetter(r) }) >= 0 {
+		return true
+	}
+	return false // digits then a short letter suffix
 }
 
 func IsURL(s string) bool {
