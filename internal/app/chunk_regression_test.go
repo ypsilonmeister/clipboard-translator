@@ -53,7 +53,7 @@ func TestChunkWorkerUsesCapturedBudget(t *testing.T) {
 		defer wg.Done()
 		<-start
 		for i := 0; i < 100; i++ {
-			a.translatePrompt(ctx, 1, "", prompt, languages.Direction{Target: "ja"}, 2048, budget)
+			a.translatePrompt(ctx, 1, "", prompt, languages.Direction{Target: "ja"}, 2048, budget, 0)
 		}
 	}()
 	close(start)

@@ -936,7 +936,10 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 	if a.apiContext != nil {
 		parent = a.apiContext
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(a.conf.TranslationTimeoutSec)*time.Second)
+	// translation_timeout_seconds limits each llama-server request, not the
+	// whole job (#173); the job ends when it is done, aborted or superseded.
+	ctx, cancel := context.WithCancel(parent)
+	timeout := time.Duration(a.conf.TranslationTimeoutSec) * time.Second
 	a.cancelCurrent = cancel
 	a.cancelTransientStatus()
 	a.translating, a.translateStart, a.lastTranslSec = true, a.timeNow(), 0
@@ -957,7 +960,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		promptText = textstruct.CleanSpuriousNewlines(source, direction.Source)
 	}
 	go func() {
-		translated, err := a.translatePrompt(ctx, g, key, promptText, direction, maxTokens, budget)
+		translated, err := a.translatePrompt(ctx, g, key, promptText, direction, maxTokens, budget, timeout)
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
 			direction: direction, window: win, fromSelection: fromSelection, output: outputMode,
@@ -989,17 +992,7 @@ func (a *app) handleResult(res result) {
 	if res.err != nil {
 		if !errors.Is(res.err, context.Canceled) {
 			log.Printf("translation failed: %v", res.err)
-			msg := "See translator.log for details."
-			var ce *chunkError
-			if errors.As(res.err, &ce) {
-				if errors.Is(ce.err, llamaserver.ErrTruncated) {
-					msg = fmt.Sprintf("Translation failed at chunk %d of %d: the translation was cut off at the token limit. Select less text, or raise max_tokens / context_tokens in config.json.", ce.chunkIndex, ce.totalChunks)
-				} else {
-					msg = fmt.Sprintf("Translation failed at chunk %d of %d. See translator.log for details.", ce.chunkIndex, ce.totalChunks)
-				}
-			} else if errors.Is(res.err, llamaserver.ErrTruncated) {
-				msg = "The translation was cut off at the token limit, so no translation was put on the clipboard. Select less text, or raise max_tokens / context_tokens in config.json."
-			}
+			msg := translationFailureMessage(res.err)
 			a.tray.Notify("Translation failed", msg, true)
 		}
 		a.cancelTransientStatus()
