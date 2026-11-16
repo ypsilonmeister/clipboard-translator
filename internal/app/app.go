@@ -49,6 +49,13 @@ type app struct {
 	sigQuit           bool
 
 	activeBackend string // last known working backend ("cpu", "cuda", ...)
+	// fallbackPinned is set once the preferred engine failed and the CPU build
+	// took over: reloads then start the CPU build directly instead of paying for
+	// the failing engine again. Cleared when the user picks an engine or the
+	// model changes. fallbackNotified is the preferred engine already announced.
+	// Both belong to the UI thread.
+	fallbackPinned   bool
+	fallbackNotified string
 
 	hotkey    platform.Hotkey                            // profile 0
 	newHotkey func(spec string) (platform.Hotkey, error) // newHotkey, replaceable in tests
@@ -233,6 +240,14 @@ func (a *app) startServer() error {
 			}
 		}
 	}
+	if a.fallbackPinned && a.paths.Server != a.paths.Fallback {
+		// The preferred engine already failed this session; do not wait for it again.
+		err := a.startFallback()
+		if err != nil {
+			a.fallbackPinned = false // the CPU build is broken too: let the next start try everything
+		}
+		return err
+	}
 	err := a.sup.Start(a.paths.Server, a.conf.GPULayers, "loading model")
 	if err == nil {
 		a.activeBackend = config.CurrentBackend(a.conf.ServerFile)
@@ -249,7 +264,23 @@ func (a *app) startServer() error {
 	if a.paths.Server == a.paths.Fallback {
 		return fmt.Errorf("The translation server failed to start: %w", err)
 	}
-	return a.startFallback()
+	if err := a.startFallback(); err != nil {
+		return err
+	}
+	a.fallbackPinned = true
+	pref := config.CurrentBackend(a.conf.ServerFile)
+	if a.fallbackNotified != pref {
+		a.fallbackNotified = pref
+		a.tray.Notify("Clipboard Translator", fmt.Sprintf("The %s engine did not start. Using the CPU engine, which is slower. Open Settings to retry it or to keep the CPU engine.", backendLabel(pref)), true)
+	}
+	return nil
+}
+
+// clearFallback forgets a remembered fallback: the preferred engine is tried
+// (and announced) again at the next start.
+func (a *app) clearFallback() {
+	a.fallbackPinned = false
+	a.fallbackNotified = ""
 }
 
 // runningBackend is the engine ("cpu", "cuda", ...) of the llama-server that

@@ -520,7 +520,11 @@ Everything else stays in `config.json`.
   if the clipboard text is still the text that was captured.
 - One language pair per hotkey; the two languages must use different scripts (en ↔ de, or Simplified ↔ Traditional Chinese, cannot be told apart from the text; give each its own `target` profile instead). With Japanese and Chinese in one pair, text with only Han characters is read as Chinese; kana makes it Japanese. URLs are not translated. When text cannot be translated (empty selection, URL-only, wrong language pair), the tray tooltip shows why; text over the character limit also shows a notification.
 - A GPU backend can fail (too little VRAM, old driver, missing DLLs); the app
-  then falls back to the CPU build. See `server.log` and `translator.log`.
+  then falls back to the CPU build, shows one tray notification, and lists the
+  engine in use in the tray menu. The CPU build then stays in use until the next
+  app start, or until you choose the GPU engine again (or change the model) in
+  Settings; **Keep using CPU** there makes it permanent. See `server.log` and
+  `translator.log`.
 - The exe is not code-signed, so a zip downloaded in a browser may trigger a
   SmartScreen warning (files fetched by the install script do not).
 

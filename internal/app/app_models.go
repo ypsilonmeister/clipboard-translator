@@ -232,6 +232,7 @@ func (a *app) switchModel(e models.Entry) error {
 	err = a.sup.Start(bin, layers, label)
 	if err == nil {
 		a.conf, a.paths = newConf, paths
+		a.clearFallback() // a different model may fit the preferred engine
 		a.saveConfig(saveMap)
 		a.refreshStatus()
 		a.tray.Notify("Clipboard Translator", "Model: "+e.Name, false)
