@@ -144,15 +144,83 @@ func uses(s, lang string) bool {
 	return hasScript(s, l.script) || (lang == "ja" && hasScript(s, "han"))
 }
 
+// inScript reports whether r belongs to the script of lang (for Japanese that
+// includes Han, as in uses).
+func inScript(r rune, lang string) bool {
+	l := languages[lang]
+	if unicode.In(r, scriptTables[l.script]...) {
+		return true
+	}
+	if lang == "ja" {
+		return unicode.Is(unicode.Han, r) || (r >= 0xFF66 && r <= 0xFF9D)
+	}
+	return false
+}
+
+// unspaced lists the scripts whose words are not separated by spaces, so the
+// amount of such text is counted in characters. Other scripts are counted in
+// space-separated tokens.
+var unspaced = map[string]bool{
+	"han": true, "ja": true, "hangul": true, "thai": true, "khmer": true, "myanmar": true,
+}
+
+// Thresholds for text that mixes Latin with the other script of the pair.
+// The text is only read as Latin when its skeleton is clearly Latin: at least
+// minLatinWords words that are purely Latin, and at least latinWordsNum per
+// latinWordsDen units of the other script. The bar is high on purpose: a
+// Japanese or Korean sentence often carries many English terms, and attached
+// particles make a Latin-looking token ("Composeを") count for the other side.
+// Where unsure, the result stays "other -> Latin", as before this rule.
+// 3/2 (not 2/1) so that a 6-character name inside an English sentence of
+// 11 words still counts as English.
+const (
+	minLatinWords = 4
+	latinWordsNum = 3
+	latinWordsDen = 2
+)
+
+// latinIsSkeleton reports whether s (known to contain the script of other)
+// is Latin text quoting a little of the other script, rather than the reverse.
+// W counts tokens with Latin letters and none of the other script; U counts the
+// other script (characters, or tokens for space-separated scripts).
+func latinIsSkeleton(s, other string) bool {
+	byChar := unspaced[languages[other].script]
+	w, u := 0, 0
+	for _, tok := range strings.Fields(s) {
+		hasLatin, hasOther, n := false, false, 0
+		for _, r := range tok {
+			switch {
+			case inScript(r, other):
+				hasOther = true
+				n++
+			case unicode.Is(unicode.Latin, r):
+				hasLatin = true
+			}
+		}
+		switch {
+		case hasOther && byChar:
+			u += n
+		case hasOther:
+			u++
+		case hasLatin:
+			w++
+		}
+	}
+	return w >= minLatinWords && w*latinWordsDen >= u*latinWordsNum
+}
+
 func IsURL(s string) bool {
 	l := strings.ToLower(s)
 	return strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "http://")
 }
 
 // DirectionFor says which way s should be translated for the language pair.
-// The language with its own non-Latin script wins when the text mixes scripts
-// (Japanese with an English word is still Japanese). URLs and text without a
-// letter of either script are not translated.
+// For a Latin language paired with a non-Latin one, the non-Latin language wins
+// when the text mixes scripts (Japanese with an English word is still
+// Japanese), unless the Latin side is clearly the skeleton: several
+// space-separated Latin words around a few characters of the other script
+// (English with a quoted Japanese name is still English; see latinIsSkeleton).
+// URLs and text without a letter of either script are not translated.
 func DirectionFor(pair []string, s string) (Direction, bool) {
 	if len(pair) != 2 {
 		pair = Default
@@ -175,6 +243,9 @@ func DirectionFor(pair []string, s string) (Direction, bool) {
 			latin, other = b, a
 		}
 		if uses(s, other) {
+			if latinIsSkeleton(s, other) {
+				return to(latin, other)
+			}
 			return to(other, latin)
 		}
 		if hasScript(s, "latin") {
