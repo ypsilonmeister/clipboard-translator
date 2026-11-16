@@ -433,3 +433,156 @@ func TestFormatBilingualPreservesOriginalWhitespace(t *testing.T) {
 		t.Fatalf("raw source whitespace changed: got %q want %q", got, want)
 	}
 }
+
+func trimAllChunks(chunks []string) []string {
+	out := make([]string, len(chunks))
+	for i, c := range chunks {
+		out[i] = strings.TrimSpace(c)
+	}
+	return out
+}
+
+func TestChunkLinesWithBoundaries_Recombination(t *testing.T) {
+	cases := []struct {
+		name           string
+		input          string
+		budget         int
+		wantBoundaries []Boundary
+		wantRejoined   string
+	}{
+		{
+			name:           "space on left side of boundary",
+			input:          strings.Repeat("word ", 240) + "tail\nnext",
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundarySpace, BoundaryNewline},
+			wantRejoined:   strings.Repeat("word ", 240) + "tail\nnext",
+		},
+		{
+			name:           "space on right side of boundary",
+			input:          strings.Repeat("a", 1200) + " tail\nnext",
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundarySpace, BoundaryNewline},
+			wantRejoined:   strings.Repeat("a", 1200) + " tail\nnext",
+		},
+		{
+			name:           "hard split without whitespace",
+			input:          strings.Repeat("x", 1300) + "\nnext line",
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundaryNone, BoundaryNewline},
+			wantRejoined:   strings.Repeat("x", 1300) + "\nnext line",
+		},
+		{
+			name:           "mixed explicit newlines and intra-line splits",
+			input:          "head line\n" + strings.Repeat("word ", 240) + "tail\n" + strings.Repeat("y", 1300) + "\nend",
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundaryNewline, BoundarySpace, BoundaryNewline, BoundaryNone, BoundaryNewline},
+			wantRejoined:   "head line\n" + strings.Repeat("word ", 240) + "tail\n" + strings.Repeat("y", 1300) + "\nend",
+		},
+		{
+			name:           "CJK long line without whitespace",
+			input:          strings.Repeat("あ", 1300) + "\n次の行",
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundaryNone, BoundaryNewline},
+			wantRejoined:   strings.Repeat("あ", 1300) + "\n次の行",
+		},
+		{
+			name:           "CJK long line with space on left",
+			input:          strings.Repeat("語 ", 600) + "尾\n次",
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundarySpace, BoundaryNewline},
+			wantRejoined:   strings.Repeat("語 ", 600) + "尾\n次",
+		},
+		{
+			name:           "CJK long line with space on right",
+			input:          strings.Repeat("語", 1200) + " 尾\n次",
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundarySpace, BoundaryNewline},
+			wantRejoined:   strings.Repeat("語", 1200) + " 尾\n次",
+		},
+		{
+			name:           "CRLF line at exact rune budget keeps CR with line",
+			input:          strings.Repeat("a", 1200) + "\r\nnext",
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundaryNewline},
+			wantRejoined:   strings.Repeat("a", 1200) + "\nnext",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chunks, boundaries := ChunkLinesWithBoundaries(tc.input, tc.budget)
+			if !reflect.DeepEqual(boundaries, tc.wantBoundaries) {
+				t.Fatalf("boundaries = %v, want %v (chunks=%d)", boundaries, tc.wantBoundaries, len(chunks))
+			}
+			// Trimmed chunks model llamaserver.Translate's response trimming.
+			if got := JoinChunks(trimAllChunks(chunks), boundaries); got != tc.wantRejoined {
+				t.Fatalf("JoinChunks(trimmed) mismatch:\nGOT:  %q\nWANT: %q", got, tc.wantRejoined)
+			}
+			// Untrimmed chunks must not gain duplicate spaces.
+			if got := JoinChunks(chunks, boundaries); got != tc.input {
+				t.Fatalf("JoinChunks(untrimmed) mismatch:\nGOT:  %q\nWANT: %q", got, tc.input)
+			}
+		})
+	}
+}
+
+func TestChunkParagraphWithBoundaries_Recombination(t *testing.T) {
+	cases := []struct {
+		name           string
+		input          string
+		budget         int
+		wantBoundaries []Boundary
+	}{
+		{
+			name:           "single-line space on left",
+			input:          strings.Repeat("word ", 240) + "tail",
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundarySpace},
+		},
+		{
+			name:           "single-line space on right",
+			input:          strings.Repeat("a", 1200) + " tail",
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundarySpace},
+		},
+		{
+			name:           "single-line hard split without whitespace",
+			input:          strings.Repeat("x", 1300),
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundaryNone},
+		},
+		{
+			name:           "single-line CJK hard split without whitespace",
+			input:          strings.Repeat("あ", 1300),
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundaryNone},
+		},
+		{
+			name:           "single-line CJK sentence split",
+			input:          "最初の文です。二番目の文です。",
+			budget:         8,
+			wantBoundaries: []Boundary{BoundarySentence},
+		},
+		{
+			name:           "mixed sentence boundary and intra-sentence space split",
+			input:          "First sentence. " + strings.Repeat("word ", 240) + "tail.",
+			budget:         1200,
+			wantBoundaries: []Boundary{BoundarySentence, BoundarySpace},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chunks, boundaries := ChunkParagraphWithBoundaries(tc.input, tc.budget)
+			if !reflect.DeepEqual(boundaries, tc.wantBoundaries) {
+				t.Fatalf("boundaries = %v, want %v (chunks=%d)", boundaries, tc.wantBoundaries, len(chunks))
+			}
+			if got := JoinChunks(trimAllChunks(chunks), boundaries); got != tc.input {
+				t.Fatalf("JoinChunks(trimmed) mismatch:\nGOT:  %q\nWANT: %q", got, tc.input)
+			}
+			if got := JoinChunks(chunks, boundaries); got != tc.input {
+				t.Fatalf("JoinChunks(untrimmed) mismatch:\nGOT:  %q\nWANT: %q", got, tc.input)
+			}
+		})
+	}
+}
