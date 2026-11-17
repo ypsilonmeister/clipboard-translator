@@ -479,4 +479,13 @@ func TestProfileActionConfig(t *testing.T) {
 			t.Errorf("error %q should contain %q", err.Error(), want)
 		}
 	}
+
+	// Target-only profile cannot be used with telephone action.
+	err = loadConfig2(t, `{"profiles": [{"hotkey": "Ctrl+Alt+E", "action": "telephone", "target": "ja"}]}`)
+	if err == nil {
+		t.Fatal("target-only telephone profile must be rejected")
+	}
+	if !strings.Contains(err.Error(), "requires \"languages\"") {
+		t.Errorf("error %q should mention requires languages", err.Error())
+	}
 }

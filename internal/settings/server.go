@@ -46,6 +46,7 @@ type ProfileForm struct {
 	Shift           bool     `json:"shift"`
 	Win             bool     `json:"win"`
 	Key             string   `json:"key"`
+	Action          string   `json:"action,omitempty"`
 	Languages       []string `json:"languages,omitempty"`
 	Target          string   `json:"target,omitempty"`
 	Output          string   `json:"output,omitempty"`
@@ -576,6 +577,7 @@ func FormFromProfile(p config.Profile, goos string) (ProfileForm, error) {
 		return ProfileForm{}, err
 	}
 	return ProfileForm{Ctrl: spec.Ctrl, Alt: spec.Alt, Shift: spec.Shift, Win: spec.Win, Key: spec.Key,
+		Action:    p.Action,
 		Languages: append([]string(nil), p.Languages...), Target: p.Target, Output: p.OutputMode(), Input: p.InputMode(),
 		CleanupNewlines: p.CleanupNewlinesMode()}, nil
 }
@@ -618,9 +620,17 @@ func (f Form) ToConfig(base config.Config) (config.Config, error) {
 			if p.Target != "" && len(p.Languages) > 0 {
 				return base, fmt.Errorf("profiles[%d]: use either two languages or one target language, not both", i)
 			}
-			action := config.ActionTranslate
-			if i < len(base.Profiles) && base.Profiles[i].Action != "" {
-				action = base.Profiles[i].Action
+			action := p.Action
+			if action == "" {
+				action = config.ActionTranslate
+			}
+			switch action {
+			case config.ActionTranslate, config.ActionTelephone:
+			default:
+				return base, fmt.Errorf("profiles[%d]: action %q is not supported", i, action)
+			}
+			if action == config.ActionTelephone && p.Target != "" {
+				return base, fmt.Errorf("profiles[%d]: action %q requires a two-language pair, not target mode", i, config.ActionTelephone)
 			}
 			c.Profiles[i] = config.Profile{Hotkey: p.HotkeyString(), Action: action, Output: p.Output, Input: p.Input, CleanupNewlines: p.CleanupNewlines}
 			if p.Target != "" {

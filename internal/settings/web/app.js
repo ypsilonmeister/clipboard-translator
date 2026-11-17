@@ -111,6 +111,7 @@
       idle_unload_minutes: st.idle_unload_minutes || 0,
       profiles: (st.profiles || []).map((p) => ({
         ctrl: !!p.ctrl, alt: !!p.alt, shift: !!p.shift, win: !!p.win, key: p.key || 'E',
+        action: p.action || '',
         mode: p.target ? 'target' : 'pair',
         a: (p.languages && p.languages[0]) || 'ja',
         b: (p.languages && p.languages[1]) || 'en',
@@ -141,6 +142,7 @@
       idle_unload_minutes: m.idle_unload_minutes,
       profiles: m.profiles.map((p) => {
         const out = { ctrl: p.ctrl, alt: p.alt, shift: p.shift, win: p.win, key: p.key, output: p.output || 'replace', input: p.input || 'selection', cleanup_newlines: p.cleanup_newlines || 'off' };
+        if (p.action) out.action = p.action;
         if (p.mode === 'target') out.target = p.target; else out.languages = [p.a, p.b];
         return out;
       }),

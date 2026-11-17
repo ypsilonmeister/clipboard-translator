@@ -17,13 +17,10 @@ const maxTelephoneRounds = 10
 // same text as two steps earlier). The timeout applies per round trip, not to
 // the whole job.
 func (a *app) translateTelephone(ctx context.Context, g uint64, key string, promptText string, dir languages.Direction, maxTokens, budget int, timeout time.Duration) (string, error) {
+	if dir.Source == "" || dir.Target == "" || dir.Source == dir.Target {
+		return "", fmt.Errorf("telephone mode requires two distinct languages, got %q -> %q", dir.Source, dir.Target)
+	}
 	dir1 := dir
-	if dir1.Source == "" {
-		dir1.Source = "ja"
-	}
-	if dir1.Target == "" {
-		dir1.Target = "en"
-	}
 	dir2 := languages.Direction{Source: dir1.Target, Target: dir1.Source}
 
 	steps := make([]string, 1, 2*maxTelephoneRounds+1)
@@ -48,8 +45,8 @@ func (a *app) translateTelephone(ctx context.Context, g uint64, key string, prom
 			if roundCancel != nil {
 				roundCancel()
 			}
-			if errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errRequestTimeout) {
-				err = fmt.Errorf("%w: %w", errRequestTimeout, err)
+			if errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errTelephoneTimeout) {
+				err = fmt.Errorf("%w: %w", errTelephoneTimeout, err)
 			}
 			return "", err
 		}
@@ -61,8 +58,8 @@ func (a *app) translateTelephone(ctx context.Context, g uint64, key string, prom
 			roundCancel()
 		}
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errRequestTimeout) {
-				err = fmt.Errorf("%w: %w", errRequestTimeout, err)
+			if errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errTelephoneTimeout) {
+				err = fmt.Errorf("%w: %w", errTelephoneTimeout, err)
 			}
 			return "", err
 		}

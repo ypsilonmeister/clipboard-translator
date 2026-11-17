@@ -208,6 +208,9 @@ func (c *Config) ResolveProfiles(explicit bool) error {
 			return fmt.Errorf("%s: hotkey %q is the same key combination as profiles[%d] (%q)", where, p.Hotkey, j, c.Profiles[j].Hotkey)
 		}
 		seen[spec] = i
+		if p.Action == ActionTelephone && p.Target != "" {
+			return fmt.Errorf("%s: action %q requires \"languages\" (a reversible pair), not \"target\"", where, ActionTelephone)
+		}
 		switch {
 		case p.Languages != nil && p.Target != "":
 			return fmt.Errorf("%s: use either \"languages\" or \"target\", not both", where)

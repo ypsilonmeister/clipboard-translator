@@ -225,7 +225,10 @@ type chunkRun struct {
 
 // errRequestTimeout marks a request that ran into translation_timeout_seconds,
 // as opposed to a deadline of the caller's context.
-var errRequestTimeout = errors.New("llama-server did not answer within translation_timeout_seconds")
+var (
+	errRequestTimeout   = errors.New("llama-server did not answer within translation_timeout_seconds")
+	errTelephoneTimeout = fmt.Errorf("%w: telephone round timeout", errRequestTimeout)
+)
 
 // translateText plans text into chunks, translates them in order and puts the
 // translation back together. progress (may be nil) is told which chunk starts.
@@ -366,6 +369,8 @@ func translationFailureMessage(err error) string {
 			return "The translation was cut off at the token limit, so no translation was put on the clipboard. Select less text, or raise max_tokens / context_tokens in config.json."
 		}
 		return "Translation failed" + where + ": the translation was cut off at the token limit. Select less text, or raise max_tokens / context_tokens in config.json."
+	case errors.Is(err, errTelephoneTimeout):
+		return "Translation timed out" + where + ", so no translation was put on the clipboard. Raise translation_timeout_seconds in config.json (the time allowed for one round trip), or select less text."
 	case errors.Is(err, errRequestTimeout):
 		return "Translation timed out" + where + ", so no translation was put on the clipboard. Raise translation_timeout_seconds in config.json (the time allowed for one chunk), or select less text."
 	case where != "":
