@@ -21,15 +21,15 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # record tools/bump_llama_pin.py manages; internal/setup/llama.go holds
 # the same values and the tests keep them in agreement.
 # --- llama.cpp pinned release (managed by tools/bump_llama_pin.py) ---
-# LLAMA_TAG = 'b12032'
+# LLAMA_TAG = 'b12359'
 # LLAMA_ASSETS = {
 #     'arm64': {
-#         'file': 'llama-b12032-bin-macos-arm64.tar.gz',
-#         'sha256': '00468fe833eb000b78a748122f5921b6c7b07dc82331a8d0c68196c69cb26382',
+#         'file': 'llama-b12359-bin-macos-arm64.tar.gz',
+#         'sha256': '82b00abc740160e1b9980e6cc79c117345fa34af058c80e6c0a69aa8ddccde75',
 #     },
 #     'x64': {
-#         'file': 'llama-b12032-bin-macos-x64.tar.gz',
-#         'sha256': '291d99f3b6f45f67f73afe5381540f29928840a1a14d9c19d6595bd649a035fc',
+#         'file': 'llama-b12359-bin-macos-x64.tar.gz',
+#         'sha256': '25320d529077ef5a3d16e7b5da26438f221d88c8c0930a32b0c79457f5eede56',
 #     },
 # }
 # --- end llama.cpp pinned release ---

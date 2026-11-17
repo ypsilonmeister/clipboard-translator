@@ -45,23 +45,23 @@ function Get-ModelCatalog {
 # --- llama.cpp pinned release (managed by tools/bump_llama_pin.py) ---
 function Get-LlamaRelease {
     return [ordered]@{
-        Tag = 'b12032'
+        Tag = 'b12359'
         Assets = [ordered]@{
             'cpu' = [ordered]@{
-                File   = 'llama-b12032-bin-win-cpu-x64.zip'
-                Sha256 = '5296f5d18bb7d422c7c26f4bb9bc796d9d4f41e1312a8c296cff475bdc60d0d4'
+                File   = 'llama-b12359-bin-win-cpu-x64.zip'
+                Sha256 = '837c1655e87df3b66989f4be33a792a1399c785bf259038dc75c900096683e69'
             }
             'cuda' = [ordered]@{
-                File   = 'llama-b12032-bin-win-cuda-12.4-x64.zip'
-                Sha256 = '36c7e24ad048cceabf00c1b49d0f0411b954c6a410a7ff4300af8721a94fd00a'
+                File   = 'llama-b12359-bin-win-cuda-12.4-x64.zip'
+                Sha256 = 'e9c0abf442e8339c06728366c1ad2c711332f9939c0c00603fb75d85fd44c914'
             }
             'cudart' = [ordered]@{
                 File   = 'cudart-llama-bin-win-cuda-12.4-x64.zip'
                 Sha256 = '8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6'
             }
             'vulkan' = [ordered]@{
-                File   = 'llama-b12032-bin-win-vulkan-x64.zip'
-                Sha256 = '19a8bbf269fa683ae7bc04f886c9c2a93e0655c2606f37d2b60069bf9e8bcc32'
+                File   = 'llama-b12359-bin-win-vulkan-x64.zip'
+                Sha256 = 'e8d18c6e4210cca87e7307c2ea78363ac8d158e4e1397358ec96ab70b53a0d5e'
             }
         }
     }
