@@ -702,6 +702,8 @@
   // Take new data from the app without touching what is being edited.
   function renderTranslateAPI(st) {
     $('translate-api-enabled').disabled = !st.translate_api_available;
+    $('translate-api-copy').disabled = !st.translate_api_available;
+    $('translate-api-regenerate').disabled = !st.translate_api_available;
     $('translate-api-enabled').checked = !!st.translate_api_enabled;
     $('translate-api-token').value = st.translate_api_token || '';
     $('translate-api-url').textContent = st.translate_api_url || '';
@@ -940,6 +942,13 @@
   }
 
   async function init() {
+    $('translate-api-regenerate').addEventListener('click', async () => {
+      const r = await api('/api/translate-api/regenerate', {});
+      if (r.data.state) mergeState(r.data.state);
+      $('translate-api-status').textContent = r.ok
+        ? 'Token regenerated. The old token is invalid. Update extension Options with the new token shown above.'
+        : (r.data.error || 'Could not regenerate token.');
+    });
     $('translate-api-enabled').addEventListener('change', async (e) => {
       e.target.disabled = true;
       try {
@@ -970,7 +979,7 @@
       }
       try {
         await navigator.clipboard.writeText($('translate-api-token').value);
-        $('translate-api-status').textContent = 'Token copied.';
+        $('translate-api-status').textContent = 'Token copied in clear text. Remove any saved clipboard history entry.';
       } catch (_) {
         $('translate-api-token').select();
         $('translate-api-status').textContent = 'Press Ctrl+C to copy the selected token.';

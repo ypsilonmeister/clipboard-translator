@@ -17,8 +17,10 @@ import (
 )
 
 type Config struct {
-	TranslateAPIEnabled   bool   `json:"translate_api_enabled"`
-	TranslateAPIToken     string `json:"translate_api_token"`
+	TranslateAPIEnabled     bool   `json:"translate_api_enabled"`
+	TranslateAPIToken       string `json:"translate_api_token"`
+	TranslateAPIExtensionID string `json:"translate_api_extension_id"`
+
 	Hotkey                string `json:"hotkey"`
 	Port                  int    `json:"port"`
 	PollMS                int    `json:"poll_ms"`
@@ -290,6 +292,11 @@ func LoadFile(path string) (c Config, err error) {
 	b = bytes.TrimPrefix(b, utf8BOM)
 	if err := json.Unmarshal(b, &c); err != nil {
 		return c, err
+	}
+	if c.TranslateAPIExtensionID != "" {
+		if len(c.TranslateAPIExtensionID) != 32 || strings.Trim(c.TranslateAPIExtensionID, "abcdefghijklmnop") != "" {
+			return c, errors.New("translate_api_extension_id must be a 32-character Chrome extension ID (a-p), or empty")
+		}
 	}
 	if err := c.ResolveProfiles(c.Profiles != nil); err != nil {
 		return c, err

@@ -38,7 +38,7 @@ func TestTranslateAPIAuthenticationAndValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			h := translateAPIHandler("secret", func(req settings.Request) settings.Reply {
+			h := translateAPIHandler(newTranslateAPIAuth("secret", ""), func(req settings.Request) settings.Reply {
 				calls++
 				if req.Action != "translate" || req.Text != "Hello" {
 					t.Fatalf("request=%+v", req)
@@ -68,6 +68,161 @@ func TestTranslateAPIAuthenticationAndValidation(t *testing.T) {
 	}
 }
 
+func TestTranslateAPIExtensionPin(t *testing.T) {
+	const id = "abcdefghijklmnopabcdefghijklmnop"
+	for _, pin := range []string{"", id} {
+		for _, origin := range []string{"", "chrome-extension://" + id, "chrome-extension://" + strings.Repeat("p", 32), "chrome-extension://" + id + "/", "chrome-extension://" + strings.Repeat("q", 32), "https://example.com", "null"} {
+			t.Run(pin+"/"+origin, func(t *testing.T) {
+				calls := 0
+				h := translateAPIHandler(newTranslateAPIAuth("secret", pin), func(settings.Request) settings.Reply {
+					calls++
+					return settings.Reply{Translation: "translated"}
+				})
+				r := httptest.NewRequest("POST", "/translate", strings.NewReader(`{"text":"Hello"}`))
+				r.Header.Set(translateTokenHeader, "secret")
+				r.Header.Set("Origin", origin)
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, r)
+				allowed := origin == "chrome-extension://"+id || (pin == "" && (origin == "" || origin == "chrome-extension://"+strings.Repeat("p", 32)))
+				if allowed && (w.Code != 200 || calls != 1) || !allowed && (w.Code != 403 || calls != 0) {
+					t.Fatalf("status=%d calls=%d allowed=%v", w.Code, calls, allowed)
+				}
+			})
+		}
+	}
+}
+
+// Use the production listener and handler, including the UI request channel.
+// Only inference is replaced with a reply, so 401 cannot come from a test stub.
+func TestTranslateAPIRotateTokenLiveListener(t *testing.T) {
+	oldSupported := translateAPISupported
+	translateAPISupported = func() bool { return true }
+	t.Cleanup(func() { translateAPISupported = oldSupported })
+	a := apiUnitApp(t)
+	a.conf.TranslateAPIEnabled = true
+	a.conf.TranslateAPIToken = "original-token"
+	a.conf.TranslateAPIExtensionID = "abcdefghijklmnopabcdefghijklmnop"
+	if err := config.UpdateFile(a.dir, map[string]any{"translate_api_token": a.conf.TranslateAPIToken, "translate_api_extension_id": a.conf.TranslateAPIExtensionID, "future_key": "preserve"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.startTranslateAPI(); err != nil {
+		t.Fatal(err)
+	}
+	srv := a.apiServer
+	t.Cleanup(func() { _ = srv.Close() })
+	client := &http.Client{Transport: testsupport.LoopbackOnly(), Timeout: 3 * time.Second}
+	t.Cleanup(client.CloseIdleConnections)
+	request := func(token, origin string, want int) {
+		t.Helper()
+		r, err := http.NewRequest("POST", "http://127.0.0.1:"+translateAPIPort+"/translate", strings.NewReader(`{"text":"Hello"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Header.Set(translateTokenHeader, token)
+		r.Header.Set("Origin", origin)
+		type result struct {
+			status int
+			body   string
+			err    error
+		}
+		done := make(chan result, 1)
+		go func() {
+			res, err := client.Do(r)
+			if err != nil {
+				done <- result{err: err}
+				return
+			}
+			defer res.Body.Close()
+			body, err := io.ReadAll(res.Body)
+			done <- result{status: res.StatusCode, body: string(body), err: err}
+		}()
+		for {
+			select {
+			case req := <-a.settingsReqs:
+				if want != 200 {
+					t.Fatal("rejected request reached inference")
+				}
+				if req.Action != "translate" || req.Text != "Hello" {
+					t.Fatalf("request=%+v", req)
+				}
+				req.Reply <- settings.Reply{Translation: "translated"}
+			case got := <-done:
+				if got.err != nil || got.status != want {
+					t.Fatalf("status=%d want=%d err=%v body=%s", got.status, want, got.err, got.body)
+				}
+				if want == 200 && !strings.Contains(got.body, `"translation":"translated"`) {
+					t.Fatal(got.body)
+				}
+				return
+			case <-time.After(5 * time.Second):
+				t.Fatal("HTTP request timed out")
+			}
+		}
+	}
+	origin := "chrome-extension://" + a.conf.TranslateAPIExtensionID
+	request(a.conf.TranslateAPIToken, origin, 200)
+	for i := 0; i < 2; i++ {
+		oldToken := a.conf.TranslateAPIToken
+		req := settings.NewActionRequest("translate_api_regenerate", "", time.Second)
+		a.handleSettingsRequest(req)
+		rep := <-req.Reply
+		newToken := rep.State.TranslateAPIToken
+		if rep.Err != nil || len(newToken) != 64 || newToken == oldToken || a.apiServer != srv || !a.conf.TranslateAPIEnabled {
+			t.Fatalf("rotation failed or listener restarted: %v", rep.Err)
+		}
+		persisted, err := config.Load(a.dir)
+		if err != nil || persisted.TranslateAPIToken != newToken {
+			t.Fatalf("new token not persisted: %v", err)
+		}
+		backup, err := config.LoadFile(filepath.Join(a.dir, "config.json.bak"))
+		if err != nil || backup.TranslateAPIToken != oldToken {
+			t.Fatalf("existing config backup path not used: %v", err)
+		}
+		saved, err := os.ReadFile(filepath.Join(a.dir, "config.json"))
+		if err != nil || !strings.Contains(string(saved), `"future_key": "preserve"`) {
+			t.Fatal("rotation lost an unknown config key", err)
+		}
+		request(oldToken, origin, 401)
+		request(newToken, origin, 200)
+		request(newToken, "chrome-extension://"+strings.Repeat("p", 32), 403)
+		request(newToken, "", 403)
+	}
+	// A failed save must leave the current token working on the same listener.
+	workingToken := a.conf.TranslateAPIToken
+	a.dir = filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(a.dir, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	req := settings.NewActionRequest("translate_api_regenerate", "", time.Second)
+	a.handleSettingsRequest(req)
+	if rep := <-req.Reply; rep.Err == nil || a.conf.TranslateAPIToken != workingToken || a.apiServer != srv {
+		t.Fatal("failed persistence changed live credentials")
+	}
+	request(workingToken, origin, 200)
+}
+
+func TestTranslateAPIRotateDisabledAndUnsupported(t *testing.T) {
+	old := translateAPISupported
+	t.Cleanup(func() { translateAPISupported = old })
+	for _, supported := range []bool{true, false} {
+		translateAPISupported = func() bool { return supported }
+		a := apiUnitApp(t)
+		req := settings.NewActionRequest("translate_api_regenerate", "", time.Second)
+		a.handleSettingsRequest(req)
+		rep := <-req.Reply
+		if supported {
+			if rep.Err != nil || len(rep.State.TranslateAPIToken) != 64 {
+				t.Fatal("disabled rotation failed", rep.Err)
+			}
+		} else if rep.Err == nil || a.conf.TranslateAPIToken != "" {
+			t.Fatal("unsupported rotation accepted")
+		}
+		if a.apiServer != nil || a.conf.TranslateAPIEnabled {
+			t.Fatal("rotation enabled endpoint")
+		}
+	}
+}
+
 // Exercise the real app coordinator with the same fake llama-server process
 // used by hotkey, reload and engine-switch tests. HTTP input is in memory.
 func TestTranslateAPIWithFakeEngine(t *testing.T) {
@@ -78,7 +233,7 @@ func TestTranslateAPIWithFakeEngine(t *testing.T) {
 	a.conf.TranslateAPIEnabled = true
 	cb := &testClipboard{text: "unrelated clipboard"}
 	a.cb = cb
-	h := translateAPIHandler("secret", func(req settings.Request) settings.Reply {
+	h := translateAPIHandler(newTranslateAPIAuth("secret", ""), func(req settings.Request) settings.Reply {
 		a.handleSettingsRequest(req)
 		if a.translating {
 			select {
@@ -321,7 +476,7 @@ func TestTranslateAPIStatusMapping(t *testing.T) {
 		{errAPIInput, 422}, {errAPIRequest, 400}, {settings.ErrBusy, 503},
 		{errors.New("engine crashed"), 502}, {fmt.Errorf("engine: %w", context.DeadlineExceeded), 504},
 	} {
-		h := translateAPIHandler("secret", func(settings.Request) settings.Reply { return settings.Reply{Err: tc.err} })
+		h := translateAPIHandler(newTranslateAPIAuth("secret", ""), func(settings.Request) settings.Reply { return settings.Reply{Err: tc.err} })
 		req := httptest.NewRequest("POST", "/translate", strings.NewReader(`{"text":"Hello"}`))
 		req.Header.Set(translateTokenHeader, "secret")
 		w := httptest.NewRecorder()
@@ -364,7 +519,7 @@ func TestTranslateAPIDisconnect(t *testing.T) {
 	a := apiUnitApp(t)
 	a.conf.TranslateAPIEnabled = true
 	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), apiContextKey{}, "caller"))
-	h := translateAPIHandler("secret", func(req settings.Request) settings.Reply {
+	h := translateAPIHandler(newTranslateAPIAuth("secret", ""), func(req settings.Request) settings.Reply {
 		if req.Context == nil || req.Context.Value(apiContextKey{}) != "caller" {
 			t.Fatal("HTTP context lost")
 		}
@@ -630,7 +785,7 @@ func TestReReviewStateDoesNotCreateToken(t *testing.T) {
 
 func TestReReviewCancellationStatus(t *testing.T) {
 	for _, deadline := range []bool{false, true} {
-		h := translateAPIHandler("secret", func(settings.Request) settings.Reply {
+		h := translateAPIHandler(newTranslateAPIAuth("secret", ""), func(settings.Request) settings.Reply {
 			if deadline {
 				return settings.Reply{Err: context.DeadlineExceeded}
 			}

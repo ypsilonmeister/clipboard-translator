@@ -201,7 +201,7 @@ func hasLeadingSpace(s string) bool {
 	return unicode.IsSpace(r)
 }
 
-func shouldInsertSpace(left, right string) bool {
+func shouldInsertSpace(left, right string, boundary Boundary) bool {
 	if left == "" || right == "" {
 		return false
 	}
@@ -209,6 +209,9 @@ func shouldInsertSpace(left, right string) bool {
 	first, _ := utf8.DecodeRuneInString(right)
 	if unicode.IsSpace(last) || unicode.IsSpace(first) {
 		return false
+	}
+	if boundary == BoundarySpace {
+		return !isCJKNoSpace(last) && !isCJKNoSpace(first)
 	}
 	return !isCJK(last) && !isCJK(first)
 }
@@ -218,7 +221,8 @@ func shouldInsertSpace(left, right string) bool {
 // describes the boundary before chunks[i]. For BoundarySpace and
 // BoundarySentence, a space is inserted only when both adjacent pieces are
 // non-empty, neither edge already carries whitespace, and neither adjacent
-// rune is CJK. Any extra chunks beyond len(boundaries)+1 are concatenated
+// rune is CJK (excluding Hangul at BoundarySpace). Any extra chunks beyond
+// len(boundaries)+1 are concatenated
 // directly without a separator.
 func JoinChunks(chunks []string, boundaries []Boundary) string {
 	var out strings.Builder
@@ -228,7 +232,7 @@ func JoinChunks(chunks []string, boundaries []Boundary) string {
 			case BoundaryNewline:
 				out.WriteByte('\n')
 			case BoundarySpace, BoundarySentence:
-				if shouldInsertSpace(out.String(), chunk) {
+				if shouldInsertSpace(out.String(), chunk, boundaries[i-1]) {
 					out.WriteByte(' ')
 				}
 			case BoundaryNone:

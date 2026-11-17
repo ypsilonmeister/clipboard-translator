@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -34,18 +35,39 @@ func translateAPIURL() string {
 
 const translateTokenHeader = "X-Clipboard-Translator-Token"
 
-// Tokens are created only for enable or connection-info requests.
+// The UI thread writes tokens after persistence; HTTP handlers read them without
+// accessing app.conf, which belongs to the UI thread.
+type translateAPIAuth struct {
+	token       atomic.Value // string
+	extensionID string
+}
+
+func newTranslateAPIAuth(token, extensionID string) *translateAPIAuth {
+	auth := &translateAPIAuth{extensionID: extensionID}
+	auth.token.Store(token)
+	return auth
+}
+
+// Tokens are created only for explicit enable, connection-info or rotation requests.
 func (a *app) ensureTranslateAPIToken() error {
 	if a.conf.TranslateAPIToken == "" {
-		raw := make([]byte, 32)
-		if _, err := rand.Read(raw); err != nil {
-			return err
-		}
-		token := hex.EncodeToString(raw)
-		if err := config.UpdateFile(a.dir, map[string]any{"translate_api_token": token}); err != nil {
-			return err
-		}
-		a.conf.TranslateAPIToken = token
+		return a.regenerateTranslateAPIToken()
+	}
+	return nil
+}
+
+func (a *app) regenerateTranslateAPIToken() error {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return err
+	}
+	token := hex.EncodeToString(raw)
+	if err := config.UpdateFile(a.dir, map[string]any{"translate_api_token": token}); err != nil {
+		return err
+	}
+	a.conf.TranslateAPIToken = token
+	if a.apiAuth != nil {
+		a.apiAuth.token.Store(token)
 	}
 	return nil
 }
@@ -74,7 +96,8 @@ func (a *app) startTranslateAPI() error {
 		}
 		listeners = append(listeners, ln)
 	}
-	a.apiServer = &http.Server{Handler: translateAPIHandler(a.conf.TranslateAPIToken, a.askSettings), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 47 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
+	a.apiAuth = newTranslateAPIAuth(a.conf.TranslateAPIToken, a.conf.TranslateAPIExtensionID)
+	a.apiServer = &http.Server{Handler: translateAPIHandler(a.apiAuth, a.askSettings), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 47 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 8192}
 	srv := a.apiServer
 	for _, ln := range listeners {
 		go func(ln net.Listener) { _ = srv.Serve(ln) }(ln)
@@ -88,6 +111,7 @@ func (a *app) stopTranslateAPI() {
 	}
 	if srv := a.apiServer; srv != nil {
 		a.apiServer = nil
+		a.apiAuth = nil
 		// Shutdown must not block the UI loop while handlers finish their replies.
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -99,7 +123,7 @@ func (a *app) stopTranslateAPI() {
 	}
 }
 
-func translateAPIHandler(token string, ask func(settings.Request) settings.Reply) http.Handler {
+func translateAPIHandler(auth *translateAPIAuth, ask func(settings.Request) settings.Reply) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
@@ -107,6 +131,7 @@ func translateAPIHandler(token string, ask func(settings.Request) settings.Reply
 			w.WriteHeader(code)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 		}
+		token := auth.token.Load().(string)
 		if token == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get(translateTokenHeader)), []byte(token)) != 1 {
 			fail(401, "Invalid translation token")
 			return
@@ -121,7 +146,8 @@ func translateAPIHandler(token string, ask func(settings.Request) settings.Reply
 			return
 		}
 		// Ordinary web pages cannot call the API: no CORS grants and no redirects.
-		if origin := r.Header.Get("Origin"); origin != "" && !isExtensionOrigin(origin) {
+		origin := r.Header.Get("Origin")
+		if (auth.extensionID != "" && origin != "chrome-extension://"+auth.extensionID) || (origin != "" && !isExtensionOrigin(origin)) {
 			fail(403, "Origin is not allowed")
 			return
 		}
@@ -290,5 +316,5 @@ func (a *app) copyConnectionInfo() {
 		a.tray.Notify("Clipboard Translator", "Could not copy connection info: "+err.Error(), true)
 		return
 	}
-	a.tray.Notify("Clipboard Translator", "Connection info copied. The clipboard now holds the token in clear text.", false)
+	a.tray.Notify("Clipboard Translator", "Connection info copied with a clear-text token. Apply it in extension Options to overwrite the clipboard; remove any saved clipboard history entry.", false)
 }

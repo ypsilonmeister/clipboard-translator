@@ -161,11 +161,28 @@ func inScript(r rune, lang string) bool {
 	return false
 }
 
-// unspaced lists the scripts whose words are not separated by spaces (or, for
-// Hangul, that attach particles to words), so the amount of such text is
-// counted in characters. Other scripts are counted in space-separated tokens.
+// unspaced lists scripts without word spaces. Count base characters, not
+// combining marks. Korean uses word spaces, so Hangul counts tokens instead.
 var unspaced = map[string]bool{
-	"han": true, "ja": true, "hangul": true, "thai": true, "khmer": true, "myanmar": true,
+	"han": true, "ja": true, "thai": true, "khmer": true, "myanmar": true,
+}
+
+// A hiragana prefix is grammar evidence only for these particles/inflections.
+// Native vocabulary (わびさび, お疲れ様) and honorifics (さん) can be quoted in
+// Latin prose. Keep the list conservative rather than treating all hiragana
+// as grammar. A following kanji, as in の比較 or を実行, ends the prefix.
+func japaneseGrammarPrefix(s string) bool {
+	end := strings.IndexFunc(s, func(r rune) bool { return !unicode.Is(unicode.Hiragana, r) })
+	if end >= 0 {
+		s = s[:end]
+	}
+	switch s {
+	case "は", "が", "を", "に", "で", "と", "の", "へ", "や", "も",
+		"から", "まで", "より", "とは", "には", "では",
+		"する", "した", "して", "してから", "します", "しない":
+		return true
+	}
+	return false
 }
 
 // Thresholds for text that mixes Latin with the other script of the pair.
@@ -200,11 +217,11 @@ func proseWord(tok string) bool {
 
 // latinIsSkeleton reports whether s (known to contain the script of other)
 // is Latin text quoting a little of the other script, rather than the reverse.
-// Over the space-separated tokens of s: w counts those with Latin letters and
+// Over tokens split at whitespace or CJK comma/period: w counts Latin letters and
 // none of the other script ("Composeを" has a particle attached, which is the
 // other language's grammar, and a URL or code fragment is one token however
 // long), prose counts the w that are proseWords, and u is the amount of the
-// other script (characters, or tokens for space-separated scripts).
+// other script (base characters, or tokens for space-separated scripts).
 //
 // Text that opens or ends in the other script keeps the old result whatever
 // the counts say: a command is made of lowercase words too, so "Запусти npm
@@ -218,18 +235,19 @@ func latinIsSkeleton(s, other string) bool {
 	w, prose, u := 0, 0, 0
 	first := true // no token with a letter of either script yet
 	endsOther := false
-	for _, tok := range strings.Fields(s) {
+	for _, tok := range strings.FieldsFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || r == '、' || r == '。'
+	}) {
 		hasLatin, n := false, 0
-		for _, r := range tok {
+		for i, r := range tok {
 			switch {
 			case inScript(r, other):
-				// A token that begins its Japanese with hiragana is a particle or
-				// an inflection ("を", "する", "の比較"): Japanese grammar around
-				// Latin words, however many ("git push origin main する").
-				if n == 0 && other == "ja" && unicode.Is(unicode.Hiragana, r) {
+				if n == 0 && other == "ja" && japaneseGrammarPrefix(tok[i:]) {
 					return false
 				}
-				n++
+				if !unicode.IsMark(r) {
+					n++
+				}
 			case unicode.Is(unicode.Latin, r):
 				hasLatin = true
 			}
