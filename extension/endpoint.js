@@ -3,7 +3,7 @@ export function endpointURL(value) {
   const url = new URL(value);
   if (url.protocol !== 'http:' || !['localhost', '127.0.0.1', 'penguin.linux.test'].includes(url.hostname) ||
       url.username || url.password || url.hash || url.search || url.pathname !== '/translate') {
-    throw new Error('Use http://localhost:18121/translate (or 127.0.0.1 / penguin.linux.test).');
+    throw new Error('Use http://localhost:18121/translate (or 127.0.0.1).');
   }
   return url.href;
 }
