@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 // Direction is what to ask the model for. Source is empty for a
@@ -266,22 +265,22 @@ func latinIsSkeleton(s, other string) bool {
 //     editor lengthened ("—verbose");
 //   - a URL, an email, a mention or a hashtag: "https://x.y",
 //     "www.example.com", "support@example.com", "@user", "#golang";
-//   - a domain or a file name: three or more dotted labels
-//     ("en.wikipedia.org"), or two where the last is a well-known top-level
-//     domain or file extension ("example.com", "main.go"; see dottedSuffixes).
-//     "e.g.", "op.cit.", "a.k.a." and "node.js" are not: dotted abbreviations
-//     and product names look like domains, and the list is the only line;
+//   - a domain or a file name: "example.com", "x.com", "main.go", "a.go",
+//     "main.c", "en.wikipedia.org" (see dotted). "e.g.", "a.k.a.", "op.cit."
+//     and "node.js" are not: dotted abbreviations and product names look
+//     like domains, and a list of last labels is the only line;
 //   - a path or an assignment: "src/main.go", "/usr/bin", "C:\build",
 //     "DEBUG=1". A slash between plain words is prose ("and/or", "w/o",
 //     "client-side/server-side"); "docs/readme" is then taken for a word too,
 //     the cheaper error;
 //   - an identifier mixing letters and digits: "v1.2.3", "oauth2", "sha256",
-//     "2b", "4k", "10ms". A number with an ordinal, decade, am/pm, times or
-//     single capital suffix ("2nd", "90s", "5pm", "10x", "3D", "4K") stays
-//     a word (see numberSuffixes); "covid19" does not, which is the safe
-//     side: a word mistaken for an identifier only hands the boundary to
-//     the previous real word, while an identifier mistaken for a word hides
-//     a boundary in the other script (#208).
+//     "2b", "70B", "4k", "10ms", "10s". A number with an ordinal, a decade,
+//     am/pm, a multiplier or a dimension/resolution suffix ("2nd", "90s",
+//     "5pm", "10x", "3D", "3d", "4K") stays a word (see numberSuffixes and
+//     decade); "covid19" does not, which is the safe side: a word mistaken
+//     for an identifier only hands the boundary to the previous real word,
+//     while an identifier mistaken for a word hides a boundary in the other
+//     script (#208).
 func nonWordToken(tok string) bool {
 	tok = strings.TrimLeft(tok, "([{<\"'“‘（［【「『《〈")
 	tok = strings.TrimRight(tok, ")]}>\"'”’）］】」』》〉.,;:!?。、，：！？")
@@ -310,50 +309,100 @@ func nonWordToken(tok string) bool {
 }
 
 // dottedSuffixes are the last labels that make a two-label dotted token a
-// domain or a file name rather than an abbreviation or a product name:
-// common top-level domains and the file extensions a user of this app is
-// likely to paste. "js" is left out on purpose so "node.js" stays a word;
-// "app.js" is then a word as well.
+// domain or a file name rather than an abbreviation or a product name: the
+// generic and common country top-level domains, and the file extensions a
+// developer is likely to paste. A curated list, because "example.com",
+// "node.js" and "op.cit" have the same shape; "js" is left out on purpose so
+// "node.js" stays a word, which makes "app.js" a word as well. The one-letter
+// extensions "c" and "h" are here too; they only count after a label of two
+// or more characters, so "e.g" and "a.c" stay abbreviations.
 var dottedSuffixes = map[string]bool{
+	// top-level domains
 	"com": true, "org": true, "net": true, "edu": true, "gov": true, "mil": true, "int": true,
 	"io": true, "co": true, "dev": true, "app": true, "ai": true, "info": true, "biz": true,
+	"me": true, "us": true, "in": true, "tv": true, "cc": true, "ly": true, "to": true,
+	"xyz": true, "online": true, "tech": true, "site": true, "store": true, "shop": true,
+	"blog": true, "cloud": true, "page": true, "link": true, "live": true, "news": true,
 	"jp": true, "uk": true, "de": true, "fr": true, "ru": true, "cn": true, "kr": true, "tw": true,
 	"eu": true, "ca": true, "au": true, "br": true, "es": true, "nl": true, "se": true, "ch": true,
-	"go": true, "py": true, "rs": true, "ts": true, "md": true, "txt": true, "json": true,
-	"yaml": true, "yml": true, "toml": true, "ini": true, "cfg": true, "conf": true, "log": true,
-	"exe": true, "dll": true, "sh": true, "bat": true, "cmd": true, "html": true, "htm": true,
-	"css": true, "csv": true, "xml": true, "zip": true, "tar": true, "gz": true, "png": true,
-	"jpg": true, "jpeg": true, "gif": true, "svg": true, "pdf": true, "doc": true, "docx": true,
-	"xls": true, "xlsx": true, "ppt": true, "pptx": true, "gguf": true, "bak": true, "sum": true, "mod": true,
+	"it": true, "pl": true, "be": true, "at": true, "dk": true, "fi": true, "no": true, "nz": true,
+	"ie": true, "pt": true, "cz": true, "hk": true, "sg": true, "mx": true, "ar": true, "za": true,
+	// file extensions
+	"c": true, "h": true, "cpp": true, "cxx": true, "hpp": true, "hh": true,
+	"go": true, "py": true, "rs": true, "ts": true, "tsx": true, "jsx": true, "mjs": true, "cjs": true,
+	"java": true, "kt": true, "kts": true, "swift": true, "m": true, "mm": true, "cs": true, "fs": true,
+	"rb": true, "php": true, "pm": true, "lua": true, "r": true, "jl": true, "scala": true,
+	"dart": true, "ex": true, "exs": true, "erl": true, "hs": true, "ml": true, "clj": true,
+	"sql": true, "sh": true, "bash": true, "zsh": true, "fish": true, "bat": true, "cmd": true, "ps1": true,
+	"wasm": true, "so": true, "dll": true, "exe": true, "dylib": true, "lib": true, "o": true, "obj": true,
+	"md": true, "txt": true, "rst": true, "json": true, "yaml": true, "yml": true, "toml": true,
+	"ini": true, "cfg": true, "conf": true, "env": true, "log": true, "lock": true, "sum": true, "mod": true,
+	"html": true, "htm": true, "css": true, "scss": true, "sass": true, "less": true, "vue": true, "svelte": true,
+	"csv": true, "tsv": true, "xml": true, "proto": true, "graphql": true, "wsdl": true,
+	"zip": true, "tar": true, "gz": true, "tgz": true, "bz2": true, "xz": true, "zst": true, "rar": true, "7z": true,
+	"png": true, "jpg": true, "jpeg": true, "gif": true, "svg": true, "webp": true, "ico": true, "bmp": true,
+	"mp3": true, "mp4": true, "wav": true, "ogg": true, "webm": true, "mkv": true, "mov": true,
+	"pdf": true, "doc": true, "docx": true, "xls": true, "xlsx": true, "ppt": true, "pptx": true,
+	"gguf": true, "bin": true, "bak": true, "tmp": true, "iso": true, "img": true, "dmg": true, "pkg": true,
+	"deb": true, "rpm": true, "apk": true, "ipa": true, "jar": true, "war": true, "whl": true, "egg": true,
+	"ttf": true, "otf": true, "woff": true, "woff2": true,
 }
 
-// dotted reports whether tok is a domain or a file name: labels of letters
-// and digits around dots, three or more of them each at least two characters
-// ("en.wikipedia.org"), or two with the last in dottedSuffixes
-// ("example.com", "main.go"). One-letter labels are abbreviations
-// ("e.g.", "a.k.a.", "U.S.A.").
+// dotted reports whether tok is a domain or a file name. The labels around
+// the dots must be letters or digits. Then either there are three or more
+// labels and the last has two or more characters ("en.wikipedia.org",
+// "a.b.cd"), or there are two and the last is in dottedSuffixes
+// ("example.com", "x.com", "main.go", "a.go"). A one-letter suffix only
+// counts after a label of two or more characters ("main.c", not "e.g").
+// Dotted abbreviations have one-letter labels throughout ("a.k.a.",
+// "U.S.A.") or a last label that is no suffix ("Ph.D.", "op.cit.").
 func dotted(tok string) bool {
 	labels := strings.Split(tok, ".")
 	if len(labels) < 2 {
 		return false
 	}
 	for _, l := range labels {
-		if len(l) < 2 || strings.IndexFunc(l, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) >= 0 {
+		if l == "" || strings.IndexFunc(l, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) >= 0 {
 			return false
 		}
 	}
-	return len(labels) >= 3 || dottedSuffixes[strings.ToLower(labels[1])]
+	last := labels[len(labels)-1]
+	if len(labels) >= 3 {
+		return len(last) >= 2
+	}
+	return dottedSuffixes[strings.ToLower(last)] && (len(last) >= 2 || len(labels[0]) >= 2)
 }
 
-// numberSuffixes are the letters that may follow a number in prose: ordinals,
-// a decade, a time of day and a multiplier. Units and sizes ("ms", "gb", "b",
-// "k", "fa") are not here: prose puts a space before a unit, and "2b", "7b",
-// "4k" are model sizes and resolutions, which are identifiers.
-var numberSuffixes = map[string]bool{"st": true, "nd": true, "rd": true, "th": true, "s": true, "am": true, "pm": true, "x": true}
+// numberSuffixes are the letters that may follow a number in prose: ordinals
+// ("2nd"), a time of day ("5pm"), a multiplier ("10x") and a dimension or a
+// resolution ("3D", "3d", "4K"). Units and sizes are not here ("10ms", "1gb",
+// "70B", "1G", "4k", "2b"): prose puts a space before a unit, and glued
+// forms are model sizes, memory sizes and resolutions pasted from a command
+// or a spec sheet. "4k" is listed by an earlier review as an identifier and
+// "4K" as a word, so case decides for K. Decades ("90s") are in decade.
+var numberSuffixes = map[string]bool{"st": true, "nd": true, "rd": true, "th": true, "am": true, "pm": true, "x": true, "d": true, "D": true, "K": true}
+
+// decade reports whether tok names a decade: two digits from 20 to 90, or
+// four digits, ending in 0, then "s" ("90s", "1990s", "2010s"). "10s", "5s",
+// "30sec" and "100s" are not. The "s" suffix cannot separate "30s" the
+// decade from "30s" the duration; the rule optimises for the decade reading
+// only where a decade is what people write ("the 90s") and leaves every
+// other number with "s" an identifier, which is the safe side (see
+// nonWordToken).
+func decade(tok string) bool {
+	if !strings.HasSuffix(tok, "s") {
+		return false
+	}
+	num := tok[:len(tok)-1]
+	if strings.IndexFunc(num, func(r rune) bool { return r < '0' || r > '9' }) >= 0 || !strings.HasSuffix(num, "0") {
+		return false
+	}
+	return len(num) == 4 || (len(num) == 2 && num[0] >= '2')
+}
 
 // identifier reports whether tok mixes letters and digits, except a number
-// followed only by a numberSuffixes entry or one capital letter ("2nd",
-// "90s", "5pm", "10x", "3D", "4K").
+// followed only by a numberSuffixes entry ("2nd", "5pm", "10x", "3D") or a
+// decade ("90s").
 func identifier(tok string) bool {
 	letters, digits := 0, 0
 	for _, r := range tok {
@@ -371,11 +420,7 @@ func identifier(tok string) bool {
 	if len(rest) == len(tok) {
 		return true // letters first: "covid19", "oauth2", "v1.2.3"
 	}
-	if numberSuffixes[rest] {
-		return false
-	}
-	r, size := utf8.DecodeRuneInString(rest)
-	return !(size == len(rest) && unicode.IsUpper(r))
+	return !numberSuffixes[rest] && !decade(tok)
 }
 
 func IsURL(s string) bool {
