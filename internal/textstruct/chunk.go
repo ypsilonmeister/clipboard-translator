@@ -13,9 +13,16 @@ var (
 
 	abbreviations = map[string]bool{
 		"mr": true, "mrs": true, "ms": true, "dr": true, "prof": true,
-		"sr": true, "jr": true, "vs": true, "etc": true, "al": true,
-		"fig": true, "inc": true, "ltd": true, "corp": true, "co": true,
-		"approx": true, "dept": true, "est": true, "govt": true,
+		"sr": true, "jr": true, "vs": true, "v": true, "etc": true, "al": true,
+		"fig": true, "figs": true, "eq": true, "eqs": true,
+		"vol": true, "vols": true, "no": true, "nos": true, "nr": true,
+		"pp": true, "p": true, "ch": true, "chs": true, "chap": true, "chaps": true,
+		"sec": true, "secs": true, "cf": true, "ca": true,
+		"ed": true, "eds": true, "ref": true, "refs": true,
+		"op": true, "cit": true, "ibid": true,
+		"inc": true, "ltd": true, "corp": true, "co": true,
+		"approx": true, "dept": true, "depts": true, "est": true, "govt": true,
+		"min": true, "max": true, "st": true, "ave": true, "blvd": true, "rd": true,
 		"jan": true, "feb": true, "mar": true, "apr": true, "jun": true,
 		"jul": true, "aug": true, "sep": true, "oct": true, "nov": true, "dec": true,
 	}
@@ -477,6 +484,16 @@ func splitSentences(para string) []string {
 				endIdx++
 			}
 			if endIdx+1 < len(runes) && unicode.IsSpace(runes[endIdx+1]) {
+				if r == '.' {
+					nextIdx := endIdx + 1
+					for nextIdx < len(runes) && unicode.IsSpace(runes[nextIdx]) {
+						nextIdx++
+					}
+					if nextIdx < len(runes) && unicode.IsLower(runes[nextIdx]) {
+						i = endIdx
+						continue
+					}
+				}
 				i = endIdx
 				isBoundary = true
 			}
@@ -502,10 +519,18 @@ func splitSentences(para string) []string {
 }
 
 func isAbbreviation(runes []rune, dotIdx int) bool {
+	// Consecutive periods (e.g. ellipsis "...") are not sentence boundaries by themselves.
+	if (dotIdx >= 1 && runes[dotIdx-1] == '.') || (dotIdx+1 < len(runes) && runes[dotIdx+1] == '.') {
+		return true
+	}
 	// Look backwards to extract the token before the period
 	start := dotIdx - 1
 	for start >= 0 && unicode.IsLetter(runes[start]) {
 		start--
+	}
+	// Alphanumeric suffixes such as "1a." or "2b." are item identifiers, not initials.
+	if start >= 0 && unicode.IsDigit(runes[start]) {
+		return false
 	}
 	word := strings.ToLower(string(runes[start+1 : dotIdx]))
 	if len(word) == 0 {

@@ -3,6 +3,7 @@ package textstruct
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -38,6 +39,9 @@ func isPreservedLine(line string) bool {
 		return true
 	}
 	if isURL(line) {
+		return true
+	}
+	if isTableRow(trimmed) {
 		return true
 	}
 	if isCodeLine(line) {
@@ -76,6 +80,14 @@ func isURL(s string) bool {
 	return strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://")
 }
 
+// isTableRow reports whether trimmed looks like a pipe-delimited or column-aligned table row.
+func isTableRow(trimmed string) bool {
+	if strings.HasPrefix(trimmed, "|") || strings.HasSuffix(trimmed, "|") || strings.Contains(trimmed, " | ") {
+		return true
+	}
+	return strings.Contains(trimmed, "\t") || strings.Contains(trimmed, "   ")
+}
+
 // isCodeLine checks if a line looks like source code.
 func isCodeLine(line string) bool {
 	// Leading tab or 4+ spaces
@@ -87,9 +99,15 @@ func isCodeLine(line string) bool {
 		return true
 	}
 
-	// Code braces / semicolons / keywords
+	// Code braces / keywords
 	if strings.HasSuffix(trimmed, "{") || strings.HasSuffix(trimmed, "}") ||
-		strings.HasPrefix(trimmed, "}") || strings.HasSuffix(trimmed, ";") {
+		strings.HasPrefix(trimmed, "}") {
+		return true
+	}
+
+	// Trailing semicolon is only treated as code when indented or accompanied by
+	// code syntax, so prose lines wrapped at a semicolon can still join.
+	if strings.HasSuffix(trimmed, ";") && (isIndented || isCodeStatementWithSemicolon(trimmed)) {
 		return true
 	}
 
@@ -112,6 +130,35 @@ func isCodeLine(line string) bool {
 		return true
 	}
 
+	return false
+}
+
+func isCodeStatementWithSemicolon(trimmed string) bool {
+	if strings.ContainsAny(trimmed, "={}") || hasCodeCallSyntax(trimmed) {
+		return true
+	}
+	for _, kw := range []string{
+		"return;", "break;", "continue;",
+		"return ", "break ", "continue ",
+		"var ", "const ", "type ", "import ", "package ",
+		"let ", "int ", "char ", "bool ", "void ", "float ", "double ",
+		"struct ", "typedef ", "using ", "namespace ", "throw ",
+	} {
+		if strings.HasPrefix(trimmed, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCodeCallSyntax(s string) bool {
+	prevIdent := false
+	for _, r := range s {
+		if r == '(' && prevIdent {
+			return true
+		}
+		prevIdent = unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	}
 	return false
 }
 

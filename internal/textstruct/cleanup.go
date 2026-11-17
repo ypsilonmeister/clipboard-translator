@@ -135,6 +135,86 @@ func isClosingPunctuation(r rune) bool {
 	}
 }
 
+func isMidSentenceTrailingPunct(r rune) bool {
+	switch r {
+	case ',', '%', ';', ':', '—', '–', ')', ']', '"', '\'', '”', '’':
+		return true
+	default:
+		return false
+	}
+}
+
+func isOpeningPunctuation(r rune) bool {
+	switch r {
+	case '(', '[', '"', '\'', '“', '‘':
+		return true
+	default:
+		return false
+	}
+}
+
+// isParenthesizedListMarker reports whether runes starts with a list item marker
+// such as "(1) " or "(a) ".
+func isParenthesizedListMarker(runes []rune) bool {
+	if len(runes) < 4 || runes[0] != '(' {
+		return false
+	}
+	idx := 1
+	if unicode.IsDigit(runes[idx]) {
+		for idx < len(runes) && unicode.IsDigit(runes[idx]) {
+			idx++
+		}
+	} else if unicode.IsLetter(runes[idx]) && runes[idx] < 128 {
+		idx++
+	} else {
+		return false
+	}
+	return idx+1 < len(runes) && runes[idx] == ')' && unicode.IsSpace(runes[idx+1])
+}
+
+func isOpeningContinuation(nextRunes []rune) bool {
+	if len(nextRunes) < 2 || !isOpeningPunctuation(nextRunes[0]) || isParenthesizedListMarker(nextRunes) {
+		return false
+	}
+	idx := 0
+	for idx < len(nextRunes) && isOpeningPunctuation(nextRunes[idx]) {
+		idx++
+	}
+	if idx >= len(nextRunes) {
+		return false
+	}
+	return unicode.IsLetter(nextRunes[idx]) || unicode.IsDigit(nextRunes[idx])
+}
+
+var midSentenceConnectors = map[string]bool{
+	// English articles, prepositions, and conjunctions
+	"the": true, "a": true, "an": true, "with": true, "to": true, "of": true,
+	"in": true, "for": true, "on": true, "at": true, "by": true, "from": true,
+	"into": true, "and": true, "or": true, "but": true, "as": true, "that": true,
+	"which": true, "who": true, "whose": true, "where": true, "when": true,
+	"while": true, "because": true, "since": true, "until": true, "during": true,
+	"under": true, "over": true, "between": true, "through": true, "without": true,
+	"within": true, "against": true, "among": true, "towards": true, "upon": true,
+	"about": true,
+	// German articles, prepositions, and conjunctions
+	"der": true, "die": true, "das": true, "den": true, "dem": true, "des": true,
+	"ein": true, "eine": true, "einer": true, "einem": true, "einen": true, "eines": true,
+	"und": true, "oder": true, "aber": true, "von": true, "mit": true, "zu": true,
+	"für": true, "auf": true, "im": true, "am": true, "aus": true, "bei": true,
+	"nach": true, "über": true, "unter": true, "vor": true, "zwischen": true,
+	"durch": true, "gegen": true, "ohne": true, "um": true, "als": true,
+	"wie": true, "dass": true, "weil": true, "wenn": true,
+}
+
+func endsWithMidSentenceConnector(trimmed string) bool {
+	idx := strings.LastIndexAny(trimmed, " \t")
+	if idx < 0 {
+		return false
+	}
+	lastWord := strings.ToLower(trimmed[idx+1:])
+	return midSentenceConnectors[lastWord]
+}
+
 // computeColumnMedian calculates the median width of substantial prose lines.
 // Lines shorter than 25 visual display width are excluded so that short lines
 // (lists, addresses, signatures, chat messages) never establish a column margin.
@@ -177,8 +257,8 @@ func shouldJoin(cur, next lineInfo, colMedian int, lang string) (bool, string) {
 		return false, ""
 	}
 
-	// 2. Paragraph indentation veto (e.g. next line has 2+ spaces or fullwidth space indentation)
-	if next.indent != cur.indent && (len(next.indent) >= 2 || strings.HasPrefix(next.raw, "\u3000")) {
+	// 2. Paragraph indentation veto (e.g. next line has 2+ spaces, tab, or fullwidth space indentation)
+	if next.indent != cur.indent && (len(next.indent) >= 2 || strings.HasPrefix(next.raw, "\t") || strings.HasPrefix(next.raw, "\u3000")) {
 		return false, ""
 	}
 
@@ -205,8 +285,10 @@ func shouldJoin(cur, next lineInfo, colMedian int, lang string) (bool, string) {
 		}
 	}
 
+	hasConnector := !cur.endsSentence && endsWithMidSentenceConnector(cur.trimmed)
+
 	// 4. Short non-sentence line followed by Uppercase (e.g. "Taro Yamada\nSenior Director...")
-	if !cur.endsSentence && len(curRunes) < 25 && unicode.IsUpper(nextFirst) {
+	if !cur.endsSentence && len(curRunes) < 25 && unicode.IsUpper(nextFirst) && !hasConnector {
 		return false, ""
 	}
 
@@ -214,16 +296,22 @@ func shouldJoin(cur, next lineInfo, colMedian int, lang string) (bool, string) {
 	if unicode.IsUpper(nextFirst) && colMedian > 0 {
 		diffCur := math.Abs(float64(cur.width - colMedian))
 		diffNext := math.Abs(float64(next.width - colMedian))
-		if diffCur > 10 && diffNext > 10 {
+		if diffCur > 10 && diffNext > 10 && cur.width < int(float64(colMedian)*0.75) {
 			return false, ""
 		}
 	}
 
 	// Geometric Corroboration Requirement:
 	// A soft break is ONLY considered spurious when geometric evidence indicates
-	// the line reached a column margin. Short lines (lists, addresses, chat logs)
+	// the line reached a column margin, or when explicit mid-sentence grammar/punctuation
+	// rules out an intentional break. Short lines (lists, addresses, chat logs)
 	// are never joined.
-	if !hasGeometricCorroboration(cur, next, colMedian) {
+	hasMidSentenceWidth := cur.width >= 25 && !cur.endsSentence &&
+		(hasConnector || curLast == '—' || curLast == '–' || curLast == ';' ||
+			(colMedian == 0 && isOpeningContinuation(nextRunes)))
+	hasShortConnectorWrap := cur.width >= 10 && !cur.endsSentence &&
+		hasConnector && (next.width >= 25 || colMedian >= 25)
+	if !hasGeometricCorroboration(cur, next, colMedian) && !hasMidSentenceWidth && !hasShortConnectorWrap {
 		// Exception: in a multi-line column block (colMedian >= 25), if cur ends in sentence
 		// punctuation and next line is a full-width column continuation (next.width >= colMedian - 8):
 		if colMedian >= 25 && cur.endsSentence && next.width >= colMedian-8 {
@@ -240,9 +328,18 @@ func shouldJoin(cur, next lineInfo, colMedian int, lang string) (bool, string) {
 
 	// Positive Rule 2: Mid-sentence continuation in Latin / Western script
 	if !cur.endsSentence {
-		if unicode.IsLower(nextFirst) || unicode.IsDigit(nextFirst) || curLast == ',' || curLast == '%' {
+		if unicode.IsLower(nextFirst) || unicode.IsDigit(nextFirst) ||
+			isMidSentenceTrailingPunct(curLast) || isOpeningContinuation(nextRunes) {
 			sep := determineSeparator(lang, curLast, nextFirst)
 			return true, sep
+		}
+		if unicode.IsUpper(nextFirst) {
+			if (colMedian > 0 && cur.width >= int(float64(colMedian)*0.75)) ||
+				(colMedian == 0 && cur.width >= 35) ||
+				hasConnector {
+				sep := determineSeparator(lang, curLast, nextFirst)
+				return true, sep
+			}
 		}
 	}
 
