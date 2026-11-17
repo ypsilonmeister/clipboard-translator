@@ -1,0 +1,1071 @@
+[
+  {
+    "id": "r1-min",
+    "kind": "sentences",
+    "input": "The wait lasted one min. Then we left.",
+    "want": [
+      "The wait lasted one min.",
+      "Then we left."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "r1-ed",
+    "kind": "sentences",
+    "input": "We consulted the latest ed. Then we revised the draft.",
+    "want": [
+      "We consulted the latest ed.",
+      "Then we revised the draft."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "r1-ave",
+    "kind": "sentences",
+    "input": "The street was Oak Ave. Then we turned left.",
+    "want": [
+      "The street was Oak Ave.",
+      "Then we turned left."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "r1-no-this",
+    "kind": "sentences",
+    "input": "No. This is unsupported.",
+    "want": [
+      "No.",
+      "This is unsupported."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "r1-etc",
+    "kind": "sentences",
+    "input": "We bought paper, pens, etc. Then we left.",
+    "want": [
+      "We bought paper, pens, etc.",
+      "Then we left."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "r1-heading",
+    "kind": "cleanup",
+    "input": "INTRODUCTION TO\nThe following section explains all available translation profiles.",
+    "want": [
+      "INTRODUCTION TO\nThe following section explains all available translation profiles."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "r1-attribution",
+    "kind": "cleanup",
+    "input": "Prepared by\nAlice Example, QA Department",
+    "want": [
+      "Prepared by\nAlice Example, QA Department"
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "r1-roman",
+    "kind": "cleanup",
+    "input": "(i) First item describes the preprocessing stage in full detail\n(ii) Second item describes the postprocessing stage in full detail",
+    "want": [
+      "(i) First item describes the preprocessing stage in full detail\n(ii) Second item describes the postprocessing stage in full detail"
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "r1-stream",
+    "kind": "cleanup",
+    "input": "logger << \"The translation is ready\";\nlogger << \"The next request is pending\";",
+    "want": [
+      "logger << \"The translation is ready\";\nlogger << \"The next request is pending\";"
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "positive-proper",
+    "kind": "cleanup",
+    "input": "We met with\nJohn yesterday to review the\nAPI specification.",
+    "want": [
+      "We met with John yesterday to review the API specification."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "positive-pronoun",
+    "kind": "cleanup",
+    "input": "During the planning meeting yesterday\nI discussed the release schedule with Alice.",
+    "want": [
+      "During the planning meeting yesterday I discussed the release schedule with Alice."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "positive-acronym",
+    "kind": "cleanup",
+    "input": "The implementation now fully supports\nHTTP requests across multiple endpoints.",
+    "want": [
+      "The implementation now fully supports HTTP requests across multiple endpoints."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "positive-german",
+    "kind": "cleanup",
+    "input": "Der Bericht beschreibt zahlreiche technische\nVerfahren und nennt wichtige praktische\nBeispiele für die verwendeten neuen\nMethoden zur effizienten Verarbeitung.",
+    "want": [
+      "Der Bericht beschreibt zahlreiche technische Verfahren und nennt wichtige praktische Beispiele für die verwendeten neuen Methoden zur effizienten Verarbeitung."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "de"
+  },
+  {
+    "id": "open-paren",
+    "kind": "cleanup",
+    "input": "This is a well-known phenomenon\n(see Figure 2) in practice.",
+    "want": [
+      "This is a well-known phenomenon (see Figure 2) in practice."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "close-paren",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration (version two)\nAnd Berlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration (version two) And Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "open-bracket",
+    "kind": "cleanup",
+    "input": "This is a well-known phenomenon\n[see Figure 2] in practice.",
+    "want": [
+      "This is a well-known phenomenon [see Figure 2] in practice."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "close-bracket",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration [version two]\nAnd Berlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration [version two] And Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "open-double",
+    "kind": "cleanup",
+    "input": "This is a well-known phenomenon\n\"see Figure 2\" in practice.",
+    "want": [
+      "This is a well-known phenomenon \"see Figure 2\" in practice."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "close-double",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration \"version two\"\nAnd Berlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration \"version two\" And Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "open-single",
+    "kind": "cleanup",
+    "input": "This is a well-known phenomenon\n'see Figure 2' in practice.",
+    "want": [
+      "This is a well-known phenomenon 'see Figure 2' in practice."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "close-single",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration 'version two'\nAnd Berlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration 'version two' And Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "open-curly-double",
+    "kind": "cleanup",
+    "input": "This is a well-known phenomenon\n“see Figure 2” in practice.",
+    "want": [
+      "This is a well-known phenomenon “see Figure 2” in practice."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "close-curly-double",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration “version two”\nAnd Berlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration “version two” And Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "open-curly-single",
+    "kind": "cleanup",
+    "input": "This is a well-known phenomenon\n‘see Figure 2’ in practice.",
+    "want": [
+      "This is a well-known phenomenon ‘see Figure 2’ in practice."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "close-curly-single",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration ‘version two’\nAnd Berlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration ‘version two’ And Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "trailing-semicolon",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration;\nBerlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration; Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "trailing-colon",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration:\nBerlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration: Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "trailing-em",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration—\nBerlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration— Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "trailing-en",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration–\nBerlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration– Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "guard-heading",
+    "kind": "cleanup",
+    "input": "Overview\nThe implementation handles several important translation workflows.",
+    "want": [
+      "Overview\nThe implementation handles several important translation workflows."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "guard-signature",
+    "kind": "cleanup",
+    "input": "Taro Yamada\nSenior Director of Engineering",
+    "want": [
+      "Taro Yamada\nSenior Director of Engineering"
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "guard-long-heading",
+    "kind": "cleanup",
+    "input": "System Overview and Experimental Setup\nThe evaluation measures translation latency across multiple benchmarks.",
+    "want": [
+      "System Overview and Experimental Setup\nThe evaluation measures translation latency across multiple benchmarks."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "guard-pipe",
+    "kind": "cleanup",
+    "input": "| Model | Latency | Accuracy |\n| Alpha | 20 ms | 90% |",
+    "want": [
+      "| Model | Latency | Accuracy |\n| Alpha | 20 ms | 90% |"
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "guard-spaces",
+    "kind": "cleanup",
+    "input": "Model Alpha   Baseline   40%\nModel Beta    Proposed   55%",
+    "want": [
+      "Model Alpha   Baseline   40%\nModel Beta    Proposed   55%"
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "guard-tabs",
+    "kind": "cleanup",
+    "input": "Model Alpha\tBaseline\t40%\nModel Beta\tProposed\t55%",
+    "want": [
+      "Model Alpha\tBaseline\t40%\nModel Beta\tProposed\t55%"
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "guard-bullet",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration\n- Berlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration\n- Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "guard-number",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration\n1. Berlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration\n1. Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "guard-letter",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration\n(a) Berlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration\n(a) Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "indent-spaces",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration\n  Berlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration\n  Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "indent-tab",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration\n\tBerlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration\n\tBerlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "indent-wide",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration\n　Berlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration\n　Berlin provided the reference dataset."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "sentence-ellipsis-lower",
+    "kind": "sentences",
+    "input": "Wait... really?",
+    "want": [
+      "Wait... really?"
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "sentence-ellipsis-upper",
+    "kind": "sentences",
+    "input": "Wait... Really? Next sentence.",
+    "want": [
+      "Wait... Really?",
+      "Next sentence."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "sentence-ellipsis-quoted",
+    "kind": "sentences",
+    "input": "He said \"Wait...\" and left. Next sentence.",
+    "want": [
+      "He said \"Wait...\" and left.",
+      "Next sentence."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "sentence-double-dot",
+    "kind": "sentences",
+    "input": "Wait.. really?",
+    "want": [
+      "Wait.. really?"
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "sentence-wide-ellipsis",
+    "kind": "sentences",
+    "input": "Wait… really?",
+    "want": [
+      "Wait… really?"
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "sentence-et-al",
+    "kind": "sentences",
+    "input": "see Smith et al. for details",
+    "want": [
+      "see Smith et al. for details"
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "sentence-references",
+    "kind": "sentences",
+    "input": "See Fig. 2, Eq. 3, Vol. 4, No. 5, pp. 6-7. Next sentence.",
+    "want": [
+      "See Fig. 2, Eq. 3, Vol. 4, No. 5, pp. 6-7.",
+      "Next sentence."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "sentence-passim",
+    "kind": "sentences",
+    "input": "See passim. in the commentary. Next sentence.",
+    "want": [
+      "See passim. in the commentary.",
+      "Next sentence."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "sentence-quoted-stop",
+    "kind": "sentences",
+    "input": "He said \"Stop.\" quietly to himself. Next sentence.",
+    "want": [
+      "He said \"Stop.\" quietly to himself.",
+      "Next sentence."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "sentence-ordinary",
+    "kind": "sentences",
+    "input": "First sentence. Second sentence.",
+    "want": [
+      "First sentence.",
+      "Second sentence."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "sentence-digit",
+    "kind": "sentences",
+    "input": "First sentence. 2024 brought new results.",
+    "want": [
+      "First sentence.",
+      "2024 brought new results."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "sentence-alphanumeric",
+    "kind": "sentences",
+    "input": "See Fig. 1a. More details follow.",
+    "want": [
+      "See Fig. 1a.",
+      "More details follow."
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "r2-fig",
+    "kind": "sentences",
+    "input": "See Fig. S1 for details.",
+    "want": [
+      "See Fig. S1 for details."
+    ],
+    "round": 2,
+    "note": ""
+  },
+  {
+    "id": "r2-eq",
+    "kind": "sentences",
+    "input": "See Eq. A1 for details.",
+    "want": [
+      "See Eq. A1 for details."
+    ],
+    "round": 2,
+    "note": ""
+  },
+  {
+    "id": "r2-figs",
+    "kind": "sentences",
+    "input": "See Figs. A and B for details.",
+    "want": [
+      "See Figs. A and B for details."
+    ],
+    "round": 2,
+    "note": ""
+  },
+  {
+    "id": "r2-eg",
+    "kind": "sentences",
+    "input": "We used alternative sources, e.g. The Times and The Guardian.",
+    "want": [
+      "We used alternative sources, e.g. The Times and The Guardian."
+    ],
+    "round": 2,
+    "note": ""
+  },
+  {
+    "id": "r2-ie",
+    "kind": "sentences",
+    "input": "The destination is clear, i.e. The Hague.",
+    "want": [
+      "The destination is clear, i.e. The Hague."
+    ],
+    "round": 2,
+    "note": ""
+  },
+  {
+    "id": "r2-bracket",
+    "kind": "cleanup",
+    "input": "The experiment used a stable configuration [version two];\nBerlin provided the reference dataset.",
+    "want": [
+      "The experiment used a stable configuration [version two]; Berlin provided the reference dataset."
+    ],
+    "round": 2,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "r2-comparison",
+    "kind": "cleanup",
+    "input": "The benchmark results improved by >10%;\nBerlin provided the reference dataset.",
+    "want": [
+      "The benchmark results improved by >10%; Berlin provided the reference dataset."
+    ],
+    "round": 2,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "r3-us",
+    "kind": "sentences",
+    "input": "The company operates in the U.S. Then it expanded.",
+    "want": [
+      "The company operates in the U.S.",
+      "Then it expanded."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "r3-pm",
+    "kind": "sentences",
+    "input": "The meeting ended at 5 p.m. We went home.",
+    "want": [
+      "The meeting ended at 5 p.m.",
+      "We went home."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "r3-uk",
+    "kind": "sentences",
+    "input": "This happened in the U.K. The results were clear.",
+    "want": [
+      "This happened in the U.K.",
+      "The results were clear."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "r3-no-i",
+    "kind": "sentences",
+    "input": "No. I disagree.",
+    "want": [
+      "No.",
+      "I disagree."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "r3-no-a",
+    "kind": "sentences",
+    "input": "No. A different approach is needed.",
+    "want": [
+      "No.",
+      "A different approach is needed."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "r3-array",
+    "kind": "cleanup",
+    "input": "TranslationResult[] translatedResults;\nTranslationRequest[] pendingRequests;",
+    "want": [
+      "TranslationResult[] translatedResults;\nTranslationRequest[] pendingRequests;"
+    ],
+    "round": 3,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "r3-generic",
+    "kind": "cleanup",
+    "input": "List<string> translatedParagraphs;\nList<string> sourceParagraphs;",
+    "want": [
+      "List<string> translatedParagraphs;\nList<string> sourceParagraphs;"
+    ],
+    "round": 3,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "r3-chunk",
+    "kind": "chunk",
+    "input": "The company operates in the U.S. Then it expanded.",
+    "want": [
+      "The company operates in the U.S.",
+      "Then it expanded."
+    ],
+    "round": 3,
+    "note": "",
+    "budget": 40,
+    "boundaries": [
+      3
+    ]
+  },
+  {
+    "id": "surround-titles",
+    "kind": "sentences",
+    "input": "Dr. Smith met Prof. Jones.",
+    "want": [
+      "Dr. Smith met Prof. Jones."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "surround-initials",
+    "kind": "sentences",
+    "input": "J. Smith met A. Brown.",
+    "want": [
+      "J. Smith met A. Brown."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "surround-st",
+    "kind": "sentences",
+    "input": "St. Louis is a city.",
+    "want": [
+      "St. Louis is a city."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "surround-eds",
+    "kind": "sentences",
+    "input": "See Eds. Smith and Jones for details.",
+    "want": [
+      "See Eds. Smith and Jones for details."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "surround-army",
+    "kind": "sentences",
+    "input": "The U.S. Army supplied the data.",
+    "want": [
+      "The U.S. Army supplied the data."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "surround-eg-http",
+    "kind": "sentences",
+    "input": "We used e.g. HTTP requests for testing.",
+    "want": [
+      "We used e.g. HTTP requests for testing."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "surround-vol",
+    "kind": "sentences",
+    "input": "See Vol. II for details.",
+    "want": [
+      "See Vol. II for details."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "surround-sec",
+    "kind": "sentences",
+    "input": "See Sec. IV for details.",
+    "want": [
+      "See Sec. IV for details."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "surround-figs",
+    "kind": "sentences",
+    "input": "See Figs. A and B. Then continue.",
+    "want": [
+      "See Figs. A and B.",
+      "Then continue."
+    ],
+    "round": 3,
+    "note": ""
+  },
+  {
+    "id": "vocabulary-fig",
+    "kind": "sentences",
+    "input": "See Fig. 2",
+    "want": [
+      "See Fig. 2"
+    ],
+    "round": 1,
+    "note": ""
+  },
+  {
+    "id": "choice-width40",
+    "kind": "cleanup",
+    "input": "This paragraph has useful text\nAlice provided several helpful examples.",
+    "want": [
+      "This paragraph has useful text\nAlice provided several helpful examples."
+    ],
+    "round": 1,
+    "note": "Deliberately left: conservative geometric veto, despite 75% width.",
+    "lang": "en"
+  },
+  {
+    "id": "choice-width32",
+    "kind": "cleanup",
+    "input": "This paragraph has useful text\nAlice provided helpful examples.",
+    "want": [
+      "This paragraph has useful text Alice provided helpful examples."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "choice-extra-spaces",
+    "kind": "cleanup",
+    "input": "The results show a   stable improvement\nin all tested configurations.",
+    "want": [
+      "The results show a   stable improvement\nin all tested configurations."
+    ],
+    "round": 1,
+    "note": "Deliberately left: three spaces are table evidence; preserve structure.",
+    "lang": "en"
+  },
+  {
+    "id": "choice-one-space",
+    "kind": "cleanup",
+    "input": "The results show a stable improvement\nin all tested configurations.",
+    "want": [
+      "The results show a stable improvement in all tested configurations."
+    ],
+    "round": 1,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "boundary-words",
+    "kind": "lines",
+    "input": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word tail\nnext",
+    "want": [
+      "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word tail\nnext"
+    ],
+    "round": 1,
+    "note": "",
+    "budget": 1200,
+    "boundaries": [
+      1,
+      2
+    ]
+  },
+  {
+    "id": "boundary-right-space",
+    "kind": "lines",
+    "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa tail\nnext",
+    "want": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa tail\nnext"
+    ],
+    "round": 1,
+    "note": "",
+    "budget": 1200,
+    "boundaries": [
+      1,
+      2
+    ]
+  },
+  {
+    "id": "boundary-hard-latin",
+    "kind": "lines",
+    "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nnext line",
+    "want": [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nnext line"
+    ],
+    "round": 1,
+    "note": "",
+    "budget": 1200,
+    "boundaries": [
+      0,
+      2
+    ]
+  },
+  {
+    "id": "boundary-hard-cjk",
+    "kind": "lines",
+    "input": "ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ\n次の行",
+    "want": [
+      "ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ\n次の行"
+    ],
+    "round": 1,
+    "note": "",
+    "budget": 1200,
+    "boundaries": [
+      0,
+      2
+    ]
+  },
+  {
+    "id": "join-latin",
+    "kind": "join",
+    "input": "",
+    "want": [
+      "word tail"
+    ],
+    "round": 1,
+    "note": "",
+    "pieces": [
+      "word",
+      "tail"
+    ],
+    "boundaries": [
+      1
+    ]
+  },
+  {
+    "id": "join-cjk",
+    "kind": "join",
+    "input": "",
+    "want": [
+      "これは日本語です"
+    ],
+    "round": 1,
+    "note": "",
+    "pieces": [
+      "これは日本語",
+      "です"
+    ],
+    "boundaries": [
+      1
+    ]
+  },
+  {
+    "id": "audit-array-prose",
+    "kind": "cleanup",
+    "input": "The measured value[0] remains stable;\nBerlin provided the reference dataset.",
+    "want": [
+      "The measured value[0] remains stable; Berlin provided the reference dataset."
+    ],
+    "round": 4,
+    "note": "Fix: unanchored array regex mistook an inline expression for a declaration.",
+    "lang": "en"
+  },
+  {
+    "id": "audit-generic-prose",
+    "kind": "cleanup",
+    "input": "The notation A<B> describes a relation;\nBerlin provided the reference dataset.",
+    "want": [
+      "The notation A<B> describes a relation; Berlin provided the reference dataset."
+    ],
+    "round": 4,
+    "note": "Fix: unanchored generic regex mistook inline notation for a declaration.",
+    "lang": "en"
+  },
+  {
+    "id": "audit-qualified-array",
+    "kind": "cleanup",
+    "input": "Translation.Result[] translatedResults;\nTranslation.Request[] pendingRequests;",
+    "want": [
+      "Translation.Result[] translatedResults;\nTranslation.Request[] pendingRequests;"
+    ],
+    "round": 4,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "audit-qualified-generic",
+    "kind": "cleanup",
+    "input": "System.Collections.Generic.List<string> translatedParagraphs;\nSystem.Collections.Generic.List<string> sourceParagraphs;",
+    "want": [
+      "System.Collections.Generic.List<string> translatedParagraphs;\nSystem.Collections.Generic.List<string> sourceParagraphs;"
+    ],
+    "round": 4,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "audit-multiple-array",
+    "kind": "cleanup",
+    "input": "TranslationResult[] first, second;\nTranslationRequest[] pending, next;",
+    "want": [
+      "TranslationResult[] first, second;\nTranslationRequest[] pending, next;"
+    ],
+    "round": 4,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "audit-multiple-generic",
+    "kind": "cleanup",
+    "input": "List<string> first, second;\nList<string> pending, next;",
+    "want": [
+      "List<string> first, second;\nList<string> pending, next;"
+    ],
+    "round": 4,
+    "note": "",
+    "lang": "en"
+  },
+  {
+    "id": "choice-us-proper",
+    "kind": "sentences",
+    "input": "The company operates in the U.S. Alice joined later.",
+    "want": [
+      "The company operates in the U.S. Alice joined later."
+    ],
+    "round": 4,
+    "note": "Deliberately left: Alice is not a known sentence starter and can be a proper-name continuation; requires semantic disambiguation."
+  },
+  {
+    "id": "choice-no-roman",
+    "kind": "sentences",
+    "input": "See No. V for details.",
+    "want": [
+      "See No.",
+      "V for details."
+    ],
+    "round": 4,
+    "note": "Deliberately left: single-letter No. identifiers remain ambiguous with No. I / No. A responses; no contextual redesign."
+  }
+]
