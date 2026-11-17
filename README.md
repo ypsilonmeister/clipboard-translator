@@ -28,7 +28,12 @@ see [Licenses](#licenses) before using the app for business.
 ## Which download?
 
 Every [release](https://github.com/ypsilonmeister/clipboard-translator/releases) has one file per platform
-(the macOS and Linux files have a `.sha256` file next to them; the Windows zip's SHA-256 is in the release notes):
+with a `.sha256` checksum file next to it (the Windows zip's SHA-256 is also in the release notes).
+Build provenance is attested with GitHub Actions; you can verify any release archive using the GitHub CLI:
+
+```bash
+gh attestation verify <file> --repo ypsilonmeister/clipboard-translator
+```
 
 | Your computer | File | Instructions |
 | --- | --- | --- |
