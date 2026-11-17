@@ -1,4 +1,4 @@
-import {endpointURL, translate, connectionInfo} from './endpoint.js';
+import {endpointURL, translate, connectionInfo, sampleTextFor} from './endpoint.js';
 const endpoint = document.getElementById('endpoint');
 const token = document.getElementById('token');
 const status = document.getElementById('status');
@@ -37,7 +37,25 @@ test.addEventListener('click', async () => {
   test.disabled = true;
   status.textContent = 'Connecting and translating locally…';
   try {
-    const result = await translate(endpoint.value, token.value.trim(), 'Hello');
+    const verified = {endpoint: endpointURL(endpoint.value), token: token.value.trim()};
+    let result;
+    try {
+      result = await translate(verified.endpoint, verified.token, 'Hello');
+    } catch (error) {
+      const sample = sampleTextFor(error.message);
+      if (sample) {
+        result = await translate(verified.endpoint, verified.token, sample);
+      } else {
+        const match = error.message.match(/this hotkey translates ([^.]+)/);
+        if (match) {
+          await chrome.storage.local.set(verified);
+          status.textContent = `Connected (endpoint verified for ${match[1]}).`;
+          return;
+        }
+        throw error;
+      }
+    }
+    await chrome.storage.local.set(verified);
     status.textContent = `Connected. Translation: ${result.slice(0, 160)}`;
   } catch (error) { status.textContent = `Connection failed: ${error.message}`; }
   finally { test.disabled = false; }
