@@ -82,6 +82,7 @@ func TestUninstallPreservesUnrelatedFiles(t *testing.T) {
 		"README.txt",
 		"LICENSE",
 		"translator.log",
+		"translator.log.1",
 		"server.log",
 		"STOP",
 	}
