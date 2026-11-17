@@ -6,7 +6,7 @@
 
 static GtkStatusIcon *status_icon;
 static GtkWidget *current_menu, *control_window, *status_label;
-static char *last_status;
+static char *last_status, *last_title;
 static GdkEvent *control_menu_event;
 static int menu_requested, menu_from_control, force_control;
 static GQueue commands = G_QUEUE_INIT;
@@ -25,7 +25,7 @@ static gboolean check_tray(gpointer data) {
     // Some desktops do not host legacy X11 tray icons. Keep settings and Quit reachable.
     if (!control_window && status_icon && (force_control || !gtk_status_icon_is_embedded(status_icon))) {
         control_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-        gtk_window_set_title(GTK_WINDOW(control_window), "Clipboard Translator");
+        gtk_window_set_title(GTK_WINDOW(control_window), last_title ? last_title : "Clipboard Translator");
         gtk_container_set_border_width(GTK_CONTAINER(control_window), 16);
         GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
         status_label = gtk_label_new(last_status ? last_status : "Clipboard Translator");
@@ -50,6 +50,18 @@ void ct_tray_create(const char *icon) {
     g_signal_connect(status_icon, "activate", G_CALLBACK(activate_icon), NULL);
     tray_check = g_timeout_add(2000, check_tray, NULL);
 }
+void ct_tray_set_icon(const char *icon) {
+    if (status_icon && icon && icon[0]) {
+        gtk_status_icon_set_from_file(status_icon, icon);
+    }
+}
+void ct_tray_set_title(const char *title) {
+    g_free(last_title);
+    last_title = title ? g_strdup(title) : NULL;
+    if (control_window && last_title) {
+        gtk_window_set_title(GTK_WINDOW(control_window), last_title);
+    }
+}
 void ct_tray_close(void) {
     if (tray_check) { GSource *s = g_main_context_find_source_by_id(NULL, tray_check); if (s) g_source_destroy(s); tray_check = 0; }
     if (current_menu) { gtk_widget_destroy(current_menu); current_menu = NULL; }
@@ -59,6 +71,7 @@ void ct_tray_close(void) {
     g_queue_clear(&commands);
     menu_requested = menu_from_control = force_control = 0;
     g_clear_pointer(&last_status,g_free);
+    g_clear_pointer(&last_title,g_free);
     ct_manual_cancel_read();
 }
 void ct_status(const char *text) {

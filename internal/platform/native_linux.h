@@ -33,6 +33,8 @@ char *ct_read(int primary);
 void ct_free(void *p);
 int ct_write(const char *text);
 void ct_tray_create(const char *icon);
+void ct_tray_set_icon(const char *icon);
+void ct_tray_set_title(const char *title);
 void ct_tray_close(void);
 void ct_status(const char *text);
 int ct_wants_menu(void);

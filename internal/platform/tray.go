@@ -14,6 +14,35 @@ type MenuItem struct {
 	Sub       []MenuItem // non-empty: a submenu (ID is ignored)
 }
 
+// TrayState represents the working state shown on the tray icon.
+type TrayState int
+
+const (
+	TrayIdle TrayState = iota
+	TrayBusy
+	TrayDone
+	TrayProblem
+)
+
+// TrayReady and TrayWorking are aliases for TrayDone and TrayBusy.
+const (
+	TrayReady   = TrayDone
+	TrayWorking = TrayBusy
+)
+
+func (s TrayState) String() string {
+	switch s {
+	case TrayBusy:
+		return "busy"
+	case TrayDone:
+		return "ready"
+	case TrayProblem:
+		return "problem"
+	default:
+		return "idle"
+	}
+}
+
 // Tray is the notification-area (system tray) presence of the app.
 // Implementations live in tray_windows.go and desktop_linux.go. Unsupported
 // platforms and failed Windows initialisation use noopTray so callers never need
@@ -23,6 +52,8 @@ type Tray interface {
 	QuitRequested() bool
 	// SetStatus updates the tray tooltip.
 	SetStatus(text string)
+	// SetState updates the tray icon to reflect the working state.
+	SetState(state TrayState)
 	// Notify shows a balloon notification.
 	Notify(title, message string, isError bool)
 	// SetMenu installs the app-specific items shown above the built-in ones
@@ -38,6 +69,7 @@ type noopTray struct{}
 
 func (noopTray) QuitRequested() bool         { return false }
 func (noopTray) SetStatus(string)            {}
+func (noopTray) SetState(TrayState)          {}
 func (noopTray) Notify(string, string, bool) {}
 func (noopTray) SetMenu(func() []MenuItem)   {}
 func (noopTray) NextCommand() (int, bool)    { return 0, false }

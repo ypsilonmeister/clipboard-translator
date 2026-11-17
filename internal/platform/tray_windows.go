@@ -36,6 +36,9 @@ const (
 
 	idiApplication = 32512
 	appIconID      = 1 // RT_GROUP_ICON id written by tools/mksyso
+	iconBusyID     = 2
+	iconReadyID    = 3
+	iconProblemID  = 4
 	imageIcon      = 1
 	smCxSmIcon     = 49
 	smCySmIcon     = 50
@@ -119,6 +122,8 @@ type winTray struct {
 	cmds           []int             // picked app items, drained by NextCommand (UI thread only)
 	hwnd           uintptr
 	icon           uintptr
+	icons          map[TrayState]uintptr
+	state          TrayState
 	logPath        string
 	exeCommand     string // quoted path used for the "start with Windows" entry
 	taskbarCreated uint32
@@ -167,14 +172,17 @@ func NewTray(logPath string) Tray {
 // icon is picked instead of a stretched 16px one. A build without the resource
 // (for example without resource_windows_amd64.syso) gets the stock application
 // icon.
-func loadAppIcon(hInst uintptr) uintptr {
+func loadAppIcon(hInst uintptr, id uintptr) uintptr {
 	cx, _, _ := getSystemMetrics.Call(smCxSmIcon)
 	cy, _, _ := getSystemMetrics.Call(smCySmIcon)
-	if h, _, _ := loadImageW.Call(hInst, appIconID, imageIcon, cx, cy, 0); h != 0 {
+	if h, _, _ := loadImageW.Call(hInst, id, imageIcon, cx, cy, 0); h != 0 {
 		return h
 	}
-	h, _, _ := loadIconW.Call(0, idiApplication)
-	return h
+	if id == appIconID {
+		h, _, _ := loadIconW.Call(0, idiApplication)
+		return h
+	}
+	return 0
 }
 
 // AppIconIsEmbedded reports whether the icon resource linked into the
@@ -183,8 +191,15 @@ func loadAppIcon(hInst uintptr) uintptr {
 func AppIconIsEmbedded() bool {
 	hInst, _, _ := getModuleHandleW.Call(0)
 	stock, _, _ := loadIconW.Call(0, idiApplication)
-	h := loadAppIcon(hInst)
+	h := loadAppIcon(hInst, appIconID)
 	return h != 0 && h != stock
+}
+
+func (t *winTray) iconForState(state TrayState) uintptr {
+	if h := t.icons[state]; h != 0 {
+		return h
+	}
+	return t.icons[TrayIdle]
 }
 
 func (t *winTray) init() error {
@@ -207,7 +222,12 @@ func (t *winTray) init() error {
 		return err
 	}
 	t.hwnd = hwnd
-	t.icon = loadAppIcon(hInst)
+	t.icons = make(map[TrayState]uintptr)
+	t.icons[TrayIdle] = loadAppIcon(hInst, appIconID)
+	t.icons[TrayBusy] = loadAppIcon(hInst, iconBusyID)
+	t.icons[TrayReady] = loadAppIcon(hInst, iconReadyID)
+	t.icons[TrayProblem] = loadAppIcon(hInst, iconProblemID)
+	t.icon = t.icons[TrayIdle]
 	m, _, _ := registerWindowMsgW.Call(uintptr(unsafe.Pointer(u16("TaskbarCreated"))))
 	t.taskbarCreated = uint32(m)
 	activeTray = t
@@ -234,6 +254,21 @@ func (t *winTray) add() bool {
 }
 
 func (t *winTray) QuitRequested() bool { return t.quit.Load() }
+
+func (t *winTray) SetState(state TrayState) {
+	if t.hwnd == 0 || state == t.state {
+		return
+	}
+	t.state = state
+	h := t.iconForState(state)
+	if h == 0 || h == t.icon {
+		return
+	}
+	t.icon = h
+	d := t.data(nifIcon)
+	d.HIcon = h
+	shellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&d)))
+}
 
 func (t *winTray) SetStatus(text string) {
 	if t.hwnd == 0 || text == t.tip {

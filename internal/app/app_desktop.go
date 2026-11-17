@@ -101,6 +101,8 @@ func (a *app) finishHistoryCopy(text string) {
 
 func (a *app) startClipboardTranslation() {
 	a.abortTranslation()
+	a.trayStateResetAt = time.Time{}
+	a.setTrayState(platform.TrayBusy)
 	a.resetIdleTimer()
 	p := a.conf.Profiles[0]
 	p.Input = config.InputClipboard

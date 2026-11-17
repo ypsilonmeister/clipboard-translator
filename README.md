@@ -390,8 +390,7 @@ gives a three-step quick start with your actual hotkey (select text, press the h
 paste with `Ctrl+V`, or `Cmd+V` on macOS). It is shown once; later launches stay quiet.
 Read it again from **Quick start** in the tray menu or the card at the top of the Settings
 page. If the hotkey could not be registered, the balloon sends you to Settings to choose
-another one instead. The guide changes no setting (auto-paste stays off). The tooltip shows
-the state and, while loading or translating, the elapsed seconds.
+another one instead. The guide changes no setting (auto-paste stays off). The tray icon shows the current state (normal when idle, busy while copying the selection and translating, ready for a few seconds once the translation reaches the clipboard, and problem after a failure or a skip, until the next press or a short timeout). The tooltip shows the state and, while loading or translating, the elapsed seconds.
 
 Select text in your language pair (Japanese or English unless you changed it, see
 `languages` below) and press `Ctrl+Alt+E`. When the translation is

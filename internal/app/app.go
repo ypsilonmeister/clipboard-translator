@@ -114,6 +114,9 @@ type app struct {
 	elevatedNotified       bool // the "administrator window" notice was shown this run (UI thread only)
 	desktopStamp           string
 
+	trayState        platform.TrayState
+	trayStateResetAt time.Time
+
 	statusResetAt  time.Time
 	lastSkipReason config.SkipReason
 	lastSkipNotify time.Time
@@ -848,9 +851,40 @@ func (a *app) timeNow() time.Time {
 	return time.Now()
 }
 
+const (
+	trayDoneDuration    = 3 * time.Second
+	trayProblemDuration = 5 * time.Second
+)
+
+func (a *app) setTrayState(state platform.TrayState) {
+	if a.trayState == state {
+		return
+	}
+	a.trayState = state
+	if a.tray != nil {
+		a.tray.SetState(state)
+	}
+}
+
+func (a *app) setTrayStateWithTimeout(state platform.TrayState, d time.Duration) {
+	a.trayStateResetAt = a.timeNow().Add(d)
+	a.setTrayState(state)
+}
+
+func (a *app) tickTrayState() {
+	if a.translating || a.capturing != nil || a.pendingRead != nil {
+		return
+	}
+	if !a.trayStateResetAt.IsZero() && !a.timeNow().Before(a.trayStateResetAt) {
+		a.trayStateResetAt = time.Time{}
+		a.setTrayState(platform.TrayIdle)
+	}
+}
+
 func (a *app) setTransientStatus(status string) {
 	a.tray.SetStatus(status)
 	a.statusResetAt = a.timeNow().Add(8 * time.Second)
+	a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 }
 
 func (a *app) cancelTransientStatus() {
@@ -865,6 +899,7 @@ func (a *app) tickTransientStatus() {
 		a.statusResetAt = time.Time{}
 		a.tray.SetStatus(a.readyTip)
 	}
+	a.tickTrayState()
 }
 
 func (a *app) shouldNotifySkip(reason config.SkipReason) bool {
@@ -901,6 +936,9 @@ func (a *app) abortTranslation() {
 	}
 	a.resetIdleTimer()
 	a.cancelTransientStatus()
+	if a.trayState == platform.TrayBusy {
+		a.trayStateResetAt = a.timeNow()
+	}
 	if a.capturing != nil {
 		a.capturing = nil
 		a.tray.SetStatus(a.readyTip) // do not leave "copying the selection..." behind
@@ -946,6 +984,8 @@ func (a *app) startTranslation(index int) {
 	profile := a.conf.Profiles[index]
 	win := a.foreground()
 	a.abortTranslation()
+	a.trayStateResetAt = time.Time{}
+	a.setTrayState(platform.TrayBusy)
 	if profile.InputMode() == config.InputClipboard {
 		// The text is already on the clipboard: no Ctrl+C, no waiting for a copy,
 		// and never a fresh selection (so no auto-paste).
@@ -1022,6 +1062,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 			}
 			a.tray.Notify("Clipboard Translator", msg, true)
 		}
+		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
 	reason, direction := profile.Check(source, a.conf.MaxChars)
@@ -1033,6 +1074,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		if a.shouldNotifySkip(reason) {
 			a.tray.Notify("Clipboard Translator", msg, true)
 		}
+		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
 	if a.modelUnloaded {
@@ -1064,6 +1106,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 					a.tray.Notify("Clipboard Translator", "Nothing was translated: the model could not be loaded again. See server.log and translator.log in the app folder. "+err.Error(), true)
 				}
 			}
+			a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 			return
 		}
 		// A cancel during the load (menu, API caller gone, endpoint switched
@@ -1111,6 +1154,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 			} else {
 				a.setTransientStatus(cancelledStatus)
 			}
+			a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 			return
 		}
 	}
@@ -1169,6 +1213,11 @@ func (a *app) handleResult(res result) {
 		}
 		a.finishAPI(text, res.err)
 		a.refreshStatus()
+		if res.err != nil {
+			a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
+		} else {
+			a.setTrayState(platform.TrayIdle)
+		}
 		return
 	}
 	if res.err != nil {
@@ -1179,11 +1228,13 @@ func (a *app) handleResult(res result) {
 		}
 		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
+		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
 	if res.translated == res.original {
 		log.Print("translation unchanged; clipboard left intact")
 		a.setTransientStatus("Clipboard Translator - translation is the same as the source; the clipboard still holds the source")
+		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
 	// A sequence number is not a reliable test for a text change:
@@ -1203,10 +1254,12 @@ func (a *app) handleResult(res result) {
 			a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
 			a.tray.SetStatus(a.readyTip)
 			a.tray.Notify("Clipboard Translator", "Clipboard transfer timed out. The translation is available in Recent translations.", true)
+			a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 			return
 		}
 		a.pendingResult = &res
 		a.tray.SetStatus("Clipboard Translator - writing the translation to the clipboard...")
+		a.setTrayState(platform.TrayBusy)
 		return
 	}
 	a.pendingResult = nil
@@ -1215,6 +1268,7 @@ func (a *app) handleResult(res result) {
 		log.Printf("clipboard check/write failed: %v", err)
 		a.tray.SetStatus(a.readyTip)
 		a.tray.Notify("Clipboard Translator", "The translation is kept in Recent translations in the tray menu. Could not write translation to the clipboard: "+err.Error(), true)
+		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
 	if !applied {
@@ -1232,10 +1286,12 @@ func (a *app) handleResult(res result) {
 		}
 		a.tray.SetStatus(a.readyTip)
 		a.tray.Notify("Clipboard Translator", "The clipboard changed while translating. Your new clipboard text was kept; copy the translation from Recent translations in the tray menu.", false)
+		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
 	a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
 	readyStatus := a.readyStatus(res.fallback)
+	a.setTrayStateWithTimeout(platform.TrayDone, trayDoneDuration)
 	action := decidePaste(a.conf.AutoPaste && !a.desktopStatus().Wayland, res.fromSelection, res.window, a.foreground())
 	switch action {
 	case pasteNow:
