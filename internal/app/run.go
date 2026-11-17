@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -105,11 +104,15 @@ func Run(opts Options) {
 	}
 
 	// Prevent concurrent application instances.
-	instance, err := net.Listen("tcp", "127.0.0.1:"+fmt.Sprint(conf.Port+1))
+	inst, err := checkInstance(conf.Port + 1)
 	if err != nil {
-		fatal("another instance or conflicting port is running: ", err)
+		fatal(err)
 	}
-	defer instance.Close()
+	if inst == nil {
+		log.Print("another instance is already running; alerted it and exiting")
+		return
+	}
+	defer inst.Close()
 	if err := platform.InitializeDesktop(dir); err != nil {
 		fatal("desktop initialization: ", err)
 	}
@@ -142,7 +145,9 @@ func Run(opts Options) {
 	// The tray exists from here on so the user sees the app while the model loads.
 	tray := platform.NewTray(logPath)
 	defer tray.Close()
-	newApp(dir, conf, paths, tray, serverLog).run()
+	a := newApp(dir, conf, paths, tray, serverLog)
+	inst.setOnPing(a.ping)
+	a.run()
 }
 
 // applyTranslation never replaces unrelated clipboard contents.
