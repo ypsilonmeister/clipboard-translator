@@ -31,6 +31,7 @@ const (
 	cmdTranslateClipboard   = platform.FirstAppCommand + 13
 	cmdTranslateAPIToggle   = platform.FirstAppCommand + 14
 	cmdCopyConnectionInfo   = platform.FirstAppCommand + 15
+	cmdRegenerateToken      = platform.FirstAppCommand + 16
 	cmdRetryDesktop         = platform.FirstAppCommand + 12
 	cmdModelBase            = platform.FirstAppCommand + 100 // + index into models.Catalog
 	cmdHistoryBase          = platform.FirstAppCommand + 300 // translation; + index into history (newest first)
@@ -69,7 +70,8 @@ func (a *app) buildMenu() []platform.MenuItem {
 	if a.chromeOSProfile() {
 		items = append(items,
 			platform.MenuItem{ID: cmdTranslateAPIToggle, Label: "Chrome extension endpoint", Checked: a.conf.TranslateAPIEnabled},
-			platform.MenuItem{ID: cmdCopyConnectionInfo, Label: "Copy connection info"})
+			platform.MenuItem{ID: cmdCopyConnectionInfo, Label: "Copy connection info"},
+			platform.MenuItem{ID: cmdRegenerateToken, Label: "Regenerate token"})
 		if a.conf.TranslateAPIEnabled {
 			items = append(items, platform.MenuItem{Label: "ChromeOS: enable port forwarding for TCP " + translateAPIPort, Disabled: true})
 		}
@@ -156,6 +158,14 @@ func (a *app) handleCommand(id int) {
 		}
 	case id == cmdCopyConnectionInfo && a.chromeOSProfile():
 		a.copyConnectionInfo()
+	case id == cmdRegenerateToken && a.chromeOSProfile():
+		req := settings.NewActionRequest("translate_api_regenerate", "", time.Second)
+		a.handleSettingsRequest(req)
+		if rep := <-req.Reply; rep.Err != nil {
+			a.tray.Notify("Clipboard Translator", "Could not regenerate token: "+rep.Err.Error(), true)
+		} else {
+			a.copyConnectionInfo()
+		}
 	case id == cmdTranslateClipboard:
 		a.startClipboardTranslation()
 	case id == cmdRetryDesktop:

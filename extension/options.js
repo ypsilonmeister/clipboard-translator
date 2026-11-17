@@ -17,6 +17,13 @@ document.getElementById('apply-connection').addEventListener('click', async () =
     await save(config);
     endpoint.value = config.endpoint;
     token.value = config.token;
+    document.getElementById('connection-info').value = '';
+    try {
+      await navigator.clipboard.writeText('Clipboard Translator connection info applied.');
+      status.textContent = 'Saved. Clipboard overwritten. Remove any saved token from clipboard history.';
+    } catch (_) {
+      status.textContent = 'Saved, but could not overwrite the clipboard. Copy other text and remove the token from clipboard history.';
+    }
   } catch (error) { status.textContent = error.message; }
 });
 document.getElementById('options').addEventListener('submit', async event => {
