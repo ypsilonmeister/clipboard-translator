@@ -65,6 +65,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
@@ -144,18 +145,13 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: gh release upload $env:TAG (Get-ChildItem macos-dist -File).FullName --clobber
 
-  scoop:
-    needs: release
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: main
+          path: scoop-repo
 
       - name: Update Scoop manifest and open PR
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -166,14 +162,18 @@ jobs:
           sha_asset="Portable-Clipboard-Translator-Windows-x64-${TAG}.zip.sha256"
 
           echo "Downloading $sha_asset from release $TAG..."
-          mkdir -p /tmp/scoop-bump
-          gh release download "$TAG" --pattern "$sha_asset" --dir /tmp/scoop-bump
-          hash=$(awk '{print $1}' "/tmp/scoop-bump/$sha_asset")
+          mkdir -p scoop-download
+          gh release download "$TAG" --pattern "$sha_asset" --dir scoop-download
+          hash=$(awk '{print $1}' "scoop-download/$sha_asset")
+          rm -rf scoop-download
 
           if [[ ! $hash =~ ^[0-9a-fA-F]{64}$ ]]; then
             echo "Invalid SHA-256 hash: $hash" >&2
             exit 1
           fi
+
+          cd scoop-repo
+          git config core.autocrlf false
 
           echo "Updating bucket/clipboard-translator.json to version $version..."
           jq --indent 4 \
