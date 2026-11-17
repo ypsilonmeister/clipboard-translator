@@ -98,9 +98,16 @@ func Run(opts Options) {
 	defer logf.Close()
 	log.SetOutput(io.MultiWriter(logf, ignoreWriteErrors{os.Stdout}))
 	log.SetFlags(log.Ldate | log.Ltime)
-	conf, err := config.Load(dir)
-	if err != nil {
-		fatal("config: ", err)
+	startup := &app{
+		dir:            dir,
+		askYesNo:       platform.AskYesNo,
+		openURL:        platform.OpenTarget,
+		fallbackEditor: platform.StartFallbackEditor,
+		showErr:        platform.ShowError,
+	}
+	conf, ok := startup.loadStartupConfig()
+	if !ok {
+		return
 	}
 
 	// Prevent concurrent application instances.
@@ -124,7 +131,7 @@ func Run(opts Options) {
 	// (macOS only; Windows and Linux stop it with the app).
 	platform.StopLeftoverServer(platform.ChildRecordPath(dir, conf.Port))
 
-	conf, ok := ensureInstalled(dir, conf)
+	conf, ok = ensureInstalled(dir, conf)
 	if !ok {
 		return
 	}

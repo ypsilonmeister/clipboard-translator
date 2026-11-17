@@ -204,14 +204,22 @@ func (a *app) openConfigFile() {
 	if abs, err := filepath.Abs(path); err == nil {
 		path = abs
 	}
-	if err := a.openURL(path); err != nil {
-		if a.fallbackEditor != nil && a.fallbackEditor(path) == nil {
-			log.Printf("opened config.json with fallback editor after opener failed: %v", err)
-			return
-		}
+	if err := a.openConfigEditor(path); err != nil {
 		log.Printf("could not open config.json: %v", err)
 		a.tray.Notify("Clipboard Translator", "Could not open config.json ("+path+"). You can open it manually in any text editor, edit the hotkey, and restart the app.", true)
 	}
+}
+
+// openConfigEditor is shared by the tray and startup recovery, before a tray exists.
+func (a *app) openConfigEditor(path string) error {
+	if err := a.openURL(path); err != nil {
+		if a.fallbackEditor != nil && a.fallbackEditor(path) == nil {
+			log.Printf("opened config.json with fallback editor after opener failed: %v", err)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // switchModelFromMenu switches to models.Catalog[idx] from the tray menu.

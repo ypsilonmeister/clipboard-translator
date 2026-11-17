@@ -468,6 +468,13 @@ Use Settings for everyday configuration. For advanced keys, edit `config.json`
 (all paths are relative to the app folder) and restart the app. The previous
 file is kept as `config.json.bak`.
 
+If the config cannot be loaded at startup, the dialog shows its full path and,
+for JSON syntax errors, the line and column. If `config.json.bak` is valid,
+choose **Start with the previous settings** to restore it and continue. The
+broken file is kept as `config.json.broken` (with a numbered suffix if needed).
+Otherwise, you can choose **Open config.json** to edit it; the app exits so you
+can save your corrections and start it again.
+
 | Key | Meaning |
 | --- | --- |
 | `hotkey` | Modifier(s) + one key: a letter A-Z, a digit 0-9, or a function key F1-F12, e.g. `Ctrl+Alt+E` or `Ctrl+F5` (on macOS `Cmd` / `Command` and `Option` also work) |
