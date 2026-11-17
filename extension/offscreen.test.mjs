@@ -10,7 +10,7 @@ test('a new translation request supersedes an in-flight one without error', asyn
   const translateInFlight = [];
 
   const offscreenSource = (await readFile(new URL('./offscreen.js', import.meta.url), 'utf8'))
-    .replace(/^import .*;\n/, '');
+    .replace(/^import .*;\r?\n/, '');
 
   let translateFn = async (endpoint, token, text, signal) => {
     return new Promise((resolve, reject) => {
@@ -92,4 +92,84 @@ test('a new translation request supersedes an in-flight one without error', asyn
   assert.equal(doneMessages.length, 1);
   assert.equal(doneMessages[0].ok, true);
   assert.equal(doneMessages[0].text, 'translated second');
+});
+
+test('aborted request cannot overwrite replacement translation via fallback copy', async () => {
+  let messageListener = null;
+  const clipboardWrites = [];
+  const offscreenSource = (await readFile(new URL('./offscreen.js', import.meta.url), 'utf8'))
+    .replace(/^import .*;\r?\n/, '');
+
+  let req1RejectClipboard = null;
+  let callCount = 0;
+
+  const sandbox = {
+    chrome: {
+      runtime: {
+        id: 'test-ext-id',
+        onMessage: {
+          addListener: fn => { messageListener = fn; },
+        },
+        sendMessage: async () => {},
+      },
+    },
+    navigator: {
+      clipboard: {
+        writeText: async text => {
+          if (text === 'translated first') {
+            return new Promise((resolve, reject) => {
+              req1RejectClipboard = reject;
+            });
+          }
+          clipboardWrites.push(text);
+        },
+      },
+    },
+    document: {
+      createElement: () => ({value: '', focus() {}, select() {}, remove() {}}),
+      body: {
+        appendChild: el => {
+          clipboardWrites.push(el.value);
+        },
+      },
+      execCommand: cmd => cmd === 'copy',
+    },
+    window: {focus() {}},
+    AbortController,
+    setInterval: () => 123,
+    clearInterval: () => {},
+  };
+
+  vm.runInNewContext(offscreenSource, {
+    ...sandbox,
+    translate: async (endpoint, token, text, signal) => {
+      callCount++;
+      return 'translated ' + (callCount === 1 ? 'first' : 'second');
+    },
+  });
+
+  // 1. Send first request; translate resolves immediately, writeText remains pending
+  messageListener(
+    {target: 'offscreen', type: 'translate', endpoint: 'http://localhost:18121/translate', token: 'tok', text: 'first'},
+    {id: 'test-ext-id'},
+    () => {}
+  );
+  await new Promise(r => setTimeout(r, 10));
+
+  // 2. Send second request; supersedes first, translates and writes clipboard
+  messageListener(
+    {target: 'offscreen', type: 'translate', endpoint: 'http://localhost:18121/translate', token: 'tok', text: 'second'},
+    {id: 'test-ext-id'},
+    () => {}
+  );
+  await new Promise(r => setTimeout(r, 10));
+
+  assert.deepEqual(clipboardWrites, ['translated second']);
+
+  // 3. Now reject first request's clipboard writeText (e.g. Document is not focused)
+  req1RejectClipboard(new Error('Document is not focused'));
+  await new Promise(r => setTimeout(r, 10));
+
+  // First request's fallback copy MUST NOT execute or overwrite the clipboard
+  assert.deepEqual(clipboardWrites, ['translated second']);
 });

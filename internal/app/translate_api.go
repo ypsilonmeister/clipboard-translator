@@ -211,6 +211,9 @@ func (a *app) handleAPITranslation(req settings.Request) {
 		req.Reply <- settings.Reply{Err: errors.New("Translation endpoint is disabled")}
 		return
 	}
+	if a.apiContext != nil && a.apiContext.Err() != nil {
+		a.tickAPIContext()
+	}
 	if a.busy() || a.capturing != nil || a.pendingRead != nil {
 		req.Reply <- settings.Reply{Err: settings.ErrBusy}
 		return

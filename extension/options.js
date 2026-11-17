@@ -37,13 +37,8 @@ test.addEventListener('click', async () => {
     } catch (error) {
       const sample = sampleTextFor(error.message);
       if (sample) {
-        try {
-          result = await translate(verified.endpoint, verified.token, sample);
-        } catch {
-          // Fall through to verify via untranslatable input check below.
-        }
-      }
-      if (!result) {
+        result = await translate(verified.endpoint, verified.token, sample);
+      } else {
         const match = error.message.match(/this hotkey translates ([^.]+)/);
         if (match) {
           await chrome.storage.local.set(verified);

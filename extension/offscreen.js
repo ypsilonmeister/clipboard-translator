@@ -23,7 +23,7 @@ async function run({endpoint, token, text}, controller) {
   try {
     const translated = await translate(endpoint, token, text, controller.signal);
     if (controller.signal.aborted) return;
-    await writeClipboard(translated);
+    await writeClipboard(translated, controller.signal);
     if (controller.signal.aborted) return;
     result = {ok: true, text: translated};
   } catch (error) {
@@ -40,18 +40,21 @@ async function run({endpoint, token, text}, controller) {
   await chrome.runtime.sendMessage({type: 'translation-done', ...result});
 }
 
-async function writeClipboard(text) {
+async function writeClipboard(text, signal) {
+  if (signal?.aborted) return;
   try {
     window.focus();
     await navigator.clipboard.writeText(text);
     return;
   } catch {
+    if (signal?.aborted) return;
     const textarea = document.createElement('textarea');
     textarea.value = text;
     try {
       document.body.appendChild(textarea);
       textarea.focus();
       textarea.select();
+      if (signal?.aborted) return;
       if (!document.execCommand('copy')) throw new Error('Clipboard write failed.');
     } finally {
       textarea.remove();

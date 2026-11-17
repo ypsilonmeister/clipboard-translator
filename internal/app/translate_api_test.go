@@ -470,6 +470,104 @@ func (f apiCancelTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	return nil, req.Context().Err()
 }
 
+type apiSupersedeTransport struct {
+	started1 chan struct{}
+	stopped1 chan struct{}
+	started2 chan struct{}
+}
+
+func (s *apiSupersedeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	select {
+	case <-s.started1:
+		close(s.started2)
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"World"}}],"usage":{"total_tokens":5}}`)),
+			Header:     make(http.Header),
+		}, nil
+	default:
+		close(s.started1)
+		<-req.Context().Done()
+		close(s.stopped1)
+		return nil, req.Context().Err()
+	}
+}
+
+func TestTranslateAPISupersedeBeforeTick(t *testing.T) {
+	a := apiUnitApp(t)
+	a.conf.TranslateAPIEnabled = true
+	tr := &apiSupersedeTransport{
+		started1: make(chan struct{}),
+		stopped1: make(chan struct{}),
+		started2: make(chan struct{}),
+	}
+	old := http.DefaultTransport
+	http.DefaultTransport = tr
+	t.Cleanup(func() { http.DefaultTransport = old })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req1 := settings.NewActionRequest("translate", "", time.Second)
+	req1.Text, req1.Context = "Hello", ctx
+	a.handleSettingsRequest(req1)
+
+	select {
+	case <-tr.started1:
+	case <-time.After(time.Second):
+		t.Fatal("engine did not start for request 1")
+	}
+
+	cancel()
+
+	select {
+	case <-tr.stopped1:
+	case <-time.After(time.Second):
+		t.Fatal("engine did not receive cancellation for request 1")
+	}
+
+	// Replacement arrives before tickAPIContext runs.
+	// It must supersede request 1 and succeed without ErrBusy (503).
+	req2 := settings.NewActionRequest("translate", "", time.Second)
+	req2.Text, req2.Context = "Hello 2", context.Background()
+	a.handleSettingsRequest(req2)
+
+	select {
+	case rep1 := <-req1.Reply:
+		if !errors.Is(rep1.Err, context.Canceled) {
+			t.Fatalf("request 1 reply err=%v, want context.Canceled", rep1.Err)
+		}
+	default:
+		t.Fatal("request 1 reply was not cancelled")
+	}
+
+	select {
+	case <-tr.started2:
+	case <-time.After(time.Second):
+		t.Fatal("engine did not start for request 2")
+	}
+
+	for {
+		select {
+		case res := <-a.results:
+			a.handleResult(res)
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for translation results")
+		}
+		select {
+		case rep2 := <-req2.Reply:
+			if rep2.Err != nil {
+				t.Fatalf("request 2 failed with err=%v, want success", rep2.Err)
+			}
+			if rep2.Translation != "World" {
+				t.Fatalf("request 2 translation=%q, want 'World'", rep2.Translation)
+			}
+			return
+		default:
+		}
+	}
+}
+
 func TestTranslateAPIDisableDuringReload(t *testing.T) {
 	a := apiUnitApp(t)
 	a.conf.TranslateAPIEnabled = true
