@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -98,13 +99,110 @@ func FormatBilingual(source, translated string) string {
 	return strings.TrimRight(source, "\r\n") + "\n" + translated
 }
 
+// Boundary describes how two adjacent sub-chunks of a paragraph were separated
+// before chunking, so recombination can restore separators lost to response
+// trimming without inventing spaces inside hard-split tokens.
+type Boundary uint8
+
+const (
+	// BoundaryNone is a hard rune-budget split with no whitespace on either side.
+	BoundaryNone Boundary = iota
+	// BoundarySpace is an intra-line split where whitespace existed at the source boundary.
+	BoundarySpace
+	// BoundaryNewline is an explicit line break ("\n") between lines.
+	BoundaryNewline
+	// BoundarySentence is a sentence boundary within a single-line paragraph.
+	BoundarySentence
+)
+
+func splitBoundary(left, right string) Boundary {
+	if hasTrailingSpace(left) || hasLeadingSpace(right) {
+		return BoundarySpace
+	}
+	return BoundaryNone
+}
+
+func hasTrailingSpace(s string) bool {
+	if s == "" {
+		return false
+	}
+	r, _ := utf8.DecodeLastRuneInString(s)
+	return unicode.IsSpace(r)
+}
+
+func hasLeadingSpace(s string) bool {
+	if s == "" {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(s)
+	return unicode.IsSpace(r)
+}
+
+func shouldInsertSpace(left, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	last, _ := utf8.DecodeLastRuneInString(left)
+	first, _ := utf8.DecodeRuneInString(right)
+	if unicode.IsSpace(last) || unicode.IsSpace(first) {
+		return false
+	}
+	return !isCJK(last) && !isCJK(first)
+}
+
+// JoinChunks reassembles translated sub-chunks of a paragraph according to the
+// boundary metadata recorded when the paragraph was split. Each boundaries[i-1]
+// describes the boundary before chunks[i]. For BoundarySpace and
+// BoundarySentence, a space is inserted only when both adjacent pieces are
+// non-empty, neither edge already carries whitespace, and neither adjacent
+// rune is CJK. Any extra chunks beyond len(boundaries)+1 are concatenated
+// directly without a separator.
+func JoinChunks(chunks []string, boundaries []Boundary) string {
+	var out strings.Builder
+	for i, chunk := range chunks {
+		if i > 0 && i-1 < len(boundaries) {
+			switch boundaries[i-1] {
+			case BoundaryNewline:
+				out.WriteByte('\n')
+			case BoundarySpace, BoundarySentence:
+				if shouldInsertSpace(out.String(), chunk) {
+					out.WriteByte(' ')
+				}
+			case BoundaryNone:
+			}
+		}
+		out.WriteString(chunk)
+	}
+	return out.String()
+}
+
 // ChunkLines keeps meaningful newlines when a paragraph spans multiple lines.
 // Sentence/rune fallback is still used for prose without line boundaries.
 func ChunkLines(text string, budget int) []string {
+	chunks, _ := ChunkLinesWithBoundaries(text, budget)
+	return chunks
+}
+
+// ChunkLinesWithBoundaries splits a multi-line paragraph into chunks up to
+// budget runes and records the boundary before each chunk after the first.
+func ChunkLinesWithBoundaries(text string, budget int) ([]string, []Boundary) {
 	if budget <= 0 || len([]rune(text)) <= budget {
-		return []string{text}
+		return []string{text}, nil
 	}
-	return chunkCodeBlock(text, budget)
+	return chunkCodeBlockWithBoundaries(text, budget)
+}
+
+// ChunkParagraphWithBoundaries splits a single oversized paragraph into chunks
+// up to maxChunkChars runes and records the boundary before each chunk after
+// the first.
+func ChunkParagraphWithBoundaries(para string, maxChunkChars int) ([]string, []Boundary) {
+	if maxChunkChars <= 0 || len([]rune(para)) <= maxChunkChars {
+		return []string{para}, nil
+	}
+	if isCodeBlock(para) {
+		return chunkCodeBlockWithBoundaries(para, maxChunkChars)
+	}
+	return chunkParagraphWithBoundaries(para, maxChunkChars)
 }
 
 // ChunkText splits long text exceeding maxChunkChars into coherent semantic segments
@@ -190,10 +288,26 @@ func isCodeBlock(para string) bool {
 	return codeLines > len(lines)/2
 }
 
+func appendChunkWithBoundary(chunks *[]string, boundaries *[]Boundary, chunk string, b Boundary) {
+	if len(*chunks) > 0 {
+		*boundaries = append(*boundaries, b)
+	}
+	*chunks = append(*chunks, chunk)
+}
+
 // chunkCodeBlock splits an oversized code block at line boundaries.
 func chunkCodeBlock(para string, maxChunkChars int) []string {
+	chunks, _ := chunkCodeBlockWithBoundaries(para, maxChunkChars)
+	return chunks
+}
+
+// chunkCodeBlockWithBoundaries splits an oversized multi-line block at line
+// boundaries (and rune budget within oversized lines), recording the boundary
+// before each chunk after the first.
+func chunkCodeBlockWithBoundaries(para string, maxChunkChars int) ([]string, []Boundary) {
 	lines := strings.Split(para, "\n")
 	var chunks []string
+	var boundaries []Boundary
 	var cur strings.Builder
 	curLen := 0
 
@@ -212,7 +326,7 @@ func chunkCodeBlock(para string, maxChunkChars int) []string {
 				curLen += needed
 			} else {
 				if cur.Len() > 0 {
-					chunks = append(chunks, cur.String())
+					appendChunkWithBoundary(&chunks, &boundaries, cur.String(), BoundaryNewline)
 					cur.Reset()
 					curLen = 0
 				}
@@ -221,28 +335,61 @@ func chunkCodeBlock(para string, maxChunkChars int) []string {
 			}
 		} else {
 			if cur.Len() > 0 {
-				chunks = append(chunks, cur.String())
+				appendChunkWithBoundary(&chunks, &boundaries, cur.String(), BoundaryNewline)
 				cur.Reset()
 				curLen = 0
 			}
-			chunks = append(chunks, splitRuneBudget(line, maxChunkChars)...)
+			// Keep a trailing '\r' from CRLF attached to the line's final chunk so
+			// it does not become a standalone whitespace-only chunk.
+			content := strings.TrimSuffix(line, "\r")
+			cr := line[len(content):]
+			var parts []string
+			if cr != "" && len([]rune(content)) <= maxChunkChars {
+				parts = []string{line}
+			} else {
+				parts = splitRuneBudget(content, maxChunkChars)
+				if cr != "" && len(parts) > 0 {
+					parts[len(parts)-1] += cr
+				}
+			}
+			for i, part := range parts {
+				b := BoundaryNewline
+				if i > 0 {
+					b = splitBoundary(parts[i-1], part)
+				}
+				appendChunkWithBoundary(&chunks, &boundaries, part, b)
+			}
 		}
 	}
 
 	if cur.Len() > 0 {
-		chunks = append(chunks, cur.String())
+		appendChunkWithBoundary(&chunks, &boundaries, cur.String(), BoundaryNewline)
 	}
-	return chunks
+	return chunks, boundaries
 }
 
 // chunkParagraph splits an oversized paragraph at sentence boundaries.
 func chunkParagraph(para string, maxChunkChars int) []string {
+	chunks, _ := chunkParagraphWithBoundaries(para, maxChunkChars)
+	return chunks
+}
+
+// chunkParagraphWithBoundaries splits an oversized paragraph at sentence
+// boundaries (and rune budget within oversized sentences), recording the
+// boundary before each chunk after the first.
+func chunkParagraphWithBoundaries(para string, maxChunkChars int) ([]string, []Boundary) {
 	sentences := splitSentences(para)
 	if len(sentences) == 0 {
-		return splitRuneBudget(para, maxChunkChars)
+		parts := splitRuneBudget(para, maxChunkChars)
+		var boundaries []Boundary
+		for i := 1; i < len(parts); i++ {
+			boundaries = append(boundaries, splitBoundary(parts[i-1], parts[i]))
+		}
+		return parts, boundaries
 	}
 
 	var chunks []string
+	var boundaries []Boundary
 	var cur strings.Builder
 	curLen := 0
 
@@ -270,7 +417,7 @@ func chunkParagraph(para string, maxChunkChars int) []string {
 				curLen += needed
 			} else {
 				if cur.Len() > 0 {
-					chunks = append(chunks, cur.String())
+					appendChunkWithBoundary(&chunks, &boundaries, cur.String(), BoundarySentence)
 					cur.Reset()
 					curLen = 0
 				}
@@ -280,19 +427,26 @@ func chunkParagraph(para string, maxChunkChars int) []string {
 		} else {
 			// Sentence itself exceeds maxChunkChars: hard split by clause or runes
 			if cur.Len() > 0 {
-				chunks = append(chunks, cur.String())
+				appendChunkWithBoundary(&chunks, &boundaries, cur.String(), BoundarySentence)
 				cur.Reset()
 				curLen = 0
 			}
-			chunks = append(chunks, splitRuneBudget(s, maxChunkChars)...)
+			parts := splitRuneBudget(s, maxChunkChars)
+			for i, part := range parts {
+				b := BoundarySentence
+				if i > 0 {
+					b = splitBoundary(parts[i-1], part)
+				}
+				appendChunkWithBoundary(&chunks, &boundaries, part, b)
+			}
 		}
 	}
 
 	if cur.Len() > 0 {
-		chunks = append(chunks, cur.String())
+		appendChunkWithBoundary(&chunks, &boundaries, cur.String(), BoundarySentence)
 	}
 
-	return chunks
+	return chunks, boundaries
 }
 
 func splitSentences(para string) []string {

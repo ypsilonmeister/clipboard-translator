@@ -70,7 +70,7 @@ type chunkTask struct {
 type paraStructure struct {
 	subCount   int
 	lineBreaks bool
-	separators []string
+	boundaries []textstruct.Boundary
 }
 
 type translationProgress struct {
@@ -150,13 +150,15 @@ func planChunks(promptText string, budget int) ([]chunkTask, []paraStructure) {
 		// the line breaks the user opted to treat as spurious.
 		lineBreaks := strings.Contains(para, "\n")
 		var subChunks []string
+		var boundaries []textstruct.Boundary
 		if lineBreaks {
-			subChunks = textstruct.ChunkLines(para, budget)
+			subChunks, boundaries = textstruct.ChunkLinesWithBoundaries(para, budget)
 		} else {
-			subChunks = textstruct.ChunkText(para, budget)
+			subChunks, boundaries = textstruct.ChunkParagraphWithBoundaries(para, budget)
 		}
 		if len(subChunks) == 0 {
 			subChunks = []string{para}
+			boundaries = nil
 		}
 		for sIdx, sub := range subChunks {
 			tasks = append(tasks, chunkTask{
@@ -165,22 +167,11 @@ func planChunks(promptText string, budget int) ([]chunkTask, []paraStructure) {
 				text:      sub,
 			})
 		}
-		var separators []string
-		if lineBreaks {
-			cursor := 0
-			for i, sub := range subChunks {
-				cursor += len(sub)
-				if i+1 < len(subChunks) {
-					sep := ""
-					if cursor < len(para) && para[cursor] == '\n' {
-						sep = "\n"
-						cursor++
-					}
-					separators = append(separators, sep)
-				}
-			}
+		structure[pIdx] = paraStructure{
+			subCount:   len(subChunks),
+			lineBreaks: lineBreaks,
+			boundaries: boundaries,
 		}
-		structure[pIdx] = paraStructure{subCount: len(subChunks), lineBreaks: lineBreaks, separators: separators}
 	}
 	flush()
 
@@ -193,16 +184,11 @@ func recombineTranslatedParagraphs(results [][]string, structure []paraStructure
 	paras := make([]string, len(results))
 	for i, subs := range results {
 		if structure[i].lineBreaks {
-			var out strings.Builder
-			for j, sub := range subs {
-				if j > 0 {
-					out.WriteString(structure[i].separators[j-1])
-				}
-				out.WriteString(sub)
-			}
-			paras[i] = out.String()
+			paras[i] = textstruct.JoinChunks(subs, structure[i].boundaries)
 		} else if len(subs) == 1 {
 			paras[i] = strings.TrimSpace(subs[0])
+		} else if len(structure[i].boundaries) > 0 {
+			paras[i] = textstruct.JoinChunks(subs, structure[i].boundaries)
 		} else {
 			paras[i] = textstruct.JoinSentences(subs)
 		}
