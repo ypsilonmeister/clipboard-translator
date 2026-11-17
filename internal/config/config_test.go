@@ -32,6 +32,20 @@ func TestLoadConfigPortRange(t *testing.T) {
 	}
 }
 
+func TestLoadTranslateAPIExtensionID(t *testing.T) {
+	for _, id := range []string{"", "abcdefghijklmnopabcdefghijklmnop", strings.Repeat("p", 32)} {
+		c, err := Load(writeConfig(t, `{"translate_api_extension_id":"`+id+`"}`))
+		if err != nil || c.TranslateAPIExtensionID != id {
+			t.Fatalf("valid extension ID rejected: %v", err)
+		}
+	}
+	for _, id := range []string{"abc", strings.Repeat("a", 33), strings.Repeat("q", 32), strings.Repeat("A", 32), "chrome-extension://abcdefghijklmnopabcdefghijklmnop", " abcdefghijklmnopabcdefghijklmnop"} {
+		if err := loadConfig2(t, `{"translate_api_extension_id":"`+id+`"}`); err == nil || !strings.Contains(err.Error(), "translate_api_extension_id") {
+			t.Fatalf("invalid extension ID accepted: %v", err)
+		}
+	}
+}
+
 func loadConfig2(t *testing.T, content string) error {
 	t.Helper()
 	_, err := Load(writeConfig(t, content))

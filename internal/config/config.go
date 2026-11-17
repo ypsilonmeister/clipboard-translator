@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/hotkeyspec"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
@@ -16,6 +17,10 @@ import (
 )
 
 type Config struct {
+	TranslateAPIEnabled     bool   `json:"translate_api_enabled"`
+	TranslateAPIToken       string `json:"translate_api_token"`
+	TranslateAPIExtensionID string `json:"translate_api_extension_id"`
+
 	Hotkey                string `json:"hotkey"`
 	Port                  int    `json:"port"`
 	PollMS                int    `json:"poll_ms"`
@@ -245,16 +250,53 @@ func ValidateMaxChars(n int) error {
 }
 
 func Load(dir string) (Config, error) {
-	c := Default()
-	b, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	c, err := LoadFile(filepath.Join(dir, "config.json"))
 	if errors.Is(err, os.ErrNotExist) {
-		return c, nil
+		return Default(), nil
 	}
+	return c, err
+}
+
+// LoadFile loads and validates a specific config file. Unlike Load, a missing
+// file is an error, so a nonexistent backup cannot be mistaken for defaults.
+func LoadFile(path string) (c Config, err error) {
+	c = Default()
+	path, err = filepath.Abs(path)
 	if err != nil {
 		return c, err
 	}
-	if err := json.Unmarshal(bytes.TrimPrefix(b, utf8BOM), &c); err != nil {
+	var b []byte
+	defer func() {
+		if err == nil {
+			return
+		}
+		var syntax *json.SyntaxError
+		if errors.As(err, &syntax) {
+			// Offset is one-based and counts bytes in the BOM-stripped JSON.
+			offset := syntax.Offset - 1
+			if offset < 0 {
+				offset = 0
+			}
+			prefix := b[:offset]
+			line := bytes.Count(prefix, []byte("\n")) + 1
+			column := utf8.RuneCount(prefix[bytes.LastIndexByte(prefix, '\n')+1:]) + 1
+			err = fmt.Errorf("%s: line %d, column %d: %w", path, line, column, err)
+		} else {
+			err = fmt.Errorf("%s: %w", path, err)
+		}
+	}()
+	b, err = os.ReadFile(path)
+	if err != nil {
 		return c, err
+	}
+	b = bytes.TrimPrefix(b, utf8BOM)
+	if err := json.Unmarshal(b, &c); err != nil {
+		return c, err
+	}
+	if c.TranslateAPIExtensionID != "" {
+		if len(c.TranslateAPIExtensionID) != 32 || strings.Trim(c.TranslateAPIExtensionID, "abcdefghijklmnop") != "" {
+			return c, errors.New("translate_api_extension_id must be a 32-character Chrome extension ID (a-p), or empty")
+		}
 	}
 	if err := c.ResolveProfiles(c.Profiles != nil); err != nil {
 		return c, err
@@ -273,19 +315,19 @@ func Load(dir string) (Config, error) {
 		return c, err
 	}
 	if c.MaxTokens < 1 || c.MaxTokens > 32768 {
-		return c, errors.New("max_tokens out of range")
+		return c, errors.New("max_tokens out of range (1..32768)")
 	}
 	if c.ContextTokens < 512 || c.ContextTokens > 32768 {
-		return c, errors.New("context_tokens out of range")
+		return c, errors.New("context_tokens out of range (512..32768)")
 	}
 	if c.StartupTimeoutSec < 10 || c.StartupTimeoutSec > 900 {
-		return c, errors.New("startup_timeout_seconds out of range")
+		return c, errors.New("startup_timeout_seconds out of range (10..900)")
 	}
 	if c.TranslationTimeoutSec < 10 || c.TranslationTimeoutSec > 1800 {
-		return c, errors.New("translation_timeout_seconds out of range")
+		return c, errors.New("translation_timeout_seconds out of range (10..1800)")
 	}
 	if c.GPULayers < 0 || c.GPULayers > 10000 {
-		return c, errors.New("gpu_layers out of range")
+		return c, errors.New("gpu_layers out of range (0..10000)")
 	}
 	return c, nil
 }

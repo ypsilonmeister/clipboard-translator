@@ -10,9 +10,15 @@ import "C"
 import (
 	"errors"
 	"strings"
+	"unsafe"
 )
 
-type linuxClipboard struct{}
+type linuxClipboard struct{ portalCapabilitiesMissing bool }
+
+func (c *linuxClipboard) DesktopStatus() DesktopStatus {
+	return DesktopStatus{Crostini: desktopCrostini, PortalCapabilitiesMissing: c.portalCapabilitiesMissing}
+}
+func (*linuxClipboard) RetryDesktop() {}
 
 func NewClipboard() (Clipboard, error) {
 	if linuxWayland {
@@ -24,7 +30,7 @@ func NewClipboard() (Clipboard, error) {
 	if C.ct_init() == 0 {
 		return nil, errors.New("X11 clipboard is unavailable")
 	}
-	return &linuxClipboard{}, nil
+	return &linuxClipboard{portalCapabilitiesMissing: linuxPortalCapabilitiesMissing}, nil
 }
 func (*linuxClipboard) Read() (string, error) { return readX11Text(false), nil }
 func (*linuxClipboard) Write(text string) error {
@@ -52,3 +58,30 @@ func (c *linuxClipboard) ReplaceIfUnchanged(expected, translated string) (bool, 
 	}
 	return true, nil
 }
+
+// Manual mode uses only the focused GTK client's regular clipboard access.
+type manualGTKClipboard struct{}
+
+func (*manualGTKClipboard) Read() (string, error) {
+	var complete C.int
+	p := C.ct_manual_read(&complete)
+	defer C.ct_free(unsafe.Pointer(p))
+	return manualClipboardReadResult(complete != 0, p != nil, C.GoString(p))
+}
+func (*manualGTKClipboard) Write(text string) error {
+	if strings.IndexByte(text, 0) >= 0 {
+		return errors.New("clipboard text contains a NUL byte")
+	}
+	withCString(text, func(p *C.char) { C.ct_manual_write(p) })
+	return nil
+}
+func (*manualGTKClipboard) Close() error { return nil }
+func (c *manualGTKClipboard) ReplaceIfUnchanged(old, text string) (bool, error) {
+	current, err := c.Read()
+	if err != nil || !SameClipboardText(current, old) {
+		return false, err
+	}
+	return true, c.Write(text)
+}
+
+func (*manualGTKClipboard) CancelPendingRead() { C.ct_manual_cancel_read() }

@@ -15,8 +15,16 @@ import (
 // always on the Settings page, and can be read again from the tray menu. It
 // changes no setting; in particular it never turns on auto-paste.
 
-// guideSteps are the three steps with the real hotkey, or nil when none works.
+// guideSteps uses the manual ChromeOS flow or the active desktop hotkey.
 func (a *app) guideSteps() []string {
+	if a.chromeOSProfile() {
+		return []string{
+			"ChromeOS Settings → Developers → Linux → Port forwarding: add TCP " + translateAPIPort + ".",
+			"Install/load the Chrome extension.",
+			"In the app menu, use \"Copy connection info\", and paste it into the extension options.",
+			"Select text in Chrome → right-click → \"Translate with Clipboard Translator\" → paste with Ctrl+V.",
+		}
+	}
 	if s := a.desktopStatus(); s.Wayland && !s.Ready {
 		return nil
 	}
@@ -49,6 +57,11 @@ func (a *app) quickstartGuide() settings.QuickstartGuide {
 			return g
 		}
 		g.Intro = "The hotkey " + a.conf.Hotkey + " is not active (another program may be using it), so translating by hotkey does not work yet. Choose another hotkey under Hotkeys below and click Save."
+		return g
+	}
+	if a.chromeOSProfile() {
+		g.Active = true
+		g.Intro = "Translate your first text in four steps:"
 		return g
 	}
 	g.Active = true

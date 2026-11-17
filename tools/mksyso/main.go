@@ -38,18 +38,45 @@ type resource struct {
 func main() {
 	version := flag.String("version", "0.0.0", "product version, e.g. 0.4.1 (a leading v and a -suffix are ignored for the numeric part)")
 	iconPath := flag.String("icon", "assets/icon.ico", "multi-size .ico file")
+	iconBusyPath := flag.String("icon-busy", "assets/icon-busy.ico", "multi-size busy state .ico file")
+	iconReadyPath := flag.String("icon-ready", "assets/icon-ready.ico", "multi-size ready state .ico file")
+	iconProblemPath := flag.String("icon-problem", "assets/icon-problem.ico", "multi-size problem state .ico file")
 	manifestPath := flag.String("manifest", "assets/app.manifest", "application manifest (DPI awareness, execution level)")
 	out := flag.String("o", "resource_windows_amd64.syso", "output object file")
 	flag.Parse()
 
-	ico, err := os.ReadFile(*iconPath)
-	if err != nil {
-		log.Fatal(err)
+	var res []resource
+	nextIconID := uint32(1)
+
+	iconGroups := []struct {
+		id   uint32
+		path string
+	}{
+		{1, *iconPath},
+		{2, *iconBusyPath},
+		{3, *iconReadyPath},
+		{4, *iconProblemPath},
 	}
-	res, err := iconResources(ico)
-	if err != nil {
-		log.Fatal(err)
+
+	for _, g := range iconGroups {
+		if g.path == "" {
+			continue
+		}
+		ico, err := os.ReadFile(g.path)
+		if err != nil {
+			if g.id == 1 {
+				log.Fatal(err)
+			}
+			continue
+		}
+		groupRes, next, err := iconResources(ico, g.id, nextIconID)
+		if err != nil {
+			log.Fatal(err)
+		}
+		nextIconID = next
+		res = append(res, groupRes...)
 	}
+
 	vi, err := versionResource(strings.TrimPrefix(*version, "v"))
 	if err != nil {
 		log.Fatal(err)
@@ -66,30 +93,33 @@ func main() {
 }
 
 // iconResources splits an .ico into RT_ICON images plus one RT_GROUP_ICON that
-// lists them. The group has ID 1 so it is the executable's icon in Explorer;
-// the tray code loads the same ID.
-func iconResources(ico []byte) ([]resource, error) {
+// lists them. Group ID 1 is the executable's icon in Explorer and normal tray icon;
+// group IDs 2, 3, 4 are the state icons (busy, ready, problem).
+func iconResources(ico []byte, groupID, startIconID uint32) ([]resource, uint32, error) {
 	le := binary.LittleEndian
 	if len(ico) < 6 || le.Uint16(ico[0:]) != 0 || le.Uint16(ico[2:]) != 1 {
-		return nil, fmt.Errorf("not an .ico file")
+		return nil, startIconID, fmt.Errorf("not an .ico file")
 	}
 	n := int(le.Uint16(ico[4:]))
 	var res []resource
 	grp := new(bytes.Buffer)
 	binary.Write(grp, le, [3]uint16{0, 1, uint16(n)})
+	nextID := startIconID
 	for i := 0; i < n; i++ {
 		e := ico[6+16*i : 6+16*(i+1)]
 		size, off := int(le.Uint32(e[8:])), int(le.Uint32(e[12:]))
 		if off+size > len(ico) {
-			return nil, fmt.Errorf("icon entry %d is out of range", i)
+			return nil, startIconID, fmt.Errorf("icon entry %d is out of range", i)
 		}
-		id := uint32(i + 1)
+		id := nextID
+		nextID++
 		res = append(res, resource{rtIcon, id, ico[off : off+size]})
 		// GRPICONDIRENTRY: same as the file entry, but the last field is the RT_ICON id.
 		grp.Write(e[:12])
 		binary.Write(grp, le, uint16(id))
 	}
-	return append(res, resource{rtGroupIcon, 1, grp.Bytes()}), nil
+	res = append(res, resource{rtGroupIcon, groupID, grp.Bytes()})
+	return res, nextID, nil
 }
 
 func versionResource(v string) (resource, error) {

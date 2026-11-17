@@ -28,7 +28,12 @@ see [Licenses](#licenses) before using the app for business.
 ## Which download?
 
 Every [release](https://github.com/ypsilonmeister/clipboard-translator/releases) has one file per platform
-(the macOS and Linux files have a `.sha256` file next to them; the Windows zip's SHA-256 is in the release notes):
+with a `.sha256` checksum file next to it (the Windows zip's SHA-256 is also in the release notes).
+Build provenance is attested with GitHub Actions; you can verify any release archive using the GitHub CLI:
+
+```bash
+gh attestation verify <file> --repo ypsilonmeister/clipboard-translator
+```
 
 | Your computer | File | Instructions |
 | --- | --- | --- |
@@ -402,6 +407,30 @@ it does not grant desktop consent or test a live Wayland session. Translation qu
 the full packaged-app Wayland workflow, actual desktop tray integration and GPU drivers
 still need manual testing.
 
+## ChromeOS (experimental, Crostini)
+
+Install and set up the Linux build in the ChromeOS Linux environment first. Translation stays in the container; the browser extension supplies a host-side trigger.
+
+1. Open the app's **Settings...**, enable **ChromeOS / local translation endpoint**, and use **Copy token**. The endpoint is off by default. Its per-install token is generated locally and saved as `translate_api_token` in `config.json`; do not share it. The switch (`translate_api_enabled`) takes effect immediately and survives restarts.
+2. In ChromeOS **Settings → Developers → Linux development environment → Port forwarding**, add TCP port **18121** and turn forwarding on. Use `http://localhost:18121/translate` in the extension (the primary route via port forwarding; `http://penguin.linux.test:18121/translate` is also permitted in the extension allowlist, but direct container connections may fail from Chrome).
+3. Copy this repository's `extension/` directory into a location Chrome can select (for example, My files). Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select that directory. There is no build step.
+4. On Linux inside Crostini, when GlobalShortcuts, RemoteDesktop keyboard support, or Clipboard portals are confirmed missing, the app menu offers **Chrome extension endpoint**, **Copy connection info**, and **Regenerate token** on both X11 and Wayland. The ChromeOS quick start and Settings presentation use the same backend capability status. Crostini is identified by `/opt/google/cros-containers`, `SOMMELIER_VERSION`, or `SOMMELIER_VM_IDENTIFIER`; ordinary Linux desktops keep their usual profile. An inconclusive X11 probe (including a two-second timeout) logs a warning and keeps the normal profile. In this profile, Settings replaces Hotkeys with Languages for the first profile, used by Translate clipboard and the endpoint when no profile is specified. Only that profile’s translation mode and languages change when saved; key bindings and other profiles are preserved. The control window’s ready text omits the hotkey. X11 hotkeys and clipboard behavior remain unchanged. Copying connection info while translation is busy is declined; after copying, the clipboard contains the token in clear text. Paste that JSON into **Paste connection info** in extension **Options** and click **Apply connection info**, then **Test connection**. After a successful apply, the extension clears the pasted JSON and overwrites the current clipboard with a confirmation message. If overwriting fails, it reports that the settings were saved and asks you to copy other text. This cannot guarantee removal from ChromeOS or other clipboard history; remove any saved token entry yourself. Manual endpoint/token entry with **Save** remains available. The test translates “Hello” locally without changing the clipboard.
+5. Select English or Japanese text in Chrome, right-click, and choose **Translate with Clipboard Translator**. A notification confirms the result with a short preview. Paste with **Ctrl+V**. English translates to Japanese and Japanese to English with the default profile.
+
+The extension uses the first configured profile, including direction, newline cleanup and replace/bilingual output. It never monitors the clipboard or sends text anywhere except the configured local endpoint. Options are stored locally in Chrome, without sync. The endpoint uses the same local model, reload and chunking path as the hotkey; it returns busy while another translation runs. It does not write the Linux clipboard; the extension writes the host clipboard after success.
+
+When required Wayland portals are missing, the Linux app keeps a control window open in **manual mode** and explains that the hotkey workflow is unavailable. Copy text explicitly, focus the app's control window, choose **Open menu → Translate clipboard**, wait for completion, then paste. This action translates the current CLIPBOARD with the first profile, protects newer clipboard copies, and never automatically pastes. Keep the control window focused until completion so Wayland permits clipboard access. Portals that are available continue to use the usual workflow.
+
+**Limitation:** ChromeOS deliberately isolates input between host applications and the Linux container. A Linux hotkey cannot trigger translation while a ChromeOS host app is focused. This extension handles selected text in Chrome; host-native applications require the manual copy → translate → paste workflow. Loading the extension and both language directions on a real Chromebook still need in-Chrome acceptance testing.
+
+The optional endpoint is **Linux-only** and uses **plain HTTP**, intended for the ChromeOS/Linux environment on **trusted networks**. It listens on IPv4 port **18121**: loopback only on ordinary Linux, and loopback plus the primary container IPv4 address under Crostini so ChromeOS forwarding can reach it. If that address cannot be resolved, it logs the reason, falls back to loopback only, and warns; turn the endpoint off and on again once the network is up. It never binds the wildcard address; the inference engine and Settings page also remain loopback-only. Under Crostini the container address is reachable subject to host networking/firewall rules. Every request requires `X-Clipboard-Translator-Token`; keep forwarding limited to your machine. No CORS access is granted to web pages. Disable the switch to close the listener. To rotate a disclosed token, click **Regenerate token** in Settings or the ChromeOS tray menu. It saves a new token through the normal config save path and invalidates the old token immediately without restarting the listener. Settings shows the new token beside the endpoint URL; the tray action copies the new connection-info JSON. Update extension Options afterwards. Requests already authenticated before rotation may finish.
+
+Optionally set `translate_api_extension_id` in `config.json` to the 32-character extension ID shown in `chrome://extensions` (lowercase a-p), then restart the app. When set, only the exact `chrome-extension://<ID>` Origin is accepted, including rejection of requests without Origin. When omitted or empty, any valid 32-character extension origin is allowed for development, and clients without Origin remain supported. Origin pinning supplements the token; it does not authenticate native clients, which can forge HTTP headers.
+
+For other local clients, POST `/translate` with JSON `{"text":"Hello","profile":"0"}` and the token header. `profile` is optional (defaults to the first profile); its ID is the configured hotkey, such as `Ctrl+Alt+E`, or a zero-based index string. Success returns `{"translation":"…"}`; missing or wrong tokens return HTTP 401. The API exposes no model downloads, settings, or external translation proxy.
+
+See [extension details](extension/README.md) for permissions and browser requirements.
+
 ## Using it
 
 The app lives in the **system tray** (notification area; on Windows 11 it may be
@@ -410,8 +439,7 @@ gives a three-step quick start with your actual hotkey (select text, press the h
 paste with `Ctrl+V`, or `Cmd+V` on macOS). It is shown once; later launches stay quiet.
 Read it again from **Quick start** in the tray menu or the card at the top of the Settings
 page. If the hotkey could not be registered, the balloon sends you to Settings to choose
-another one instead. The guide changes no setting (auto-paste stays off). The tooltip shows
-the state and, while loading or translating, the elapsed seconds.
+another one instead. The guide changes no setting (auto-paste stays off). The tray icon shows the current state (normal when idle, busy while copying the selection and translating, ready for a few seconds once the translation reaches the clipboard, and problem after a failure or a skip, until the next press or a short timeout). The tooltip shows the state and, while loading or translating, the elapsed seconds.
 
 Select text in your language pair (Japanese or English unless you changed it, see
 `languages` below) and press `Ctrl+Alt+E`. When the translation is
@@ -451,10 +479,11 @@ If the translation server (`llama-server`) stops unexpectedly the app restarts i
 (1 s, 2 s, 4 s ... apart) and says so; after 3 restarts within 10 minutes it gives
 up and quits with a message. Startup errors are shown in a message box and
 written to `translator.log`.
+At startup, a `translator.log` larger than 1 MiB is moved to `translator.log.1`, replacing the previous rotated log.
 
 ## Privacy and network use
 
-- Translation happens on your PC. The server listens on `127.0.0.1` only, so
+- Translation happens on your PC. The inference server listens on `127.0.0.1` only, so
   other computers cannot reach it. Programs on your PC, including web pages in
   your browser, can reach `127.0.0.1`, so the app also gives the server a random
   key each time it starts it, and the server refuses translation and other API
@@ -465,7 +494,9 @@ written to `translator.log`.
   download (`Setup.cmd`, `setup.ps1`, the first-run offer, the install script;
   both model and llama.cpp versions are pinned and verified against hard-coded
   SHA-256 hashes) and *Check for updates* / *Update*. There is no telemetry and no
-  background check.
+  background check. Setup prints its progress (percent and MB, one line a second). If the
+  connection drops or delivers nothing for 60 seconds it retries up to three times, and if it
+  still fails, running setup again continues from the partial file instead of starting over.
 - *Settings...* opens a page served by the app itself on `127.0.0.1` (a free port,
   only while the page is open; it closes a few minutes after the last request or
   with *Close this page*). It is protected by a random token in its address and
@@ -474,7 +505,9 @@ written to `translator.log`.
   `huggingface.co`, only when you click *Download*, only the pinned revision of
   that model, and the file is used only if its SHA-256 matches the pinned value.
   A download goes on after the page is closed and can be cancelled on the page;
-  a cancelled or failed download keeps its partial file and continues next time.
+  a cancelled or failed download keeps its partial file and continues next time. A
+  connection that delivers nothing for 60 seconds counts as failed.
+- The optional ChromeOS translation endpoint is off by default and is Linux-only, binds loopback (plus the container address under Crostini, falling back to loopback only with a warning if unresolved) on IPv4 port 18121 over plain HTTP when enabled, and requires a token; use it in the ChromeOS/Linux environment on trusted networks; see the ChromeOS section for its bind address and forwarding scope. It makes no outbound network calls.
 - Logs record errors but not the text you translate. Translation history lives in
   memory only and is gone when the app quits.
 
@@ -483,6 +516,13 @@ written to `translator.log`.
 Use Settings for everyday configuration. For advanced keys, edit `config.json`
 (all paths are relative to the app folder) and restart the app. The previous
 file is kept as `config.json.bak`.
+
+If the config cannot be loaded at startup, the dialog shows its full path and,
+for JSON syntax errors, the line and column. If `config.json.bak` is valid,
+choose **Start with the previous settings** to restore it and continue. The
+broken file is kept as `config.json.broken` (with a numbered suffix if needed).
+Otherwise, you can choose **Open config.json** to edit it; the app exits so you
+can save your corrections and start it again.
 
 | Key | Meaning |
 | --- | --- |
@@ -494,6 +534,7 @@ file is kept as `config.json.bak`.
 | `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "bilingual"}]`. A profile has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each), and an optional `output` format: `"replace"` (default; key absent = replace) puts only the translation on the clipboard; `"bilingual"` puts the original text, a newline, and then the translation (`<source>\n<translated>`, with trailing CR/LF characters trimmed from the source before adding the newline). Translation history keeps Source and Translated separately; "Recent translations" lets you copy the original, the translation, or both. An optional `input` says where the text comes from: `"selection"` (default) copies the current selection first (Ctrl+C, waiting up to 2 s on Windows for a slow page); `"clipboard"` translates what is already on the clipboard, sends no Ctrl+C, skips the selection-copy wait and never auto-pastes (Wayland clipboard transfer is still asynchronous), which suits a page that copies slowly (copy yourself, then press the hotkey). Takes the place of `hotkey` and `languages`; Settings edits each profile. Up to 8 hotkeys on Windows and Linux; on macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
 | `port` | Local llama-server port, 1024-65534 (the app also uses `port + 1` as an instance lock) |
 | `max_chars` | Longer text is skipped |
+| `translation_timeout_seconds` | How long one request to the local model may take, 10-1800 (default `180`). Text above about 1,200 characters is translated in several chunks (paragraphs are kept together where they fit; the chunks are smaller for Tamil, Malayalam, Khmer and Burmese, whose translations need many more tokens, and a chunk whose translation is cut off at `max_tokens` is split and translated again), and the limit applies to each chunk, not to the whole translation. If a translation times out, raise this or select less text. |
 | `idle_unload_minutes` | Unload the model after this many idle minutes (0..1440; default `0` = never). Also editable on the Settings page. |
 | `gpu_layers` | Layers offloaded to GPU (`0` = CPU only) |
 | `model_file` | The model, e.g. `models/plamo-3-translate-8b-Q4_K_M.gguf`; `setup.ps1 -Model` sets it (see *Choosing the model size*) |
@@ -533,12 +574,23 @@ Everything else stays in `config.json`.
 
 ## Limitations
 
-- Some apps block the synthetic Ctrl+C used to read the selection.
+- Some apps block the synthetic Ctrl+C used to read the selection. A window that
+  runs as administrator (an elevated terminal, Task Manager, an installer) always
+  does: Windows drops keystrokes sent from a normal program to it, so the
+  selection cannot be copied. Press Ctrl+C yourself, then the hotkey; the app
+  notices the administrator window and translates the clipboard text at once,
+  without the 2 s wait. When no selection was copied for any other reason, the
+  text already on the clipboard is translated, the tray tooltip says so, and a
+  notification explains it once per run.
 - Reading the selection changes the clipboard. The translation only replaces it
   if the clipboard text is still the text that was captured.
-- One language pair per hotkey; the two languages must use different scripts (en ↔ de, or Simplified ↔ Traditional Chinese, cannot be told apart from the text; give each its own `target` profile instead). With Japanese and Chinese in one pair, text with only Han characters is read as Chinese; kana makes it Japanese. URLs are not translated. When text cannot be translated (empty selection, URL-only, wrong language pair), the tray tooltip shows why; text over the character limit also shows a notification.
+- One language pair per hotkey; the two languages must use different scripts (en ↔ de, or Simplified ↔ Traditional Chinese, cannot be told apart from the text; give each its own `target` profile instead). With Japanese and Chinese in one pair, text with only Han characters is read as Chinese; kana makes it Japanese. When a text mixes Latin with the other script, the other language wins, unless the text is clearly Latin with a few quoted words or names (a sentence of at least 5 lowercase Latin words, with 1.5 times as many Latin words as the other script's characters, or words for scripts that put spaces between words): English with one Japanese name stays English. Product names, lists and commands inside the other language do not count as such a sentence, and neither does Japanese with spaces around its particles (`git push origin main する`). Text whose first or last word is in the other script is also read as that language. In doubt, the other language wins. URLs are not translated. When text cannot be translated (empty selection, URL-only, wrong language pair), the tray tooltip shows why; text over the character limit also shows a notification.
 - A GPU backend can fail (too little VRAM, old driver, missing DLLs); the app
-  then falls back to the CPU build. See `server.log` and `translator.log`.
+  then falls back to the CPU build, shows one tray notification, and lists the
+  engine in use in the tray menu. The CPU build then stays in use until the next
+  app start, or until you choose the GPU engine again (or change the model) in
+  Settings; **Keep using CPU** there makes it permanent. See `server.log` and
+  `translator.log`.
 - The exe is not code-signed, so a zip downloaded in a browser may trigger a
   SmartScreen warning (files fetched by the install script do not).
 

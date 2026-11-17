@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
@@ -177,6 +178,51 @@ func TestSecondProfileWorksWhenFirstHotkeyIsTaken(t *testing.T) {
 	}
 	if strings.Contains(a.readyTip, "no hotkey") || !strings.Contains(a.readyTip, "Ctrl+Alt+K") {
 		t.Errorf("the tooltip must show the working hotkey: %q", a.readyTip)
+	}
+}
+
+func TestReadyTipSummarizesLongHotkeyList(t *testing.T) {
+	var profiles []config.Profile
+	for i := 0; i < 8; i++ {
+		profiles = append(profiles, config.Profile{Hotkey: "Ctrl+Alt+F" + strconv.Itoa(i+1), Languages: []string{"ja", "en"}})
+	}
+	a := profilesApp(t, profiles...)
+	a.registerStartupHotkey()
+	want := "Clipboard Translator - ready (8 hotkeys)"
+	if n := len(utf16.Encode([]rune(a.readyTip))); n > 127 || a.readyTip != want {
+		t.Fatalf("tip = %q (%d UTF-16 units), want %q", a.readyTip, n, want)
+	}
+
+	// Failed registrations must not inflate the count.
+	a.hotkey = noHotkey{}
+	a.extras[0].hk = nil
+	a.updateReadyTip()
+	if a.readyTip != "Clipboard Translator - ready (6 hotkeys)" {
+		t.Fatal(a.readyTip)
+	}
+	a.extras[1].hk = describedHotkey{} // no actual binding yet
+	a.updateReadyTip()
+	if a.readyTip != "Clipboard Translator - ready (5 hotkeys)" {
+		t.Fatal(a.readyTip)
+	}
+}
+
+func TestReadyTipUTF16Limit(t *testing.T) {
+	a := profilesApp(t, config.Profile{Hotkey: "Ctrl+Alt+E", Languages: []string{"ja", "en"}})
+	const prefix = "Clipboard Translator - ready ("
+	// Non-BMP characters consume two UTF-16 units, even though each is one rune.
+	atLimit := strings.Repeat("😀", (127-len(prefix)-1)/2)
+	atLimit += strings.Repeat("a", 127-len(prefix)-1-2*len([]rune(atLimit)))
+	for _, label := range []string{"Ctrl+Alt+E", atLimit, atLimit + "a"} {
+		a.hotkey = describedHotkey{actual: label}
+		a.updateReadyTip()
+		want := prefix + label + ")"
+		if len(utf16.Encode([]rune(want))) > 127 {
+			want = prefix + "1 hotkey)"
+		}
+		if n := len(utf16.Encode([]rune(a.readyTip))); n > 127 || a.readyTip != want {
+			t.Fatalf("tip = %q (%d UTF-16 units), want %q", a.readyTip, n, want)
+		}
 	}
 }
 

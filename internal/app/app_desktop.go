@@ -59,9 +59,12 @@ func (a *app) tickClipboard() {
 				return
 			}
 			err = errors.New("clipboard read timed out")
+			if a.desktopStatus().Manual {
+				err = errors.New("clipboard read timed out; focus the app control window and try Translate clipboard again")
+			}
 		}
 		a.pendingRead = nil
-		a.translateCaptured(p.profile, p.win, text, false, err)
+		a.translateCaptured(p.profile, p.win, text, false, platform.FallbackNone, err)
 	}
 	if p := a.pendingResult; p != nil {
 		if p.generation != a.generation {
@@ -94,4 +97,33 @@ func (a *app) finishHistoryCopy(text string) {
 		return
 	}
 	a.tray.Notify("Clipboard Translator", "Copied. Paste with "+platform.PasteShortcut()+".", false)
+}
+
+func (a *app) startClipboardTranslation() {
+	a.abortTranslation()
+	a.trayStateResetAt = time.Time{}
+	a.setTrayState(platform.TrayBusy)
+	a.resetIdleTimer()
+	p := a.conf.Profiles[0]
+	p.Input = config.InputClipboard
+	a.presentManualControl()
+	source, err := a.cb.Read()
+	if errors.Is(err, platform.ErrClipboardPending) {
+		a.pendingRead = &pendingClipboardRead{profile: p, deadline: a.timeNow().Add(8 * time.Second)}
+		return
+	}
+	a.translateCaptured(p, 0, source, false, platform.FallbackNone, err)
+}
+
+func (a *app) chromeOSProfile() bool {
+	s := a.desktopStatus()
+	return s.Crostini && s.PortalCapabilitiesMissing
+}
+
+func (a *app) presentManualControl() {
+	if a.desktopStatus().Manual {
+		if window, ok := a.cb.(interface{ PresentControl() }); ok {
+			window.PresentControl()
+		}
+	}
 }

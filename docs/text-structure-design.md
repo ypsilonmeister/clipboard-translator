@@ -115,6 +115,7 @@ When text length exceeds the safety budget (determined by profile `max_chars` or
 ```
 
 1. **Paragraph-level chunks (Primary):** Split on blank-line boundaries (`\n\s*\n`). Consecutive small paragraphs are grouped together up to the target chunk size.
+   - *Group fallback (Issue #173):* A group of paragraphs is sent as one request with blank lines between them, and the translation is split back at its blank lines. If the number of paragraphs that comes back differs (the model merged or split paragraphs), that group alone is translated again, one request per paragraph. The one-to-one paragraph mapping of §3.2 therefore never depends on the model keeping the separators.
 2. **Sentence-level fallback (Secondary):** If an individual paragraph exceeds the chunk size, split it at sentence boundaries:
    - Latin: `[.!?]\s+` followed by an uppercase letter.
    - Japanese: `[。！？]` followed by non-quote character.
@@ -131,6 +132,7 @@ Multi-chunk translation must strictly uphold the app's fundamental contract of *
   3. **Leave the system clipboard untouched:** The user's clipboard remains exactly as it was before the hotkey was pressed.
   4. **In-Memory History:** Do not record incomplete or fragmented translations in the history tray menu. The failed request is discarded (or recorded with its original text and an error indicator).
   5. **User Feedback:** The tray icon tooltip or balloon notification clearly indicates the failure (e.g. `Translation failed at chunk 2 of 4`).
+- **Timeout semantics (Issue #173):** `translation_timeout_seconds` limits **each request** to `llama-server`, not the whole job. A long text on a slow engine is several requests that each finish in time, so a total limit would fail texts whose chunks all succeed. The job as a whole ends when it finishes, fails, or is cancelled or superseded by the user. A request that runs into the limit fails the job (all-or-nothing as above) with a message that names `translation_timeout_seconds`.
 
 ### 3.2 Bilingual Output Recombination (バイリンガル出力の結合形式)
 When `output: "bilingual"` is configured in the profile:
@@ -170,7 +172,13 @@ Following the pattern in [`docs/package-split-design.md`](package-split-design.m
 
   Context budget constraint: $\text{prompt\_template} + \text{source\_tokens} + \text{target\_tokens} \le \text{context\_tokens} (4096)$.  
   With `max_tokens` capped at 2048, generated target tokens can consume up to 2048 tokens. This leaves $\sim 2000$ tokens for source text and prompt overhead.  
-  Because PLaMo 3 Translate handles 53 languages, token expansion ratios vary (English $\to$ Japanese or Thai can require 1.5–2.0x tokens per character). A 1,200-character source chunk corresponds to $\sim 300\text{--}600$ input tokens. Even with a 2x expansion ($\sim 600\text{--}1200$ target tokens), total context stays comfortably below 1,900 tokens. This leaves an enormous safety margin of $> 2000$ tokens below the 4096 context ceiling, eliminating any possibility of `ErrTruncated` while preserving complete paragraphs.
+  Because PLaMo 3 Translate handles 53 languages, token expansion ratios vary (English $\to$ Japanese or Thai can require 1.5–2.0x tokens per character). A 1,200-character source chunk corresponds to $\sim 300\text{--}600$ input tokens. Even with a 2x expansion ($\sim 600\text{--}1200$ target tokens), total context stays comfortably below 1,900 tokens. This leaves a large margin below the 4096 context ceiling for Japanese ↔ English and most other pairs while preserving complete paragraphs.
+
+  **Correction (Issue #195):** the margin does not hold for every target language, so `ErrTruncated` is *not* ruled out by the budget alone. The budget counts source characters, but the limit that is hit is `max_tokens` on the **output**, and the PLaMo tokenizer spends about three tokens per character on some scripts. Measured with the 2B model on a 1,223-character English paragraph: `ja` 198 completion tokens, `th` 681, `hi` 1,372, `ta` 1,991, and `ml`, `km`, `my` cut off at 2,048 (`my` is cut off at 600 characters as well). Two measures cover this:
+  1. *Split and retry on truncation.* A request that comes back with `finish_reason: "length"` is planned again with half its size as the budget (the same paragraph → line/sentence → rune rules, the same recombination), up to three levels deep (one eighth of the chunk) and not below 40 characters. Only when that is exhausted does the job fail with `ErrTruncated`. This is independent of the language pair and also applies to a text that fits in one chunk. A truncated answer is the slowest request there is (`max_tokens` of output, discarded), so the job remembers the size it split to: later chunks of the same job above that size are split before they are sent, and the cost is paid once per job instead of once per chunk. Nothing is remembered between jobs.
+  2. *A lower budget for the measured targets* (`ta` 700, `ml` 450, `km` 400, `my` 300 source characters, aiming at about 1,200 output tokens for English source text), so the common case does not first pay for a full truncated generation (about 30 s in the measurement). The table is deliberately limited to what was measured; other combinations rely on measure 1.
+
+  The reverse direction (a token-heavy *source*, where 1,200 characters can take about 3,500 prompt tokens) has not been measured and is not addressed by these budgets.
 
 ### Q3: Does cleanup apply to the stored history and bilingual output, or only to the prompt sent to the model?
 - **Options considered:**

@@ -166,7 +166,7 @@ function Invoke-ClipboardTranslatorInstaller {
         }
 
         # Files the app creates while it runs.
-        $owned = @($exeName, 'translator.log', 'server.log', 'STOP', '.installed', 'install.ps1')
+        $owned = @($exeName, 'translator.log', 'translator.log.1', 'server.log', 'STOP', '.installed', 'install.ps1')
         $manifest = Join-Path $InstallDir '.installed'
         if (Test-Path -LiteralPath $manifest -PathType Leaf) {
             # The installer recorded exactly what it unpacked. Entries are plain file
@@ -244,8 +244,21 @@ function Invoke-ClipboardTranslatorInstaller {
             Invoke-WebRequest -UseBasicParsing -Uri $asset.browser_download_url -OutFile $zip -Headers @{ 'User-Agent' = 'ClipboardTranslatorInstaller' } -MaximumRedirection 10
 
             $expected = $null
-            if ($asset.PSObject.Properties.Name -contains 'digest' -and $asset.digest -match '^sha256:([0-9a-fA-F]{64})$') { $expected = $Matches[1] }
-            elseif ($release.body -match 'SHA-256[^`]*`([0-9a-fA-F]{64})`') { $expected = $Matches[1] }
+            if ($asset.PSObject.Properties.Name -contains 'digest' -and $asset.digest -match '^sha256:([0-9a-fA-F]{64})$') {
+                $expected = $Matches[1]
+            }
+            if (-not $expected) {
+                $shaAsset = @($release.assets | Where-Object { $_.name -eq ($asset.name + '.sha256') }) | Select-Object -First 1
+                if ($shaAsset -and ($shaAsset.PSObject.Properties.Name -contains 'browser_download_url')) {
+                    try {
+                        $shaText = (Invoke-RestMethod -Uri $shaAsset.browser_download_url -Headers @{ 'User-Agent' = 'ClipboardTranslatorInstaller' })
+                        if ($shaText -match '([0-9a-fA-F]{64})') { $expected = $Matches[1] }
+                    } catch { }
+                }
+            }
+            if (-not $expected -and $release.body -match 'SHA-256[^`]*`([0-9a-fA-F]{64})`') {
+                $expected = $Matches[1]
+            }
             if (-not $expected) { throw "No SHA-256 published for $($asset.name); refusing to install an unverified download." }
             $actual = Get-FileSha256 $zip
             if ($actual -ne $expected) { throw "SHA-256 mismatch for $($asset.name) (expected $expected, got $actual)." }

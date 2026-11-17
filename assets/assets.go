@@ -10,3 +10,12 @@ import _ "embed"
 //
 //go:embed icon.png
 var IconPNG []byte
+
+//go:embed icon-busy.png
+var IconBusyPNG []byte
+
+//go:embed icon-ready.png
+var IconReadyPNG []byte
+
+//go:embed icon-problem.png
+var IconProblemPNG []byte

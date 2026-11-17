@@ -3,17 +3,25 @@ package textstruct
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
 	// reBlockQuote matches lines starting with '>' (e.g. "> quote", ">> nested")
 	reBlockQuote = regexp.MustCompile(`^\s*>`)
 
-	// reListMarker matches unordered (- * • ・) and ordered/lettered (1. a. iv.) lists
-	reListMarker = regexp.MustCompile(`^\s*([-*•・]|\d+[.)]|[a-zA-Z][.)]|[ivxLCDM]+[.)])\s+`)
+	// reListMarker matches unordered (- * • ・), ordered/lettered (1. a. iv.), and parenthesized ((1) (a) (i)) lists
+	reListMarker = regexp.MustCompile(`^\s*([-*•・]|\d+[.)]|[a-zA-Z][.)]|(?i:[ivxlcdm]+)[.)]|\(\d+\)|\([a-zA-Z]\)|\((?i:[ivxlcdm]+)\))\s+`)
 
 	// reEmailSig matches standard email signature separator ("-- ")
 	reEmailSig = regexp.MustCompile(`^--\s*$`)
+
+	// Require a type at the start (after modifiers), not inline notation in
+	// prose ("The measured value[0] remains stable;"). Retain declaration suffixes.
+	reArrayDecl = regexp.MustCompile(`^(?:(?:final|volatile|extern|unsigned|signed)\s+)*(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*(?:\[\s*\d*\s*\])+\s+[A-Za-z_]\w*`)
+
+	// reGenericDecl matches generic declarations like "List<string> name;" or "Map<K, V> name;"
+	reGenericDecl = regexp.MustCompile(`^(?:(?:final|volatile|extern)\s+)*(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*<[A-Za-z0-9_,\s<>\[\]*&]+>\s+[A-Za-z_]\w*`)
 )
 
 // isPreservedLine reports whether line is a structural element that must not be flattened.
@@ -38,6 +46,9 @@ func isPreservedLine(line string) bool {
 		return true
 	}
 	if isURL(line) {
+		return true
+	}
+	if isTableRow(trimmed) {
 		return true
 	}
 	if isCodeLine(line) {
@@ -76,6 +87,14 @@ func isURL(s string) bool {
 	return strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://")
 }
 
+// isTableRow reports whether trimmed looks like a pipe-delimited or column-aligned table row.
+func isTableRow(trimmed string) bool {
+	if strings.HasPrefix(trimmed, "|") || strings.HasSuffix(trimmed, "|") || strings.Contains(trimmed, " | ") {
+		return true
+	}
+	return strings.Contains(trimmed, "\t") || strings.Contains(trimmed, "   ")
+}
+
 // isCodeLine checks if a line looks like source code.
 func isCodeLine(line string) bool {
 	// Leading tab or 4+ spaces
@@ -87,9 +106,15 @@ func isCodeLine(line string) bool {
 		return true
 	}
 
-	// Code braces / semicolons / keywords
+	// Code braces / keywords
 	if strings.HasSuffix(trimmed, "{") || strings.HasSuffix(trimmed, "}") ||
-		strings.HasPrefix(trimmed, "}") || strings.HasSuffix(trimmed, ";") {
+		strings.HasPrefix(trimmed, "}") {
+		return true
+	}
+
+	// Trailing semicolon is only treated as code when indented or accompanied by
+	// code syntax, so prose lines wrapped at a semicolon can still join.
+	if strings.HasSuffix(trimmed, ";") && (isIndented || isCodeStatementWithSemicolon(trimmed)) {
 		return true
 	}
 
@@ -112,6 +137,45 @@ func isCodeLine(line string) bool {
 		return true
 	}
 
+	return false
+}
+
+func isCodeStatementWithSemicolon(trimmed string) bool {
+	if strings.ContainsAny(trimmed, "={}") ||
+		strings.Contains(trimmed, "<<") ||
+		strings.Contains(trimmed, ">>") ||
+		strings.Contains(trimmed, "++") ||
+		strings.Contains(trimmed, "--") ||
+		strings.Contains(trimmed, "->") ||
+		strings.Contains(trimmed, "::") ||
+		reArrayDecl.MatchString(trimmed) ||
+		reGenericDecl.MatchString(trimmed) ||
+		hasCodeCallSyntax(trimmed) {
+		return true
+	}
+	for _, kw := range []string{
+		"return;", "break;", "continue;",
+		"return ", "break ", "continue ",
+		"var ", "const ", "type ", "import ", "package ",
+		"let ", "int ", "char ", "bool ", "void ", "float ", "double ",
+		"struct ", "typedef ", "using ", "namespace ", "throw ",
+		"public ", "private ", "protected ", "internal ", "static ", "readonly ",
+	} {
+		if strings.HasPrefix(trimmed, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCodeCallSyntax(s string) bool {
+	prevIdent := false
+	for _, r := range s {
+		if r == '(' && prevIdent {
+			return true
+		}
+		prevIdent = unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+	}
 	return false
 }
 

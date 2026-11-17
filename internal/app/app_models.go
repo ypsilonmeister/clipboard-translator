@@ -118,12 +118,16 @@ func (a *app) fillModelsAndEngines(st *settings.State) {
 
 // serviceSettingsWhileBusy answers the page while the main loop is inside a
 // slow call (loading a model, waiting to restart the server). It only serves
-// "state" requests, marked busy: anything else would start another slow call
-// inside this one, so it is refused.
+// "state" requests, marked busy, and endpoint disable requests. Other actions
+// would start another slow call inside this one, so they are refused.
 func (a *app) serviceSettingsWhileBusy(label string) {
 	for {
 		select {
 		case req := <-a.settingsReqs:
+			if req.Action == "translate_api" && req.Arg == "false" && time.Now().Before(req.Deadline) {
+				a.configureTranslateAPI(req)
+				continue
+			}
 			if time.Now().After(req.Deadline) || req.Action != "" || req.Save != nil {
 				req.Reply <- settings.Reply{Err: settings.ErrBusy}
 				continue
@@ -186,7 +190,10 @@ func (a *app) switchModel(e models.Entry) error {
 	defer a.beginServerWork()()
 	oldModel := a.sup.Model
 	oldTemplate := a.sup.Template
-	wasFallback := a.onFallback()
+	// The CPU build is in use when it runs, and also when the model is unloaded
+	// after a fallback: the preferred engine failed this session, and starting
+	// it here, without a fallback, would refuse the switch for that reason.
+	wasFallback := a.onFallback() || (a.fallbackPinned && a.paths.Server != a.paths.Fallback)
 	newConf := a.conf
 	newConf.ModelFile = "models/" + e.File
 	saveMap := map[string]any{"model_file": newConf.ModelFile}
@@ -228,6 +235,7 @@ func (a *app) switchModel(e models.Entry) error {
 	err = a.sup.Start(bin, layers, label)
 	if err == nil {
 		a.conf, a.paths = newConf, paths
+		a.clearFallback() // a different model may fit the preferred engine
 		a.saveConfig(saveMap)
 		a.refreshStatus()
 		a.tray.Notify("Clipboard Translator", "Model: "+e.Name, false)

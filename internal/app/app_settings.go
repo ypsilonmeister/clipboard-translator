@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -71,7 +72,13 @@ func (a *app) closeSettings() {
 // askSettings runs on a server goroutine: it hands the request to the main loop
 // and waits for the answer, giving up at the request's deadline.
 func (a *app) askSettings(req settings.Request) settings.Reply {
+	var done <-chan struct{}
+	if req.Context != nil {
+		done = req.Context.Done()
+	}
 	select {
+	case <-done:
+		return settings.Reply{Err: req.Context.Err()}
 	case a.settingsReqs <- req:
 	default:
 		return settings.Reply{Err: settings.ErrBusy}
@@ -79,9 +86,14 @@ func (a *app) askSettings(req settings.Request) settings.Reply {
 	timer := time.NewTimer(time.Until(req.Deadline))
 	defer timer.Stop()
 	select {
+	case <-done:
+		return settings.Reply{Err: req.Context.Err()}
 	case rep := <-req.Reply:
 		return rep
 	case <-timer.C:
+		if req.Action == "translate" {
+			return settings.Reply{Err: context.DeadlineExceeded}
+		}
 		return settings.Reply{Err: settings.ErrBusy}
 	}
 }
@@ -89,13 +101,33 @@ func (a *app) askSettings(req settings.Request) settings.Reply {
 // handleSettingsRequest runs on the UI thread. A request whose deadline passed
 // while the loop was busy is dropped: the page was already told it failed.
 func (a *app) handleSettingsRequest(req settings.Request) {
-	a.settingsServing = true
-	defer func() { a.settingsServing = false }()
+	if req.Context != nil && req.Context.Err() != nil {
+		req.Reply <- settings.Reply{Err: req.Context.Err()}
+		return
+	}
 	if time.Now().After(req.Deadline) {
 		req.Reply <- settings.Reply{Err: settings.ErrBusy}
 		return
 	}
+	if req.Action == "translate" {
+		a.handleAPITranslation(req)
+		return
+	}
+	a.settingsServing = true
+	defer func() { a.settingsServing = false }()
 	switch req.Action {
+	case "translate_api":
+		a.configureTranslateAPI(req)
+		return
+	case "translate_api_regenerate":
+		var err error
+		if !translateAPISupported() {
+			err = errors.New("Translation endpoint is available only on Linux")
+		} else {
+			err = a.regenerateTranslateAPIToken()
+		}
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: err}
+		return
 	case "use_model":
 		a.startModelSwitch(req)
 		return
@@ -107,7 +139,11 @@ func (a *app) handleSettingsRequest(req settings.Request) {
 		return
 	}
 	if req.Save == nil {
-		req.Reply <- settings.Reply{State: a.settingsState()}
+		var err error
+		if translateAPISupported() && req.Action == "translate_api_info" {
+			err = a.ensureTranslateAPIToken()
+		}
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: err}
 		return
 	}
 	a.settingsNotice = ""
@@ -135,9 +171,20 @@ func (a *app) settingsState() settings.State {
 			st.ActualHotkeys[i] = actual
 		}
 	}
+	st.TranslateAPIAvailable = translateAPISupported()
+	st.TranslateAPIEnabled = translateAPISupported() && a.conf.TranslateAPIEnabled
+	st.TranslateAPIToken = a.conf.TranslateAPIToken
+	st.TranslateAPIURL = translateAPIURL()
 	st.Guide = a.quickstartGuide()
 	st.BaseRevision = a.confRevision
 	st.AutoPaste = a.conf.AutoPaste
+	if a.chromeOSProfile() {
+		st.LanguageOnly = true
+		st.Inactive = nil
+		st.NoActiveHotkey = false
+		st.ActualHotkeys = nil
+		st.AutoPasteUnavailable = "Not available on ChromeOS: the app cannot paste into other apps"
+	}
 	desktop := a.desktopStatus()
 	st.Wayland = desktop.Wayland
 	st.DesktopStatus = desktop.Message
@@ -255,14 +302,44 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 		}
 	}
 
+	// The manual workflow edits profile zero's translation options. Never accept
+	// hidden hotkey/input fields back from this page.
+	if a.chromeOSProfile() && hasField("profiles") {
+		if len(form.Profiles) == 0 {
+			return nil, errors.New("Choose translation languages")
+		}
+		language := form.Profiles[0]
+		form.Profiles = nil
+		for i, p := range a.conf.Profiles {
+			f, err := settings.FormFromProfile(p, runtime.GOOS)
+			if err != nil {
+				return nil, err
+			}
+			if i == 0 {
+				f.Languages, f.Target = language.Languages, language.Target
+				f.Output, f.CleanupNewlines = language.Output, language.CleanupNewlines
+			}
+			form.Profiles = append(form.Profiles, f)
+		}
+	}
 	cand, err := form.ToConfig(a.conf)
 	if err != nil {
 		return nil, err
 	}
+	if a.chromeOSProfile() && hasField("profiles") {
+		language := cand.Profiles[0]
+		cand.Profiles = append([]config.Profile(nil), a.conf.Profiles...)
+		cand.Profiles[0].Languages, cand.Profiles[0].Target = language.Languages, language.Target
+		cand.Profiles[0].Output, cand.Profiles[0].CleanupNewlines = language.Output, language.CleanupNewlines
+		cand.NormalizeProfiles()
+	}
 	sameProf := sameProfiles(cand.Profiles, a.conf.Profiles)
 	// Let Save recover unchanged hotkeys after another program releases them.
-	retryHotkeys := hasField("profiles") && !a.anyHotkeyActive() && sameProf
+	retryHotkeys := !a.chromeOSProfile() && hasField("profiles") && !a.anyHotkeyActive() && sameProf
 	if !retryHotkeys && sameProf && cand.AutoPaste == a.conf.AutoPaste && cand.NotifyOnComplete == a.conf.NotifyOnComplete && cand.MaxChars == a.conf.MaxChars && cand.IdleUnloadMinutes == a.conf.IdleUnloadMinutes {
+		if a.chromeOSProfile() {
+			return nil, nil
+		}
 		return a.inactiveHotkeys(), nil
 	}
 
@@ -299,6 +376,8 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 		a.conf.AutoPaste, a.conf.NotifyOnComplete, a.conf.MaxChars = cand.AutoPaste, cand.NotifyOnComplete, cand.MaxChars
 		a.conf.IdleUnloadMinutes = cand.IdleUnloadMinutes
 		a.conf.ExplicitProfiles = cand.ExplicitProfiles
+	} else if a.chromeOSProfile() {
+		a.conf = cand
 	} else {
 		old := a.conf
 		a.closeHotkeys()
@@ -336,12 +415,33 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 	if a.conf.Profiles[0].Languages != nil {
 		set["languages"] = a.conf.Profiles[0].Languages
 	}
-	if err := config.UpdateFile(a.dir, set); err != nil {
+	save := func() error { return config.UpdateFile(a.dir, set) }
+	if a.chromeOSProfile() {
+		save = func() error {
+			globals := map[string]any{}
+			if changedAutoPaste {
+				globals["auto_paste"] = a.conf.AutoPaste
+			}
+			if changedNotifyOnComplete {
+				globals["notify_on_complete"] = a.conf.NotifyOnComplete
+			}
+			if changedMaxChars {
+				globals["max_chars"] = a.conf.MaxChars
+			}
+			if changedIdleUnload {
+				globals["idle_unload_minutes"] = a.conf.IdleUnloadMinutes
+			}
+			return config.UpdateTranslationSettings(a.dir, a.conf.Profiles[0], changedProfiles, globals)
+		}
+	}
+	if err := save(); err != nil {
 		log.Printf("could not save config.json: %v", err)
 		warnings = append(warnings, "The settings work now but could not be saved to config.json: "+err.Error())
 	}
 	a.refreshStatus()
-	warnings = append(warnings, a.inactiveHotkeys()...)
+	if !a.chromeOSProfile() {
+		warnings = append(warnings, a.inactiveHotkeys()...)
+	}
 	log.Printf("settings applied: %d hotkey(s)", len(a.conf.Profiles))
 	return warnings, nil
 }

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -32,8 +31,9 @@ type result struct {
 	generation           uint64
 	err                  error
 	direction            languages.Direction
-	window               uintptr // foreground window when the hotkey was pressed
-	fromSelection        bool    // the text was a fresh selection, not the old clipboard
+	window               uintptr                  // foreground window when the hotkey was pressed
+	fromSelection        bool                     // the text was a fresh selection, not the old clipboard
+	fallback             platform.CaptureFallback // why the old clipboard text was used instead of a selection
 	output               string
 	capturedAt           time.Time
 }
@@ -54,6 +54,21 @@ type ignoreWriteErrors struct{ w io.Writer }
 func (i ignoreWriteErrors) Write(p []byte) (int, error) {
 	_, _ = i.w.Write(p)
 	return len(p), nil
+}
+
+const translatorLogLimit = 1 << 20 // rotate at startup after 1 MiB
+
+func openTranslatorLog(path string) (*os.File, error) {
+	info, err := os.Stat(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err == nil && info.Size() > translatorLogLimit {
+		if err := os.Rename(path, path+".1"); err != nil {
+			return nil, fmt.Errorf("rotate translator.log: %w", err)
+		}
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 }
 
 // fatal logs the message, shows it to the user (message box in the GUI build)
@@ -89,7 +104,7 @@ func Run(opts Options) {
 		fatal("app data folder: ", err)
 	}
 	logPath := filepath.Join(dir, "translator.log")
-	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	logf, err := openTranslatorLog(logPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		platform.ShowError(err.Error())
@@ -98,17 +113,28 @@ func Run(opts Options) {
 	defer logf.Close()
 	log.SetOutput(io.MultiWriter(logf, ignoreWriteErrors{os.Stdout}))
 	log.SetFlags(log.Ldate | log.Ltime)
-	conf, err := config.Load(dir)
-	if err != nil {
-		fatal("config: ", err)
+	startup := &app{
+		dir:            dir,
+		askYesNo:       platform.AskYesNo,
+		openURL:        platform.OpenTarget,
+		fallbackEditor: platform.StartFallbackEditor,
+		showErr:        platform.ShowError,
+	}
+	conf, ok := startup.loadStartupConfig()
+	if !ok {
+		return
 	}
 
 	// Prevent concurrent application instances.
-	instance, err := net.Listen("tcp", "127.0.0.1:"+fmt.Sprint(conf.Port+1))
+	inst, err := checkInstance(conf.Port + 1)
 	if err != nil {
-		fatal("another instance or conflicting port is running: ", err)
+		fatal(err)
 	}
-	defer instance.Close()
+	if inst == nil {
+		log.Print("another instance is already running; alerted it and exiting")
+		return
+	}
+	defer inst.Close()
 	if err := platform.InitializeDesktop(dir); err != nil {
 		fatal("desktop initialization: ", err)
 	}
@@ -120,7 +146,7 @@ func Run(opts Options) {
 	// (macOS only; Windows and Linux stop it with the app).
 	platform.StopLeftoverServer(platform.ChildRecordPath(dir, conf.Port))
 
-	conf, ok := ensureInstalled(dir, conf)
+	conf, ok = ensureInstalled(dir, conf)
 	if !ok {
 		return
 	}
@@ -141,7 +167,9 @@ func Run(opts Options) {
 	// The tray exists from here on so the user sees the app while the model loads.
 	tray := platform.NewTray(logPath)
 	defer tray.Close()
-	newApp(dir, conf, paths, tray, serverLog).run()
+	a := newApp(dir, conf, paths, tray, serverLog)
+	inst.setOnPing(a.ping)
+	a.run()
 }
 
 // applyTranslation never replaces unrelated clipboard contents.

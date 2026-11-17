@@ -23,15 +23,15 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # record tools/bump_llama_pin.py manages; internal/setup/llama.go holds
 # the same values and the tests keep them in agreement.
 # --- llama.cpp pinned release (managed by tools/bump_llama_pin.py) ---
-# LLAMA_TAG = 'b12032'
+# LLAMA_TAG = 'b12359'
 # LLAMA_ASSETS = {
 #     'cpu': {
-#         'file': 'llama-b12032-bin-ubuntu-x64.tar.gz',
-#         'sha256': '9f10432ca3f66ef003a7a540aaffb9da0acadaefd05404521b9ab7a2436af304',
+#         'file': 'llama-b12359-bin-ubuntu-x64.tar.gz',
+#         'sha256': '0bc1f091e8916102b6d8f2cf944233a620e90a0f856c72d0ce41150c65c2e72e',
 #     },
 #     'vulkan': {
-#         'file': 'llama-b12032-bin-ubuntu-vulkan-x64.tar.gz',
-#         'sha256': 'f75e7107f9450034c5467492c41e9ed91816e2d815fc4b802c6bd58de7d5b126',
+#         'file': 'llama-b12359-bin-ubuntu-vulkan-x64.tar.gz',
+#         'sha256': '19b60f00395a3f4954e46a5037695bc1d843404fc9d3124f82a612ecd8fbe9f0',
 #     },
 # }
 # --- end llama.cpp pinned release ---

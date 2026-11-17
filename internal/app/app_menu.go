@@ -5,12 +5,15 @@ import (
 	"errors"
 	"log"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 	"github.com/ypsilonmeister/clipboard-translator/internal/update"
 )
 
@@ -25,6 +28,10 @@ const (
 	cmdSettings             = platform.FirstAppCommand + 8
 	cmdUnloadModel          = platform.FirstAppCommand + 10
 	cmdQuickstart           = platform.FirstAppCommand + 11
+	cmdTranslateClipboard   = platform.FirstAppCommand + 13
+	cmdTranslateAPIToggle   = platform.FirstAppCommand + 14
+	cmdCopyConnectionInfo   = platform.FirstAppCommand + 15
+	cmdRegenerateToken      = platform.FirstAppCommand + 16
 	cmdRetryDesktop         = platform.FirstAppCommand + 12
 	cmdModelBase            = platform.FirstAppCommand + 100 // + index into models.Catalog
 	cmdHistoryBase          = platform.FirstAppCommand + 300 // translation; + index into history (newest first)
@@ -57,6 +64,18 @@ func versionLabel() string {
 // menu opens, so availability and the update entry reflect the current state.
 func (a *app) buildMenu() []platform.MenuItem {
 	items := []platform.MenuItem{{ID: cmdSettings, Label: "Settings..."}, {ID: cmdQuickstart, Label: "Quick start"}}
+	if runtime.GOOS == "linux" {
+		items = append(items, platform.MenuItem{ID: cmdTranslateClipboard, Label: "Translate clipboard"})
+	}
+	if a.chromeOSProfile() {
+		items = append(items,
+			platform.MenuItem{ID: cmdTranslateAPIToggle, Label: "Chrome extension endpoint", Checked: a.conf.TranslateAPIEnabled},
+			platform.MenuItem{ID: cmdCopyConnectionInfo, Label: "Copy connection info"},
+			platform.MenuItem{ID: cmdRegenerateToken, Label: "Regenerate token"})
+		if a.conf.TranslateAPIEnabled {
+			items = append(items, platform.MenuItem{Label: "ChromeOS: enable port forwarding for TCP " + translateAPIPort, Disabled: true})
+		}
+	}
 	if s := a.desktopStatus(); s.Wayland {
 		label := "Wayland: waiting for desktop permissions"
 		if s.Ready {
@@ -64,11 +83,17 @@ func (a *app) buildMenu() []platform.MenuItem {
 		} else if s.Retry {
 			label = "Wayland permissions need attention"
 		}
+		if s.Manual {
+			label = "Manual mode (hotkey unavailable)"
+		}
 		items = append(items, platform.MenuItem{Label: label, Disabled: true})
 		items = append(items, platform.MenuItem{ID: cmdRetryDesktop, Label: "Retry Wayland permissions", Disabled: !s.Retry})
 	}
 	if a.translating || a.capturing != nil || a.pendingRead != nil || a.pendingResult != nil {
 		items = append(items, platform.MenuItem{ID: cmdCancel, Label: "Cancel translation"}, platform.MenuItem{Separator: true})
+	}
+	if a.fallbackInUse() {
+		items = append(items, platform.MenuItem{Label: "Engine: CPU - " + backendLabel(config.CurrentBackend(a.conf.ServerFile)) + " did not start", Disabled: true})
 	}
 	items = append(items, platform.MenuItem{ID: cmdUnloadModel, Label: "Unload model", Disabled: !a.canUnloadModel()})
 	var modelSub []platform.MenuItem
@@ -120,9 +145,29 @@ func (a *app) buildMenu() []platform.MenuItem {
 	return items
 }
 
+const cancelledStatus = "Clipboard Translator - translation cancelled"
+
 // handleCommand runs one app-specific menu command. It runs on the UI thread.
 func (a *app) handleCommand(id int) {
 	switch {
+	case id == cmdTranslateAPIToggle && a.chromeOSProfile():
+		req := settings.NewActionRequest("translate_api", strconv.FormatBool(!a.conf.TranslateAPIEnabled), time.Second)
+		a.handleSettingsRequest(req)
+		if rep := <-req.Reply; rep.Err != nil {
+			a.tray.Notify("Clipboard Translator", "Could not change translation endpoint: "+rep.Err.Error(), true)
+		}
+	case id == cmdCopyConnectionInfo && a.chromeOSProfile():
+		a.copyConnectionInfo()
+	case id == cmdRegenerateToken && a.chromeOSProfile():
+		req := settings.NewActionRequest("translate_api_regenerate", "", time.Second)
+		a.handleSettingsRequest(req)
+		if rep := <-req.Reply; rep.Err != nil {
+			a.tray.Notify("Clipboard Translator", "Could not regenerate token: "+rep.Err.Error(), true)
+		} else {
+			a.copyConnectionInfo()
+		}
+	case id == cmdTranslateClipboard:
+		a.startClipboardTranslation()
 	case id == cmdRetryDesktop:
 		a.retryDesktop()
 	case id >= cmdHistoryBilingualBase && id < cmdHistoryBilingualBase+historySize:
@@ -136,10 +181,10 @@ func (a *app) handleCommand(id int) {
 	case id == cmdUnloadModel:
 		a.unloadModel()
 	case id == cmdCancel:
-		if a.translating {
+		if a.translating || a.capturing != nil || a.pendingRead != nil || a.pendingResult != nil {
 			log.Print("translation cancelled from the menu")
 			a.abortTranslation()
-			a.setTransientStatus("Clipboard Translator - translation cancelled")
+			a.setTransientStatus(cancelledStatus)
 		}
 	case id == cmdSettings:
 		a.openSettings()
@@ -169,14 +214,22 @@ func (a *app) openConfigFile() {
 	if abs, err := filepath.Abs(path); err == nil {
 		path = abs
 	}
-	if err := a.openURL(path); err != nil {
-		if a.fallbackEditor != nil && a.fallbackEditor(path) == nil {
-			log.Printf("opened config.json with fallback editor after opener failed: %v", err)
-			return
-		}
+	if err := a.openConfigEditor(path); err != nil {
 		log.Printf("could not open config.json: %v", err)
 		a.tray.Notify("Clipboard Translator", "Could not open config.json ("+path+"). You can open it manually in any text editor, edit the hotkey, and restart the app.", true)
 	}
+}
+
+// openConfigEditor is shared by the tray and startup recovery, before a tray exists.
+func (a *app) openConfigEditor(path string) error {
+	if err := a.openURL(path); err != nil {
+		if a.fallbackEditor != nil && a.fallbackEditor(path) == nil {
+			log.Printf("opened config.json with fallback editor after opener failed: %v", err)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // switchModelFromMenu switches to models.Catalog[idx] from the tray menu.
@@ -273,6 +326,7 @@ func (a *app) switchBackend(name string) {
 	err = a.sup.Start(paths.Server, newConf.GPULayers, "switching engine")
 	if err == nil {
 		a.conf, a.paths = newConf, paths
+		a.clearFallback()
 		a.activeBackend = name
 		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
@@ -318,6 +372,7 @@ func (a *app) keepRunningBackend(name string) {
 		return
 	}
 	a.conf, a.paths = conf, paths
+	a.clearFallback()
 	a.activeBackend = name
 	a.saveConfig(map[string]any{"server_file": a.conf.ServerFile, "gpu_layers": a.conf.GPULayers})
 	log.Printf("engine %s (already running) is now the configured one", name)

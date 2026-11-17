@@ -125,6 +125,10 @@ func TestTrayLifecycle(t *testing.T) {
 		t.Fatal("tray window not created")
 	}
 	tr.SetStatus("test status")
+	tr.SetState(TrayBusy)
+	tr.SetState(TrayReady)
+	tr.SetState(TrayProblem)
+	tr.SetState(TrayIdle)
 	PumpMessages()
 	if tr.QuitRequested() {
 		t.Fatal("QuitRequested must be false before the user picks Quit")

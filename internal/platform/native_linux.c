@@ -6,25 +6,26 @@
 
 static GtkStatusIcon *status_icon;
 static GtkWidget *current_menu, *control_window, *status_label;
-static char *last_status;
-static int menu_requested;
+static char *last_status, *last_title;
+static GdkEvent *control_menu_event;
+static int menu_requested, menu_from_control, force_control;
 static GQueue commands = G_QUEUE_INIT;
 
 int ct_gtk_init(void) { return gtk_init_check(NULL, NULL); }
 void ct_free(void *p) { g_free(p); }
 
-static void request_menu(GtkStatusIcon *icon, guint button, guint time, gpointer data) { menu_requested = 1; }
-static void activate_icon(GtkStatusIcon *icon, gpointer data) { menu_requested = 1; }
-static void control_clicked(GtkButton *button, gpointer data) { menu_requested = 1; }
+static void request_menu(GtkStatusIcon *icon, guint button, guint time, gpointer data) { menu_from_control = 0; menu_requested = 1; }
+static void activate_icon(GtkStatusIcon *icon, gpointer data) { menu_from_control = 0; menu_requested = 1; }
+static void control_clicked(GtkButton *button, gpointer data) { if (control_menu_event) gdk_event_free(control_menu_event); control_menu_event = gtk_get_current_event(); menu_from_control = 1; menu_requested = 1; }
 static gboolean close_control(GtkWidget *w, GdkEvent *event, gpointer data) {
     g_queue_push_tail(&commands, GINT_TO_POINTER(2));
     return TRUE;
 }
 static gboolean check_tray(gpointer data) {
     // Some desktops do not host legacy X11 tray icons. Keep settings and Quit reachable.
-    if (status_icon && !gtk_status_icon_is_embedded(status_icon)) {
+    if (!control_window && status_icon && (force_control || !gtk_status_icon_is_embedded(status_icon))) {
         control_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-        gtk_window_set_title(GTK_WINDOW(control_window), "Clipboard Translator");
+        gtk_window_set_title(GTK_WINDOW(control_window), last_title ? last_title : "Clipboard Translator");
         gtk_container_set_border_width(GTK_CONTAINER(control_window), 16);
         GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
         status_label = gtk_label_new(last_status ? last_status : "Clipboard Translator");
@@ -49,14 +50,29 @@ void ct_tray_create(const char *icon) {
     g_signal_connect(status_icon, "activate", G_CALLBACK(activate_icon), NULL);
     tray_check = g_timeout_add(2000, check_tray, NULL);
 }
+void ct_tray_set_icon(const char *icon) {
+    if (status_icon && icon && icon[0]) {
+        gtk_status_icon_set_from_file(status_icon, icon);
+    }
+}
+void ct_tray_set_title(const char *title) {
+    g_free(last_title);
+    last_title = title ? g_strdup(title) : NULL;
+    if (control_window && last_title) {
+        gtk_window_set_title(GTK_WINDOW(control_window), last_title);
+    }
+}
 void ct_tray_close(void) {
     if (tray_check) { GSource *s = g_main_context_find_source_by_id(NULL, tray_check); if (s) g_source_destroy(s); tray_check = 0; }
     if (current_menu) { gtk_widget_destroy(current_menu); current_menu = NULL; }
     if (control_window) { gtk_widget_destroy(control_window); control_window = status_label = NULL; }
     if (status_icon) { g_object_unref(status_icon); status_icon = NULL; }
+    if (control_menu_event) { gdk_event_free(control_menu_event); control_menu_event = NULL; }
     g_queue_clear(&commands);
-    menu_requested = 0;
+    menu_requested = menu_from_control = force_control = 0;
     g_clear_pointer(&last_status,g_free);
+    g_clear_pointer(&last_title,g_free);
+    ct_manual_cancel_read();
 }
 void ct_status(const char *text) {
     g_free(last_status);last_status=g_strdup(text);
@@ -81,7 +97,13 @@ void ct_menu_popup(void *menu) {
     if (current_menu) gtk_widget_destroy(current_menu);
     current_menu = GTK_WIDGET(menu);
     gtk_widget_show_all(current_menu);
-    gtk_menu_popup(GTK_MENU(current_menu), NULL, NULL, gtk_status_icon_position_menu, status_icon, 0, gtk_get_current_event_time());
+    // The fallback window has no status-icon geometry (notably on ChromeOS).
+    if (menu_from_control && control_window)
+        gtk_menu_popup_at_widget(GTK_MENU(current_menu), control_window, GDK_GRAVITY_SOUTH_WEST, GDK_GRAVITY_NORTH_WEST, control_menu_event);
+    else
+        gtk_menu_popup(GTK_MENU(current_menu), NULL, NULL, gtk_status_icon_position_menu, status_icon, 0, gtk_get_current_event_time());
+    if (control_menu_event) { gdk_event_free(control_menu_event); control_menu_event = NULL; }
+    menu_from_control = 0;
 }
 int ct_command(void) { return GPOINTER_TO_INT(g_queue_pop_head(&commands)); }
 int ct_dialog(const char *text, int question, int error) {
@@ -90,4 +112,43 @@ int ct_dialog(const char *text, int question, int error) {
     int result = gtk_dialog_run(GTK_DIALOG(d));
     gtk_widget_destroy(d);
     return result == GTK_RESPONSE_YES;
+}
+
+// GTK clipboard access needs a focused control window on Wayland, but no
+// RemoteDesktop session. Request asynchronously to keep the UI loop running.
+static int manual_read_state;
+static guint manual_read_generation;
+static char *manual_text;
+static void manual_received(GtkClipboard *clipboard, const gchar *text, gpointer data) {
+    if (GPOINTER_TO_UINT(data) != manual_read_generation) return;
+    g_free(manual_text);
+    manual_text = g_strdup(text);
+    manual_read_state = 2;
+}
+char *ct_manual_read(int *complete) {
+    *complete = 0;
+    if (manual_read_state == 2) {
+        *complete = 1;
+        manual_read_state = 0;
+        return g_strdup(manual_text);
+    }
+    if (manual_read_state == 0) {
+        manual_read_state = 1;
+        gtk_clipboard_request_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), manual_received, GUINT_TO_POINTER(manual_read_generation));
+    }
+    return NULL;
+}
+void ct_manual_write(const char *text) {
+    gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), text, -1);
+}
+void ct_show_control(void) {
+    force_control = 1;
+    if (!control_window) check_tray(NULL);
+    if (control_window) gtk_window_present(GTK_WINDOW(control_window));
+}
+
+void ct_manual_cancel_read(void) {
+    manual_read_generation++;
+    manual_read_state = 0;
+    g_clear_pointer(&manual_text, g_free);
 }

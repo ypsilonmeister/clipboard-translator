@@ -102,6 +102,29 @@ func TestDesktopPendingResultTimeoutKeepsHistory(t *testing.T) {
 		t.Fatal("timeout should keep result without claiming success")
 	}
 }
+
+func TestCancelFromMenuPendingResult(t *testing.T) {
+	a, tray, base, pastes, _ := uxApp(t)
+	base.text = "source"
+	cb := &asyncDesktopClipboard{testClipboard: base, writePending: true}
+	a.cb = cb
+	res := result{generation: pending(a), original: "source", translated: "translation"}
+	a.handleResult(res)
+	if a.pendingResult == nil || a.translating {
+		t.Fatal("expected a pending clipboard transfer after translation finished")
+	}
+
+	a.handleCommand(cmdCancel)
+	cb.writePending = false
+	a.tickClipboard()
+	a.handleResult(res) // a late result must also stay cancelled
+	if base.text != "source" || base.writes != 0 || *pastes != 0 || len(a.hist.Items()) != 0 {
+		t.Fatalf("cancelled transfer wrote clipboard: text=%q writes=%d pastes=%d history=%d", base.text, base.writes, *pastes, len(a.hist.Items()))
+	}
+	if a.pendingResult != nil || tray.status != cancelledStatus {
+		t.Fatalf("pending=%v status=%q", a.pendingResult != nil, tray.status)
+	}
+}
 func TestDesktopAsyncHistoryAndAbort(t *testing.T) {
 	a, tray, base, _, _ := uxApp(t)
 	cb := &asyncDesktopClipboard{testClipboard: base, writePending: true}
@@ -126,7 +149,10 @@ func TestDesktopClipboardReadCancellation(t *testing.T) {
 	if a.pendingRead == nil || !a.busy() {
 		t.Fatal("clipboard profile must wait without translating")
 	}
-	a.abortTranslation()
+	a.handleCommand(cmdCancel)
+	if a.pendingRead != nil {
+		t.Fatal("Cancel must discard the pending clipboard read")
+	}
 	cb.readPending = false
 	a.tickClipboard()
 	if a.pendingRead != nil || a.translating {

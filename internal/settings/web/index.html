@@ -32,11 +32,13 @@
 
   <section class="card" aria-labelledby="hotkeys-title">
     <h2 id="hotkeys-title">Hotkeys</h2>
-    <p class="hint">Select text in any program and press a hotkey. The translation replaces what is on the clipboard. Each hotkey can translate in its own way.</p>
-    <div id="profiles"></div>
-    <div class="add-row">
-      <button id="add" type="button" class="secondary">+ Add hotkey</button>
-      <p id="limit" class="hint" hidden></p>
+    <p id="hotkeys-intro" class="hint">Select text in any program and press a hotkey. The translation replaces what is on the clipboard. Each hotkey can translate in its own way.</p>
+    <div id="hotkeys-controls">
+      <div id="profiles"></div>
+      <div class="add-row">
+        <button id="add" type="button" class="secondary">+ Add hotkey</button>
+        <p id="limit" class="hint" hidden></p>
+      </div>
     </div>
   </section>
 
@@ -59,6 +61,7 @@
       <input type="checkbox" id="auto-paste">
       <span>Paste automatically after translating</span>
     </label>
+    <p id="auto-paste-unavailable" class="hint" hidden></p>
     <p class="hint">Types the paste shortcut for you, but only when the text was a fresh selection and the same window is still in front.</p>
     <label class="check">
       <input type="checkbox" id="notify-on-complete">
@@ -77,6 +80,19 @@
       <span class="plus">minutes (0 = never)</span>
     </div>
     <p class="hint">Frees RAM/VRAM while idle. The next translation loads the model again and takes longer.</p>
+  </section>
+
+  <section class="card" aria-labelledby="translate-api-title">
+    <h2 id="translate-api-title">ChromeOS / local translation endpoint</h2>
+    <label class="check"><input type="checkbox" id="translate-api-enabled"><span>Enable translation endpoint (takes effect immediately)</span></label>
+    <p class="hint">Off by default. Listens on all IPv4 interfaces, port 18121, for Crostini forwarding. Only clients with the token can translate; keep the token private. No external translation service is used.</p>
+    <p id="translate-api-url"></p>
+    <label for="translate-api-token">Per-install token</label>
+    <input id="translate-api-token" type="text" readonly autocomplete="off" spellcheck="false">
+    <button id="translate-api-copy" type="button">Copy token</button>
+    <button id="translate-api-regenerate" type="button">Regenerate token</button>
+    <p class="hint">Regenerating invalidates the old token immediately. Update extension Options with the new token. Copied tokens are clear text; remove any saved clipboard history entry.</p>
+    <p id="translate-api-status" role="status"></p>
   </section>
 
   <footer class="bar">

@@ -178,7 +178,8 @@
       onclick: () => {
         state = Object.assign({}, newState);
         baseRevision = state.revision || 0;
-        model = toModel(state);
+        renderTranslateAPI(state);
+    model = toModel(state);
         clearDirty();
         renderAll();
         renderHotkeys();
@@ -217,7 +218,7 @@
   }
 
   function inactiveBanner(list) {
-    if (!list || list.length === 0) return showBanner([]);
+    if (state.language_only || !list || list.length === 0) return showBanner([]);
     showBanner(['These hotkeys are not active right now. Choose another hotkey below and click Save. If none are active, you can also retry Save after the other program releases them:'].concat(list));
   }
 
@@ -241,34 +242,36 @@
   }
 
   function profileCard(p, i) {
+    const languageOnly = !!state.language_only;
     const mods = [['ctrl', 'Ctrl'], ['alt', 'Alt'], ['shift', 'Shift'], ['win', state.win_key]];
     const card = h('div', { class: 'profile', 'data-index': String(i) });
 
-    const remove = h('button', { type: 'button', class: 'danger', disabled: model.profiles.length <= 1,
-      'aria-label': 'Remove hotkey ' + (i + 1),
-      onclick: () => { model.profiles.splice(i, 1); touchField('profiles'); renderHotkeys(); } }, 'Remove');
-    card.append(h('div', { class: 'profile-head' },
-      h('h3', { text: 'Hotkey ' + (i + 1) }),
-      h('span', { class: 'spacer' }), remove));
+    if (!languageOnly) {
+      const remove = h('button', { type: 'button', class: 'danger', disabled: model.profiles.length <= 1,
+        'aria-label': 'Remove hotkey ' + (i + 1),
+        onclick: () => { model.profiles.splice(i, 1); touchField('profiles'); renderHotkeys(); } }, 'Remove');
+      card.append(h('div', { class: 'profile-head' },
+        h('h3', { text: 'Hotkey ' + (i + 1) }),
+        h('span', { class: 'spacer' }), remove));
 
-    const actual = state.actual_hotkeys && state.actual_hotkeys[i];
-    card.append(h('p', { class: 'hint actual-hotkey', 'data-index': String(i), hidden: !actual,
-      text: actual ? 'Currently active shortcut: ' + actual : '' }));
+      const actual = state.actual_hotkeys && state.actual_hotkeys[i];
+      card.append(h('p', { class: 'hint actual-hotkey', 'data-index': String(i), hidden: !actual,
+        text: actual ? 'Currently active shortcut: ' + actual : '' }));
 
-    const keyRow = h('div', { class: 'row' }, h('span', { class: 'label', text: 'Keys' }));
-    for (const [id, name] of mods) {
-      keyRow.append(h('label', { class: 'chip' },
-        h('input', { type: 'checkbox', checked: p[id], onchange: (e) => { p[id] = e.target.checked; touchField('profiles'); } }), name));
+      const keyRow = h('div', { class: 'row' }, h('span', { class: 'label', text: 'Keys' }));
+      for (const [id, name] of mods) {
+        keyRow.append(h('label', { class: 'chip' },
+          h('input', { type: 'checkbox', checked: p[id], onchange: (e) => { p[id] = e.target.checked; touchField('profiles'); } }), name));
+      }
+      keyRow.append(h('span', { class: 'plus', text: '+' }));
+      const letter = h('select', { class: 'letter', 'aria-label': 'Key of hotkey ' + (i + 1), onchange: (e) => { p.key = e.target.value; touchField('profiles'); } },
+        HOTKEY_KEYS.map((l) => h('option', { value: l, text: l })));
+      letter.value = p.key;
+      keyRow.append(letter);
+      card.append(keyRow);
     }
-    keyRow.append(h('span', { class: 'plus', text: '+' }));
-    const letter = h('select', { class: 'letter', 'aria-label': 'Key of hotkey ' + (i + 1), onchange: (e) => { p.key = e.target.value; touchField('profiles'); } },
-      HOTKEY_KEYS.map((l) => h('option', { value: l, text: l })));
-    letter.value = p.key;
-    keyRow.append(letter);
-    card.append(keyRow);
-
     const name = 'mode-' + i;
-    const seg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'How hotkey ' + (i + 1) + ' translates' },
+    const seg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': languageOnly ? 'Translate mode' : 'How hotkey ' + (i + 1) + ' translates' },
       [['pair', 'Between two languages'], ['target', 'Into one language']].map(([v, text]) =>
         h('label', {}, h('input', { type: 'radio', name, value: v, checked: p.mode === v,
           onchange: () => { p.mode = v; touchField('profiles'); renderHotkeys(); } }), text)));
@@ -279,34 +282,36 @@
         langSelect(p.a, (v) => { p.a = v; }, 'First language'),
         h('span', { class: 'plus', text: '↔' }),
         langSelect(p.b, (v) => { p.b = v; }, 'Second language')));
-      card.append(h('p', { class: 'hint', text: 'Text in either language is translated into the other. The two languages need different scripts so the app can tell them apart (for example English and German cannot share one hotkey).' }));
+      card.append(h('p', { class: 'hint', text: 'Text in either language is translated into the other. The two languages need different scripts so the app can tell them apart (for example English and German cannot ' + (languageOnly ? 'be paired).' : 'share one hotkey).') }));
     } else {
       card.append(h('div', { class: 'row' }, h('span', { class: 'label', text: 'Into' }),
         langSelect(p.target, (v) => { p.target = v; }, 'Target language')));
       card.append(h('p', { class: 'hint', text: 'Any language is translated into this one; the model works out the source language itself.' }));
     }
 
-    const inputId = 'input-' + i;
-    const inputSelect = h('select', {
-      id: inputId,
-      class: 'input',
-      'aria-label': 'Text source for hotkey ' + (i + 1),
-      onchange: (e) => {
-        p.input = e.target.value;
-        touchField('profiles');
+    if (!languageOnly) {
+      const inputId = 'input-' + i;
+      const inputSelect = h('select', {
+        id: inputId,
+        class: 'input',
+        'aria-label': 'Text source for hotkey ' + (i + 1),
+        onchange: (e) => {
+          p.input = e.target.value;
+          touchField('profiles');
+        },
       },
-    },
-      h('option', { value: 'selection', text: 'Selected text (copied first)' }),
-      h('option', { value: 'clipboard', text: 'Clipboard (no copy, no waiting)' }),
-    );
-    inputSelect.value = p.input || 'selection';
-    card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: inputId, text: 'Text from' }), inputSelect));
+        h('option', { value: 'selection', text: 'Selected text (copied first)' }),
+        h('option', { value: 'clipboard', text: 'Clipboard (no copy, no waiting)' }),
+      );
+      inputSelect.value = p.input || 'selection';
+      card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: inputId, text: 'Text from' }), inputSelect));
+    }
 
     const outputId = 'output-' + i;
     const outputSelect = h('select', {
       id: outputId,
       class: 'output',
-      'aria-label': 'Output format for hotkey ' + (i + 1),
+      'aria-label': languageOnly ? 'Output format' : 'Output format for hotkey ' + (i + 1),
       onchange: (e) => {
         p.output = e.target.value;
         touchField('profiles');
@@ -322,7 +327,7 @@
     const cleanupSelect = h('select', {
       id: cleanupId,
       class: 'cleanup-newlines',
-      'aria-label': 'Newline cleanup for hotkey ' + (i + 1),
+      'aria-label': languageOnly ? 'Newline cleanup' : 'Newline cleanup for hotkey ' + (i + 1),
       onchange: (e) => {
         p.cleanup_newlines = e.target.value;
         touchField('profiles');
@@ -339,7 +344,17 @@
   }
 
   function renderHotkeys() {
-    $('profiles').replaceChildren(...model.profiles.map(profileCard));
+    const languageOnly = !!state.language_only;
+    $('hotkeys-title').textContent = languageOnly ? 'Languages' : 'Hotkeys';
+    $('hotkeys-intro').textContent = languageOnly
+      ? 'Hotkeys are not available on ChromeOS; these language settings apply to translation.'
+      : 'Select text in any program and press a hotkey. The translation replaces what is on the clipboard. Each hotkey can translate in its own way.';
+    $('profiles').replaceChildren(...(languageOnly ? model.profiles.slice(0, 1) : model.profiles).map(profileCard));
+    if (languageOnly) {
+      $('add').hidden = true;
+      $('limit').hidden = true;
+      return;
+    }
     const max = state.max_hotkeys;
     const full = model.profiles.length >= max;
     $('add').hidden = max <= 1;
@@ -637,7 +652,12 @@
       desktop.hidden = !state.desktop_status;
     }
     const autoPaste = $('auto-paste');
-    if (autoPaste) autoPaste.disabled = !!state.wayland;
+    if (autoPaste) autoPaste.disabled = !!state.wayland || !!state.auto_paste_unavailable;
+    const pasteNote = $('auto-paste-unavailable');
+    if (pasteNote) {
+      pasteNote.textContent = state.auto_paste_unavailable || '';
+      pasteNote.hidden = !state.auto_paste_unavailable;
+    }
     const bar = $('busybar');
     if (bar) bar.hidden = !appBusy();
     const busyText = $('busytext');
@@ -680,7 +700,17 @@
   }
 
   // Take new data from the app without touching what is being edited.
+  function renderTranslateAPI(st) {
+    $('translate-api-enabled').disabled = !st.translate_api_available;
+    $('translate-api-copy').disabled = !st.translate_api_available;
+    $('translate-api-regenerate').disabled = !st.translate_api_available;
+    $('translate-api-enabled').checked = !!st.translate_api_enabled;
+    $('translate-api-token').value = st.translate_api_token || '';
+    $('translate-api-url').textContent = st.translate_api_url || '';
+  }
+
   function mergeState(st) {
+    renderTranslateAPI(st);
     if (closed) return;
     const wasBusy = appBusy();
     state = Object.assign({}, st);
@@ -887,6 +917,7 @@
     }
     state = Object.assign({}, r.data.state);
     baseRevision = state.revision || 0;
+    renderTranslateAPI(state);
     model = toModel(state);
     renderAll();
     renderHotkeys();
@@ -911,6 +942,49 @@
   }
 
   async function init() {
+    $('translate-api-regenerate').addEventListener('click', async () => {
+      const r = await api('/api/translate-api/regenerate', {});
+      if (r.data.state) mergeState(r.data.state);
+      $('translate-api-status').textContent = r.ok
+        ? 'Token regenerated. The old token is invalid. Update extension Options with the new token shown above.'
+        : (r.data.error || 'Could not regenerate token.');
+    });
+    $('translate-api-enabled').addEventListener('change', async (e) => {
+      e.target.disabled = true;
+      try {
+        const r = await api('/api/translate-api', { enabled: String(e.target.checked) });
+        if (r.data.state) {
+          if (state) {
+            state.translate_api_enabled = r.data.state.translate_api_enabled;
+            state.translate_api_token = r.data.state.translate_api_token;
+          }
+          renderTranslateAPI(r.data.state);
+        }
+        $('translate-api-status').textContent = r.ok ? 'Endpoint setting saved.' : (r.data.error || 'Could not change endpoint.');
+        if (!r.ok && state) renderTranslateAPI(state);
+      } finally { e.target.disabled = false; }
+    });
+    $('translate-api-copy').addEventListener('click', async () => {
+      const r = await api('/api/translate-api/info', {});
+      if (!r.ok) {
+        $('translate-api-status').textContent = r.data.error || 'Could not get connection info.';
+        return;
+      }
+      if (r.data.state) {
+        if (state) {
+          state.translate_api_enabled = r.data.state.translate_api_enabled;
+          state.translate_api_token = r.data.state.translate_api_token;
+        }
+        renderTranslateAPI(r.data.state);
+      }
+      try {
+        await navigator.clipboard.writeText($('translate-api-token').value);
+        $('translate-api-status').textContent = 'Token copied in clear text. Remove any saved clipboard history entry.';
+      } catch (_) {
+        $('translate-api-token').select();
+        $('translate-api-status').textContent = 'Press Ctrl+C to copy the selected token.';
+      }
+    });
     $('guide').addEventListener('toggle', () => { guideTouched = true; });
     $('add').addEventListener('click', () => {
       model.profiles.push({ ctrl: true, alt: true, shift: false, win: false, key: nextFreeKey(), mode: 'target', a: 'ja', b: 'en', target: 'en', output: 'replace', input: 'selection', cleanup_newlines: 'off' });
