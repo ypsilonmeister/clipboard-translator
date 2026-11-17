@@ -213,6 +213,48 @@ manual testing. Cross-compilation with `CGO_ENABLED=0` only verifies portable lo
 
 ### Install steps
 
+For Linux x86_64, install the latest release with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh | sh
+```
+
+The installer verifies the release SHA-256, installs to
+`${XDG_DATA_HOME:-$HOME/.local/share}/clipboard-translator`, runs the bundled
+`setup.sh` (model/runtime downloads), adds an application-menu launcher, and starts
+the app. It checks dependencies and warns about unsupported sessions; it never
+runs sudo or apt. Install missing packages using the Ubuntu command below (other
+distributions need equivalent packages). Use X11 or a Wayland desktop with the
+portals described below.
+
+Run the same command to update; quit the app first if possible. Your `config.json`,
+models and runtime are retained. Options go on the **sh side** of the pipe:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh | CT_VERSION=1.0.0 CT_SKIP_SETUP=1 CT_NO_LAUNCH=1 sh
+```
+
+`CT_VERSION` accepts a release version with or without `v`; omit it for latest.
+`CT_INSTALL_DIR` overrides the dedicated install directory. Boolean options are
+on with `1`, off with `0`. To inspect the script or uninstall, save it first:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh -o install.sh
+sh install.sh --help
+sh install.sh --uninstall                 # confirms through /dev/tty
+# Custom directory: add --install-dir /absolute/path/to/app
+# Unattended removal: --uninstall --yes (or CT_UNINSTALL=1 CT_YES=1)
+```
+
+Saved-script flags are `--version`, `--install-dir`, `--skip-setup`, `--no-launch`,
+`--uninstall` and `--yes`. Uninstall removes the app's files, configuration,
+downloaded models/runtime, private Wayland token and registrations pointing to
+this executable; unrelated files remain, and the directory is removed only if empty.
+The visible launcher is `applications/clipboard-translator.desktop` under the data
+home, separate from the app's hidden Wayland registration.
+
+Manual fallback:
+
 1. Check your session with `echo "$XDG_SESSION_TYPE"`: use X11 (Xorg), or a Wayland
    desktop with the portals described under *Wayland workflow* below.
 2. Install the dependencies (Ubuntu 24.04, below), then download
@@ -341,9 +383,9 @@ or `~/.config/autostart/io.github.ypsilonmeister.ClipboardTranslator.desktop` on
 changes and removes only entries matching this executable when disabled.
 Move the app before enabling it,
 or toggle the setting after moving it. Quit from the menu or send SIGTERM; a `STOP`
-file beside the executable also stops the app. Updating a Linux build currently means
-quitting and replacing the executable/setup script; retain `config.json`, `models`, and
-`runtime`. The Windows PowerShell installer and Scoop are Windows-only.
+file beside the executable also stops the app. Update by rerunning `install.sh`, or
+manually quit and replace the executable/setup script while retaining `config.json`,
+`models`, and `runtime`. The PowerShell installer and Scoop are Windows-only.
 
 To build from source on Ubuntu 24.04 (Go 1.21+ and a C compiler required):
 
