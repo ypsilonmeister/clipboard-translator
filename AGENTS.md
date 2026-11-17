@@ -220,10 +220,8 @@ release:
    the Linux tarball and the macOS arm64 / amd64 zips with their `.sha256`
    files, and attaches them. If a release already exists, the files are uploaded
    to it.
-3. After publishing, `release.yml` automatically opens a follow-up PR that bumps
-   `bucket/clipboard-translator.json` (`version`, `url`, and `hash` = SHA-256 of the
-   Windows zip). Merging the PR remains the maintainer's call (or can be submitted
-   manually if needed).
+3. Afterwards bump `bucket/clipboard-translator.json` (`version`, `url`, `hash`
+   = SHA-256 of that zip) in a follow-up PR.
 4. Not done yet: winget manifests (submitting to `microsoft/winget-pkgs` is a PR
    to someone else's repo, so ask the maintainer first).
 
