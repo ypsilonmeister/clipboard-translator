@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -216,32 +218,44 @@ func TestApp_ShowAlreadyRunning(t *testing.T) {
 	}
 }
 
+type pingQuitTray struct {
+	fakeTray
+	wantNote string
+}
+
+func (t *pingQuitTray) Notify(title, msg string, isError bool) {
+	t.fakeTray.Notify(title, msg, isError)
+	if msg == t.wantNote {
+		t.quit = true
+	}
+}
+
 // TestApp_ServeHandlesPing verifies that a ping delivered to an app in its serve
 // loop is processed and triggers the tray notification on the UI thread.
 func TestApp_ServeHandlesPing(t *testing.T) {
-	tray := &fakeTray{}
+	wantNote := "Clipboard Translator is already running. Its icon is here in the tray."
+	tray := &pingQuitTray{wantNote: wantNote}
 	a := newApp(t.TempDir(), config.Default(), config.Paths{}, tray, io.Discard)
 	a.newHotkey = func(spec string) (platform.Hotkey, error) { return fakeHotkey{}, nil }
 
 	// Send a ping to the app.
 	a.ping()
 
-	// Ask the loop to quit once the notification has been received.
+	cb := &testClipboard{}
+	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 50; i++ {
-			time.Sleep(10 * time.Millisecond)
-			if len(tray.notes) > 0 {
-				tray.quit = true
-				return
-			}
-		}
-		tray.quit = true
+		a.serve(cb)
+		close(done)
 	}()
 
-	cb := &testClipboard{}
-	a.serve(cb)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		_ = os.WriteFile(filepath.Join(a.dir, "STOP"), nil, 0600)
+		<-done
+		t.Fatal("serve did not exit after ping notification")
+	}
 
-	wantNote := "Clipboard Translator is already running. Its icon is here in the tray."
 	if tray.lastNote() != wantNote {
 		t.Fatalf("tray note = %q, want %q", tray.lastNote(), wantNote)
 	}
