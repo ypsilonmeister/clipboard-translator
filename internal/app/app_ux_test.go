@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
@@ -714,6 +715,47 @@ func TestHandleResultClipboardWriteError(t *testing.T) {
 			a.handleCommand(cmdHistoryBilingualBase)
 			if cb.text != "source\ntranslated" || *pastes != 0 {
 				t.Fatalf("history bilingual recovery: clipboard=%q pastes=%d", cb.text, *pastes)
+			}
+		})
+	}
+}
+
+func TestClipboardWriteErrorNotification(t *testing.T) {
+	const guidance = "The translation is kept in Recent translations in the tray menu."
+	const prefix = guidance + " Could not write translation to the clipboard: "
+	for _, tc := range []struct {
+		name, detail string
+	}{
+		{"no trailing period", "clipboard is busy"},
+		{"trailing period", "clipboard is busy."},
+		{"254 UTF-16 units", strings.Repeat("x", 254-len(prefix))},
+		{"255 UTF-16 units", strings.Repeat("x", 255-len(prefix))},
+		{"256 UTF-16 units", strings.Repeat("x", 256-len(prefix))},
+		{"long ASCII error", strings.Repeat("wrapped clipboard error: ", 30) + "end."},
+		{"long Unicode error", strings.Repeat("\U0001f512", 200) + "end."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := apiUnitApp(t)
+			a.cb = &testClipboard{text: "source", err: errors.New(tc.detail)}
+			a.handleResult(result{original: "source", translated: "translated", generation: a.generation})
+			note := a.tray.(*fakeTray).lastNote()
+			if want := prefix + tc.detail; note != want {
+				t.Errorf("notification = %q, want %q", note, want)
+			}
+			if strings.Contains(note, "..") {
+				t.Errorf("notification has doubled punctuation: %q", note)
+			}
+
+			// Model platform.copyUTF16 for Windows SzInfo [256]uint16:
+			// only 255 UTF-16 units fit, reserving the final unit for NUL.
+			// The helper is private to platform, so exercise the composed text here.
+			units := utf16.Encode([]rune(note))
+			if len(units) > 255 {
+				units = units[:255]
+			}
+			shown := string(utf16.Decode(units))
+			if !strings.HasPrefix(shown, prefix) {
+				t.Errorf("guidance must survive before error detail in Windows notification: %q", shown)
 			}
 		})
 	}
