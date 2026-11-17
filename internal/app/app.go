@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
@@ -636,6 +637,23 @@ func (a *app) updateReadyTip() {
 	}
 	if s := a.hotkeySummary(); s != "" {
 		a.readyTip = "Clipboard Translator - ready (" + s + ")"
+		// Windows reserves one of szTip's 128 UTF-16 units for the terminator.
+		if len(utf16.Encode([]rune(a.readyTip))) > 127 {
+			count := 0
+			if !a.hasNoHotkey() && a.hotkeyLabel(0) != "" {
+				count++
+			}
+			for _, e := range a.extras {
+				if e.hk != nil && a.hotkeyLabel(e.profile) != "" {
+					count++
+				}
+			}
+			label := "hotkeys"
+			if count == 1 {
+				label = "hotkey"
+			}
+			a.readyTip = fmt.Sprintf("Clipboard Translator - ready (%d %s)", count, label)
+		}
 	} else {
 		a.readyTip = noHotkeyTip
 	}

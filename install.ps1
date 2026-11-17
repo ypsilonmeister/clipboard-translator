@@ -166,7 +166,7 @@ function Invoke-ClipboardTranslatorInstaller {
         }
 
         # Files the app creates while it runs.
-        $owned = @($exeName, 'translator.log', 'server.log', 'STOP', '.installed', 'install.ps1')
+        $owned = @($exeName, 'translator.log', 'translator.log.1', 'server.log', 'STOP', '.installed', 'install.ps1')
         $manifest = Join-Path $InstallDir '.installed'
         if (Test-Path -LiteralPath $manifest -PathType Leaf) {
             # The installer recorded exactly what it unpacked. Entries are plain file

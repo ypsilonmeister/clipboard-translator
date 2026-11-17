@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -96,6 +97,47 @@ func TestUpdateConfigFileMissingAndInvalid(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(bad, "config.json")); string(b) != `["not an object"]` {
 		t.Fatal("a refused update must leave the file untouched")
+	}
+}
+
+func TestConfigFilePrivatePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not use Unix file permission bits")
+	}
+	for _, tc := range []struct {
+		name, old string
+		existing  bool
+		set       map[string]any
+	}{
+		{"new config", "", false, map[string]any{"hotkey": "Ctrl+Alt+E"}},
+		{"new token", "", false, map[string]any{"translate_api_token": "test-token"}},
+		{"empty existing config", "", true, map[string]any{"translate_api_token": "test-token"}},
+		{"token added", "{}\n", true, map[string]any{"translate_api_token": "test-token"}},
+		{"token preserved", "{\"translate_api_token\":\"test-token\"}\n", true, map[string]any{"auto_paste": true}},
+		{"unchanged token", "{\n  \"translate_api_token\": \"test-token\"\n}\n", true, map[string]any{"translate_api_token": "test-token"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.json")
+			if tc.existing {
+				if err := os.WriteFile(path, []byte(tc.old), 0644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := UpdateFile(dir, tc.set); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != 0600 {
+				t.Fatalf("config.json permissions = %04o, want 0600", got)
+			}
+		})
 	}
 }
 

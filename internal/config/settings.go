@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -284,6 +285,13 @@ func patchObject(raw []byte, set map[string]json.RawMessage) ([]byte, error) {
 
 // writeConfigFile keeps Scoop hard links intact and leaves no backup on no-op saves.
 func writeConfigFile(path string, old, updated []byte) error {
+	// WriteFile preserves existing modes. Restrict access before saving tokens,
+	// including no-op saves of a config written by an older version.
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(path, 0600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	if bytes.Equal(old, updated) {
 		return nil
 	}
@@ -292,5 +300,5 @@ func writeConfigFile(path string, old, updated []byte) error {
 			return err
 		}
 	}
-	return os.WriteFile(path, updated, 0644)
+	return os.WriteFile(path, updated, 0600)
 }

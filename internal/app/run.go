@@ -56,6 +56,21 @@ func (i ignoreWriteErrors) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+const translatorLogLimit = 1 << 20 // rotate at startup after 1 MiB
+
+func openTranslatorLog(path string) (*os.File, error) {
+	info, err := os.Stat(path)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err == nil && info.Size() > translatorLogLimit {
+		if err := os.Rename(path, path+".1"); err != nil {
+			return nil, fmt.Errorf("rotate translator.log: %w", err)
+		}
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+}
+
 // fatal logs the message, shows it to the user (message box in the GUI build)
 // and exits.
 func fatal(v ...any) {
@@ -89,7 +104,7 @@ func Run(opts Options) {
 		fatal("app data folder: ", err)
 	}
 	logPath := filepath.Join(dir, "translator.log")
-	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	logf, err := openTranslatorLog(logPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		platform.ShowError(err.Error())

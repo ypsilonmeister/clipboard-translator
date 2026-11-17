@@ -171,7 +171,7 @@ func (a *app) handleCommand(id int) {
 	case id == cmdUnloadModel:
 		a.unloadModel()
 	case id == cmdCancel:
-		if a.translating {
+		if a.translating || a.capturing != nil || a.pendingRead != nil || a.pendingResult != nil {
 			log.Print("translation cancelled from the menu")
 			a.abortTranslation()
 			a.setTransientStatus(cancelledStatus)

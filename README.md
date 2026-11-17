@@ -431,6 +431,7 @@ If the translation server (`llama-server`) stops unexpectedly the app restarts i
 (1 s, 2 s, 4 s ... apart) and says so; after 3 restarts within 10 minutes it gives
 up and quits with a message. Startup errors are shown in a message box and
 written to `translator.log`.
+At startup, a `translator.log` larger than 1 MiB is moved to `translator.log.1`, replacing the previous rotated log.
 
 ## Privacy and network use
 
