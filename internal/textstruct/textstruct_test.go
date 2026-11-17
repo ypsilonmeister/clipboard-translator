@@ -863,6 +863,28 @@ func TestCleanSpuriousNewlines_NegativeGuardsPreserved(t *testing.T) {
 				"Okay.",
 			lang: "en",
 		},
+		{
+			name:  "All-caps heading ending in connector word before long sentence",
+			input: "INTRODUCTION TO\nThe following section explains all available translation profiles.",
+			lang:  "en",
+		},
+		{
+			name:  "Short attribution line ending in connector word",
+			input: "Prepared by\nAlice Example, QA Department",
+			lang:  "en",
+		},
+		{
+			name: "Parenthesized Roman-numeral list items",
+			input: "(i) First item describes the preprocessing stage in full detail\n" +
+				"(ii) Second item describes the postprocessing stage in full detail",
+			lang: "en",
+		},
+		{
+			name: "Unindented C++ stream statements ending in semicolon",
+			input: "logger << \"The translation is ready\";\n" +
+				"logger << \"The next request is pending\";",
+			lang: "en",
+		},
 	}
 
 	for _, tc := range cases {
@@ -927,6 +949,31 @@ func TestSplitSentences_EllipsesAbbreviationsAndLowercaseContinuation(t *testing
 			name:  "Question and exclamation marks with lowercase attribution still split",
 			input: "\"Really?\" she asked. \"Yes!\" he replied.",
 			want:  []string{"\"Really?\"", "she asked.", "\"Yes!\"", "he replied."},
+		},
+		{
+			name:  "Sentence-final min. before new sentence",
+			input: "The wait lasted one min. Then we left.",
+			want:  []string{"The wait lasted one min.", "Then we left."},
+		},
+		{
+			name:  "Sentence-final ed. before new sentence",
+			input: "We consulted the latest ed. Then we revised the draft.",
+			want:  []string{"We consulted the latest ed.", "Then we revised the draft."},
+		},
+		{
+			name:  "Sentence-final Ave. before new sentence",
+			input: "The street was Oak Ave. Then we turned left.",
+			want:  []string{"The street was Oak Ave.", "Then we turned left."},
+		},
+		{
+			name:  "Sentence-initial No. before new sentence",
+			input: "No. This is unsupported.",
+			want:  []string{"No.", "This is unsupported."},
+		},
+		{
+			name:  "Sentence-final etc. before new sentence",
+			input: "We bought paper, pens, etc. Then we left.",
+			want:  []string{"We bought paper, pens, etc.", "Then we left."},
 		},
 	}
 

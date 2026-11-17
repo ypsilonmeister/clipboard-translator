@@ -153,8 +153,17 @@ func isOpeningPunctuation(r rune) bool {
 	}
 }
 
+func isRomanNumeralRune(r rune) bool {
+	switch unicode.ToLower(r) {
+	case 'i', 'v', 'x', 'l', 'c', 'd', 'm':
+		return true
+	default:
+		return false
+	}
+}
+
 // isParenthesizedListMarker reports whether runes starts with a list item marker
-// such as "(1) " or "(a) ".
+// such as "(1) ", "(a) ", or "(i) ".
 func isParenthesizedListMarker(runes []rune) bool {
 	if len(runes) < 4 || runes[0] != '(' {
 		return false
@@ -162,6 +171,10 @@ func isParenthesizedListMarker(runes []rune) bool {
 	idx := 1
 	if unicode.IsDigit(runes[idx]) {
 		for idx < len(runes) && unicode.IsDigit(runes[idx]) {
+			idx++
+		}
+	} else if isRomanNumeralRune(runes[idx]) {
+		for idx < len(runes) && isRomanNumeralRune(runes[idx]) {
 			idx++
 		}
 	} else if unicode.IsLetter(runes[idx]) && runes[idx] < 128 {
@@ -211,7 +224,7 @@ func endsWithMidSentenceConnector(trimmed string) bool {
 	if idx < 0 {
 		return false
 	}
-	lastWord := strings.ToLower(trimmed[idx+1:])
+	lastWord := trimmed[idx+1:]
 	return midSentenceConnectors[lastWord]
 }
 
@@ -286,9 +299,12 @@ func shouldJoin(cur, next lineInfo, colMedian int, lang string) (bool, string) {
 	}
 
 	hasConnector := !cur.endsSentence && endsWithMidSentenceConnector(cur.trimmed)
+	hasShortConnectorWrap := cur.width >= 10 && !cur.endsSentence &&
+		hasConnector && len(strings.Fields(cur.trimmed)) >= 3 &&
+		next.width >= 25 && (next.endsSentence || endsWithMidSentenceConnector(next.trimmed) || colMedian >= 25)
 
 	// 4. Short non-sentence line followed by Uppercase (e.g. "Taro Yamada\nSenior Director...")
-	if !cur.endsSentence && len(curRunes) < 25 && unicode.IsUpper(nextFirst) && !hasConnector {
+	if !cur.endsSentence && len(curRunes) < 25 && unicode.IsUpper(nextFirst) && !hasShortConnectorWrap {
 		return false, ""
 	}
 
@@ -309,8 +325,6 @@ func shouldJoin(cur, next lineInfo, colMedian int, lang string) (bool, string) {
 	hasMidSentenceWidth := cur.width >= 25 && !cur.endsSentence &&
 		(hasConnector || curLast == '—' || curLast == '–' || curLast == ';' ||
 			(colMedian == 0 && isOpeningContinuation(nextRunes)))
-	hasShortConnectorWrap := cur.width >= 10 && !cur.endsSentence &&
-		hasConnector && (next.width >= 25 || colMedian >= 25)
 	if !hasGeometricCorroboration(cur, next, colMedian) && !hasMidSentenceWidth && !hasShortConnectorWrap {
 		// Exception: in a multi-line column block (colMedian >= 25), if cur ends in sentence
 		// punctuation and next line is a full-width column continuation (next.width >= colMedian - 8):

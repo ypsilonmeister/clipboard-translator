@@ -26,6 +26,42 @@ var (
 		"jan": true, "feb": true, "mar": true, "apr": true, "jun": true,
 		"jul": true, "aug": true, "sep": true, "oct": true, "nov": true, "dec": true,
 	}
+
+	// strictTitleAbbreviations always attach to a following capitalized name or reference
+	// and do not end sentences in normal prose.
+	strictTitleAbbreviations = map[string]bool{
+		"mr": true, "mrs": true, "ms": true, "dr": true, "prof": true,
+		"vs": true, "cf": true,
+	}
+
+	// contextualTitleAbbreviations attach to a following capitalized proper noun
+	// (e.g. "St. Louis", "Eds. Smith", "Smith v. Jones", "John Jr.") unless the
+	// next word is a common sentence starter (e.g. "Main St. Then we turned left.").
+	contextualTitleAbbreviations = map[string]bool{
+		"sr": true, "jr": true, "st": true, "v": true, "eds": true,
+	}
+
+	sentenceStarterWords = map[string]bool{
+		"the": true, "then": true, "this": true, "that": true, "these": true, "those": true,
+		"there": true, "they": true, "their": true, "it": true, "its": true, "we": true,
+		"our": true, "he": true, "his": true, "she": true, "her": true, "you": true,
+		"your": true, "i": true, "in": true, "on": true, "at": true, "for": true,
+		"from": true, "to": true, "with": true, "without": true, "by": true, "after": true,
+		"before": true, "during": true, "while": true, "when": true, "where": true,
+		"why": true, "how": true, "what": true, "which": true, "who": true, "if": true,
+		"unless": true, "until": true, "although": true, "though": true, "because": true,
+		"since": true, "as": true, "so": true, "but": true, "and": true, "or": true,
+		"nor": true, "yet": true, "however": true, "therefore": true, "furthermore": true,
+		"moreover": true, "nevertheless": true, "nonetheless": true, "meanwhile": true,
+		"instead": true, "otherwise": true, "consequently": true, "subsequently": true,
+		"accordingly": true, "thus": true, "hence": true, "next": true, "first": true,
+		"second": true, "third": true, "finally": true, "last": true, "more": true,
+		"most": true, "some": true, "many": true, "several": true, "each": true,
+		"every": true, "all": true, "both": true, "neither": true, "either": true,
+		"another": true, "other": true, "such": true, "here": true, "now": true,
+		"soon": true, "later": true, "today": true, "yesterday": true, "tomorrow": true,
+		"yes": true, "no": true, "please": true, "see": true, "note": true,
+	}
 )
 
 // SplitParagraphs splits text at blank line boundaries (\r?\n\s*\r?\n) and trims
@@ -536,18 +572,39 @@ func isAbbreviation(runes []rune, dotIdx int) bool {
 	if len(word) == 0 {
 		return false
 	}
-	// Single-letter initials (e.g. "J." in "J. Smith")
-	if len(word) == 1 {
-		return true
+
+	endIdx := dotIdx
+	for endIdx+1 < len(runes) && isClosingPunctuation(runes[endIdx+1]) {
+		endIdx++
 	}
-	if abbreviations[word] {
-		return true
+	nextIdx := endIdx + 1
+	for nextIdx < len(runes) && unicode.IsSpace(runes[nextIdx]) {
+		nextIdx++
 	}
-	// Multi-part abbreviations with adjacent periods (e.g. second dot of "e.g.")
-	if start >= 1 && runes[start] == '.' {
-		return true
+
+	if nextIdx >= len(runes) || nextIdx == endIdx+1 || unicode.IsLower(runes[nextIdx]) || unicode.IsDigit(runes[nextIdx]) {
+		return len(word) == 1 || abbreviations[word] || (start >= 1 && runes[start] == '.')
 	}
-	return false
+
+	if unicode.IsUpper(runes[nextIdx]) {
+		endNext := nextIdx
+		for endNext < len(runes) && unicode.IsLetter(runes[endNext]) {
+			endNext++
+		}
+		nextWord := strings.ToLower(string(runes[nextIdx:endNext]))
+		if strictTitleAbbreviations[word] {
+			return true
+		}
+		if start >= 1 && runes[start] == '.' {
+			return !sentenceStarterWords[nextWord]
+		}
+		if contextualTitleAbbreviations[word] || (len(word) == 1 && unicode.IsUpper(runes[dotIdx-1])) {
+			return !sentenceStarterWords[nextWord]
+		}
+		return false
+	}
+
+	return len(word) == 1 || abbreviations[word] || (start >= 1 && runes[start] == '.')
 }
 
 // splitRuneBudget slices a string into chunks of at most maxChunkChars runes.

@@ -10,8 +10,8 @@ var (
 	// reBlockQuote matches lines starting with '>' (e.g. "> quote", ">> nested")
 	reBlockQuote = regexp.MustCompile(`^\s*>`)
 
-	// reListMarker matches unordered (- * • ・) and ordered/lettered (1. a. iv.) lists
-	reListMarker = regexp.MustCompile(`^\s*([-*•・]|\d+[.)]|[a-zA-Z][.)]|[ivxLCDM]+[.)])\s+`)
+	// reListMarker matches unordered (- * • ・), ordered/lettered (1. a. iv.), and parenthesized ((1) (a) (i)) lists
+	reListMarker = regexp.MustCompile(`^\s*([-*•・]|\d+[.)]|[a-zA-Z][.)]|(?i:[ivxlcdm]+)[.)]|\(\d+\)|\([a-zA-Z]\)|\((?i:[ivxlcdm]+)\))\s+`)
 
 	// reEmailSig matches standard email signature separator ("-- ")
 	reEmailSig = regexp.MustCompile(`^--\s*$`)
@@ -134,7 +134,12 @@ func isCodeLine(line string) bool {
 }
 
 func isCodeStatementWithSemicolon(trimmed string) bool {
-	if strings.ContainsAny(trimmed, "={}") || hasCodeCallSyntax(trimmed) {
+	if strings.ContainsAny(trimmed, "={}<>[]") ||
+		strings.Contains(trimmed, "++") ||
+		strings.Contains(trimmed, "--") ||
+		strings.Contains(trimmed, "->") ||
+		strings.Contains(trimmed, "::") ||
+		hasCodeCallSyntax(trimmed) {
 		return true
 	}
 	for _, kw := range []string{
