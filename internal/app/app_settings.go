@@ -119,6 +119,15 @@ func (a *app) handleSettingsRequest(req settings.Request) {
 	case "translate_api":
 		a.configureTranslateAPI(req)
 		return
+	case "translate_api_regenerate":
+		var err error
+		if !translateAPISupported() {
+			err = errors.New("Translation endpoint is available only on Linux")
+		} else {
+			err = a.regenerateTranslateAPIToken()
+		}
+		req.Reply <- settings.Reply{State: a.settingsState(), Err: err}
+		return
 	case "use_model":
 		a.startModelSwitch(req)
 		return

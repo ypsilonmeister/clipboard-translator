@@ -3,13 +3,17 @@ package app
 import (
 	"encoding/json"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 )
 
 func TestChromeOSManualMenu(t *testing.T) {
@@ -23,7 +27,7 @@ func TestChromeOSManualMenu(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		a.conf.TranslateAPIEnabled = enabled
 		items := a.buildMenu()
-		labels := []string{"Settings...", "Quick start", "Translate clipboard", "Chrome extension endpoint", "Copy connection info"}
+		labels := []string{"Settings...", "Quick start", "Translate clipboard", "Chrome extension endpoint", "Copy connection info", "Regenerate token"}
 		if enabled {
 			labels = append(labels, "ChromeOS: enable port forwarding for TCP "+translateAPIPort)
 		}
@@ -33,7 +37,7 @@ func TestChromeOSManualMenu(t *testing.T) {
 				t.Fatalf("item %d = %+v; want %q", i, items[i], label)
 			}
 		}
-		if items[3].Checked != enabled || (enabled && !items[5].Disabled) {
+		if items[3].Checked != enabled || (enabled && !items[6].Disabled) {
 			t.Fatal("endpoint state missing")
 		}
 	}
@@ -71,9 +75,64 @@ func TestChromeOSManualMenu(t *testing.T) {
 		t.Fatal("note escaped unavailable-portal profile")
 	}
 	for _, item := range a.buildMenu() {
-		if item.ID == cmdTranslateAPIToggle || item.ID == cmdCopyConnectionInfo {
+		if item.ID == cmdTranslateAPIToggle || item.ID == cmdCopyConnectionInfo || item.ID == cmdRegenerateToken {
 			t.Fatal("endpoint menu escaped unavailable-portal profile")
 		}
+	}
+}
+
+func TestChromeOSRegenerateTokenCommand(t *testing.T) {
+	oldSupported := translateAPISupported
+	translateAPISupported = func() bool { return true }
+	t.Cleanup(func() { translateAPISupported = oldSupported })
+	a := apiUnitApp(t)
+	cb := &asyncDesktopClipboard{testClipboard: a.cb.(*testClipboard), state: platform.DesktopStatus{Crostini: true, PortalCapabilitiesMissing: true}}
+	a.cb = cb
+	if err := a.ensureTranslateAPIToken(); err != nil {
+		t.Fatal(err)
+	}
+	oldToken := a.conf.TranslateAPIToken
+	a.apiAuth = newTranslateAPIAuth(oldToken, "")
+	h := translateAPIHandler(a.apiAuth, func(settings.Request) settings.Reply { return settings.Reply{Translation: "translated"} })
+	server := &http.Server{Handler: h}
+	a.apiServer = server
+	a.conf.TranslateAPIEnabled = true
+	found := false
+	for _, item := range a.buildMenu() {
+		if item.ID == cmdRegenerateToken {
+			found = item.Label == "Regenerate token" && !item.Disabled
+		}
+	}
+	if !found {
+		t.Fatal("tray is missing Regenerate token")
+	}
+	a.handleCommand(cmdRegenerateToken)
+	var info struct{ Endpoint, Token string }
+	if err := json.Unmarshal([]byte(cb.text), &info); err != nil || info.Endpoint != translateAPIURL() || len(info.Token) != 64 || info.Token == oldToken || info.Token != a.conf.TranslateAPIToken {
+		t.Fatal("tray rotation did not copy new connection info", err)
+	}
+	persisted, err := config.Load(a.dir)
+	if err != nil || persisted.TranslateAPIToken != info.Token || a.apiServer != server || !a.conf.TranslateAPIEnabled {
+		t.Fatal("tray rotation did not persist or changed listener", err)
+	}
+	for token, status := range map[string]int{oldToken: 401, info.Token: 200} {
+		r := httptest.NewRequest("POST", "/translate", strings.NewReader(`{"text":"Hello"}`))
+		r.Header.Set(translateTokenHeader, token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != status {
+			t.Fatalf("tray token status=%d want=%d", w.Code, status)
+		}
+	}
+	// A failed tray rotation must neither replace credentials nor copy new info.
+	a.dir = filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(a.dir, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	clipboard := cb.text
+	a.handleCommand(cmdRegenerateToken)
+	if cb.text != clipboard || a.conf.TranslateAPIToken != info.Token || !strings.Contains(a.tray.(*fakeTray).lastNote(), "Could not regenerate token") {
+		t.Fatal("failed tray save changed connection info or hid the error")
 	}
 }
 
@@ -199,7 +258,7 @@ func TestConnectionCopyTokenNotice(t *testing.T) {
 	a := apiUnitApp(t)
 	a.copyConnectionInfo()
 	tray := a.tray.(*fakeTray)
-	if len(tray.notes) != 1 || !strings.Contains(tray.notes[0], "token in clear text") {
+	if len(tray.notes) != 1 || !strings.Contains(tray.notes[0], "clear-text token") {
 		t.Fatalf("notifications: %v", tray.notes)
 	}
 	if !strings.Contains(a.cb.(*testClipboard).text, a.conf.TranslateAPIToken) || len(a.conf.TranslateAPIToken) != 64 {

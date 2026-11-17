@@ -70,6 +70,7 @@ type app struct {
 	apiContext     context.Context
 	apiReply       chan settings.Reply
 	apiServer      *http.Server
+	apiAuth        *translateAPIAuth
 	settingsReqs   chan settings.Request     // page -> main loop
 	settingsNotice string                    // why the last switch started from the page did not work
 	settingsIdle   time.Duration             // idle timeout for the settings server; 0 uses settingsIdle

@@ -316,7 +316,7 @@ func TestChunkCoordinator_ChunkTimeoutMessage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/translate", strings.NewReader(`{"text":"x"}`))
 	req.Header.Set(translateTokenHeader, "tok")
-	translateAPIHandler("tok", func(settings.Request) settings.Reply { return settings.Reply{Err: err} }).ServeHTTP(rec, req)
+	translateAPIHandler(newTranslateAPIAuth("tok", ""), func(settings.Request) settings.Reply { return settings.Reply{Err: err} }).ServeHTTP(rec, req)
 	if rec.Code != http.StatusGatewayTimeout {
 		t.Errorf("translation endpoint answered %d for a chunk timeout, want 504", rec.Code)
 	}
