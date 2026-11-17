@@ -36,6 +36,7 @@ type result struct {
 	fallback             platform.CaptureFallback // why the old clipboard text was used instead of a selection
 	output               string
 	capturedAt           time.Time
+	action               string
 }
 
 func appDir() (string, error) {

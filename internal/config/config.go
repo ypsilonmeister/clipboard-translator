@@ -35,6 +35,8 @@ type Config struct {
 	TemplateFile          string `json:"template_file"`
 	ServerFile            string `json:"server_file"`
 	FallbackServerFile    string `json:"fallback_server_file"`
+	// Action specifies what to do: "translate" (default) or "telephone".
+	Action string `json:"action,omitempty"`
 	// AutoPaste types Ctrl+V into the window the text was selected in once the
 	// translation is ready. Off by default.
 	AutoPaste bool `json:"auto_paste"`
@@ -59,6 +61,11 @@ const (
 	OutputBilingual = "bilingual"
 )
 
+const (
+	ActionTranslate = "translate"
+	ActionTelephone = "telephone"
+)
+
 // Where a profile takes its text from: the selection (Ctrl+C is sent first) or
 // the clipboard as it is (nothing is copied, nothing is waited for).
 const (
@@ -78,11 +85,19 @@ const (
 // an Output mode ("replace" or "bilingual") and an Input ("selection" or "clipboard").
 type Profile struct {
 	Hotkey          string   `json:"hotkey"`
+	Action          string   `json:"action,omitempty"`
 	Languages       []string `json:"languages,omitempty"`
 	Target          string   `json:"target,omitempty"`
 	Output          string   `json:"output,omitempty"`
 	Input           string   `json:"input,omitempty"`
 	CleanupNewlines string   `json:"cleanup_newlines,omitempty"`
+}
+
+func (p Profile) ActionMode() string {
+	if p.Action == ActionTelephone {
+		return ActionTelephone
+	}
+	return ActionTranslate
 }
 
 func (p Profile) InputMode() string {
@@ -110,10 +125,20 @@ func (p Profile) CleanupNewlinesMode() string {
 // Hotkey/Languages. It does not validate.
 func (c *Config) NormalizeProfiles() {
 	if len(c.Profiles) == 0 {
-		c.Profiles = []Profile{{Hotkey: c.Hotkey, Languages: append([]string(nil), c.Languages...), Output: OutputReplace, Input: InputSelection, CleanupNewlines: CleanupNewlinesOff}}
+		c.Profiles = []Profile{{Hotkey: c.Hotkey, Action: c.Action, Languages: append([]string(nil), c.Languages...), Output: OutputReplace, Input: InputSelection, CleanupNewlines: CleanupNewlinesOff}}
+		if c.Profiles[0].Action == "" {
+			c.Profiles[0].Action = ActionTranslate
+		}
+		c.Action = c.Profiles[0].Action
 		return
 	}
 	for i := range c.Profiles {
+		if c.Profiles[i].Action == "" && c.Action != "" {
+			c.Profiles[i].Action = c.Action
+		}
+		if c.Profiles[i].Action == "" {
+			c.Profiles[i].Action = ActionTranslate
+		}
 		if c.Profiles[i].Output == "" {
 			c.Profiles[i].Output = OutputReplace
 		}
@@ -125,6 +150,7 @@ func (c *Config) NormalizeProfiles() {
 		}
 	}
 	c.Hotkey = c.Profiles[0].Hotkey
+	c.Action = c.Profiles[0].Action
 	if c.Profiles[0].Languages != nil {
 		c.Languages = append([]string(nil), c.Profiles[0].Languages...)
 	}
@@ -133,6 +159,15 @@ func (c *Config) NormalizeProfiles() {
 // resolveProfiles validates the hotkey/languages pair, or the profiles when the
 // file has them, and fills Profiles.
 func (c *Config) ResolveProfiles(explicit bool) error {
+	if c.Action != "" {
+		act := strings.ToLower(strings.TrimSpace(c.Action))
+		switch act {
+		case ActionTranslate, ActionTelephone:
+			c.Action = act
+		default:
+			return fmt.Errorf("action %q is not supported; valid values: %q, %q", c.Action, ActionTranslate, ActionTelephone)
+		}
+	}
 	if !explicit {
 		if c.Hotkey == "" {
 			return errors.New("hotkey cannot be empty")
@@ -156,6 +191,15 @@ func (c *Config) ResolveProfiles(explicit bool) error {
 	for i := range c.Profiles {
 		p := &c.Profiles[i]
 		where := fmt.Sprintf("profiles[%d]", i)
+		act := strings.ToLower(strings.TrimSpace(p.Action))
+		switch act {
+		case "", ActionTranslate:
+			p.Action = ActionTranslate
+		case ActionTelephone:
+			p.Action = ActionTelephone
+		default:
+			return fmt.Errorf("%s: action %q is not supported; valid values: %q, %q", where, p.Action, ActionTranslate, ActionTelephone)
+		}
 		spec, err := hotkeyspec.ParseNames(p.Hotkey, runtime.GOOS != "windows", runtime.GOOS == "darwin")
 		if err != nil {
 			return fmt.Errorf("%s: %w", where, err)

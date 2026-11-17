@@ -74,9 +74,11 @@ type paraStructure struct {
 }
 
 type translationProgress struct {
-	generation  uint64
-	chunkIndex  int
-	totalChunks int
+	generation     uint64
+	chunkIndex     int
+	totalChunks    int
+	telephoneRound int
+	telephoneTotal int
 }
 
 type chunkError struct {

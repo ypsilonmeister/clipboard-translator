@@ -618,7 +618,11 @@ func (f Form) ToConfig(base config.Config) (config.Config, error) {
 			if p.Target != "" && len(p.Languages) > 0 {
 				return base, fmt.Errorf("profiles[%d]: use either two languages or one target language, not both", i)
 			}
-			c.Profiles[i] = config.Profile{Hotkey: p.HotkeyString(), Output: p.Output, Input: p.Input, CleanupNewlines: p.CleanupNewlines}
+			action := config.ActionTranslate
+			if i < len(base.Profiles) && base.Profiles[i].Action != "" {
+				action = base.Profiles[i].Action
+			}
+			c.Profiles[i] = config.Profile{Hotkey: p.HotkeyString(), Action: action, Output: p.Output, Input: p.Input, CleanupNewlines: p.CleanupNewlines}
 			if p.Target != "" {
 				c.Profiles[i].Target = p.Target
 			} else {
