@@ -24,7 +24,7 @@ var (
 	openClipboard              = user32.NewProc("OpenClipboard")
 	closeClipboard             = user32.NewProc("CloseClipboard")
 	getClipboardData           = user32.NewProc("GetClipboardData")
-	setClipboardData           = user32.NewProc("SetClipboardData")
+	setClipboardData           = user32.NewProc("SetClipboardData").Call
 	isClipboardFormatAvailable = user32.NewProc("IsClipboardFormatAvailable")
 	emptyClipboard             = user32.NewProc("EmptyClipboard")
 	globalAlloc                = kernel32.NewProc("GlobalAlloc")
@@ -105,11 +105,24 @@ func (w *winClipboard) readLocked() (string, error) {
 }
 
 func (w *winClipboard) Write(s string) error {
+	h, err := prepareClipboardText(s)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if h != 0 {
+			globalFree.Call(h)
+		}
+	}()
 	if err := w.open(); err != nil {
 		return err
 	}
 	defer closeClipboard.Call()
-	return w.writeLocked(s)
+	if err := w.writeLocked(h); err != nil {
+		return err
+	}
+	h = 0 // Clipboard owns the replacement memory.
+	return nil
 }
 
 // ReplaceIfUnchanged does not depend on GetClipboardSequenceNumber, which may
@@ -117,6 +130,15 @@ func (w *winClipboard) Write(s string) error {
 // Opening the clipboard across the comparison AND write prevents TOCTOU races
 // with other clipboard writers.
 func (w *winClipboard) ReplaceIfUnchanged(expected, translated string) (bool, error) {
+	h, err := prepareClipboardText(translated)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if h != 0 {
+			globalFree.Call(h)
+		}
+	}()
 	if err := w.open(); err != nil {
 		return false, err
 	}
@@ -128,34 +150,65 @@ func (w *winClipboard) ReplaceIfUnchanged(expected, translated string) (bool, er
 	if !SameClipboardText(current, expected) {
 		return false, nil
 	}
-	if err := w.writeLocked(translated); err != nil {
+	if err := w.writeLocked(h); err != nil {
 		return false, err
 	}
+	h = 0 // Clipboard owns the replacement memory.
 	return true, nil
 }
 
-// writeLocked requires the caller to hold OpenClipboard.
-func (w *winClipboard) writeLocked(s string) error {
+// prepareClipboardText allocates and copies text without changing the clipboard.
+// The caller owns the returned handle until SetClipboardData succeeds.
+func prepareClipboardText(s string) (uintptr, error) {
 	utf16buf := utf16.Encode([]rune(s))
 	utf16buf = append(utf16buf, 0)
 	bytes := uintptr(len(utf16buf) * 2)
 	h, _, _ := globalAlloc.Call(gmemMoveable, bytes)
 	if h == 0 {
-		return errors.New("GlobalAlloc failed")
+		return 0, errors.New("GlobalAlloc failed")
 	}
 	ptr, _, _ := globalLock.Call(h)
 	if ptr == 0 {
 		globalFree.Call(h)
-		return errors.New("GlobalLock failed")
+		return 0, errors.New("GlobalLock failed")
 	}
 	copy(unsafe.Slice((*uint16)(lockedPtr(ptr)), len(utf16buf)), utf16buf)
 	globalUnlock.Call(h)
+	return h, nil
+}
+
+// writeLocked requires the caller to hold OpenClipboard and supply prepared data.
+// On failure the caller still owns h; on success the clipboard owns it.
+func (w *winClipboard) writeLocked(h uintptr) error {
+	var previous uintptr
+	if available, _, _ := isClipboardFormatAvailable.Call(cfUnicodeText); available != 0 {
+		// EmptyClipboard frees the original handle. Prepare an independent text
+		// backup under the same lock, before destroying any clipboard content.
+		text, err := w.readLocked()
+		if err != nil {
+			return fmt.Errorf("preserve clipboard text: %w", err)
+		}
+		previous, err = prepareClipboardText(text)
+		if err != nil {
+			return fmt.Errorf("preserve clipboard text: %w", err)
+		}
+	}
+	defer func() {
+		if previous != 0 {
+			globalFree.Call(previous)
+		}
+	}()
+
 	if ok, _, _ := emptyClipboard.Call(); ok == 0 {
-		globalFree.Call(h)
 		return errors.New("EmptyClipboard failed")
 	}
-	if ok, _, _ := setClipboardData.Call(cfUnicodeText, h); ok == 0 {
-		globalFree.Call(h)
+	if ok, _, _ := setClipboardData(cfUnicodeText, h); ok == 0 {
+		if previous != 0 {
+			if restored, _, err := setClipboardData(cfUnicodeText, previous); restored == 0 {
+				return fmt.Errorf("SetClipboardData failed; restoring previous clipboard text also failed: %w", err)
+			}
+			previous = 0 // Clipboard owns the restored memory.
+		}
 		return errors.New("SetClipboardData failed")
 	}
 	return nil // Clipboard owns the memory from here on.
