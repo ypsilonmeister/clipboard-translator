@@ -45,7 +45,7 @@ main() {
     exe=$install_dir/clipboard-translator
     desktop=$data_home/applications/clipboard-translator.desktop
     desktop_exec=$(printf '%s' "$exe" | sed 's/\\/\\\\\\\\/g; s/"/\\\\"/g; s/`/\\\\`/g; s/\$/\\\\$/g; s/%/%%/g')
-    owned='clipboard-translator setup.sh README.md README.ja.md LICENSE config.json config.json.bak translator.log server.log setup.log STOP .installed'
+    owned='clipboard-translator setup.sh README.md README.ja.md LICENSE config.json config.json.bak translator.log translator.log.1 server.log setup.log STOP .installed'
     marker='Clipboard Translator Linux installer'
     ours=0
     if [ ! -L "$install_dir/.installed" ] && [ -f "$install_dir/.installed" ] &&

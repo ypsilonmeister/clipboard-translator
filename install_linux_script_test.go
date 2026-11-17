@@ -349,17 +349,19 @@ func TestLinuxInstallRejectsImpostor(t *testing.T) {
 		}
 	}
 }
-func TestLinuxInstallUninstallSetupLog(t *testing.T) {
+func TestLinuxInstallUninstallLogs(t *testing.T) {
 	f := newLinuxInstallerFixture(t)
 	if out, err := f.run(t, nil); err != nil {
 		t.Fatalf("%v %s", err, out)
 	}
-	writeInstallFixture(t, filepath.Join(f.dir, "setup.log"), "setup details", 0644)
+	for _, name := range []string{"translator.log", "translator.log.1", "server.log", "setup.log"} {
+		writeInstallFixture(t, filepath.Join(f.dir, name), "log details", 0644)
+	}
 	if out, err := f.run(t, nil, "--uninstall", "--yes"); err != nil {
 		t.Fatalf("%v %s", err, out)
 	}
 	if _, err := os.Stat(f.dir); !os.IsNotExist(err) {
-		t.Fatal("setup log kept dedicated directory")
+		t.Fatal("app logs kept dedicated directory")
 	}
 }
 
