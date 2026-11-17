@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -16,7 +17,7 @@ func TestDirectionForCorpus(t *testing.T) {
 	}
 	defer f.Close()
 	type score struct{ before, after, total int }
-	var overall, hard, cross score
+	var overall, hard, cross, filenames score
 	scanner := bufio.NewScanner(f)
 	rows := 0
 	for scanner.Scan() {
@@ -44,6 +45,11 @@ func TestDirectionForCorpus(t *testing.T) {
 				scores = append(scores, &hard)
 			}
 		}
+		// The five hyphen/underscore cases from Probe 1 of the bake-off.
+		switch tc.Input[strings.LastIndex(tc.Input, " ")+1:] {
+		case "docker-compose.yml", "test_utils.py", "my-script.py", "run-tests.sh", "foo-bar.com":
+			scores = append(scores, &filenames)
+		}
 		for _, s := range scores {
 			s.total++
 			if before {
@@ -58,13 +64,16 @@ func TestDirectionForCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rows != 101 || overall.total != 97 || hard.total != 24 || cross.total != 4 ||
-		overall.before != 88 || hard.before != 18 || cross.before != 4 {
-		t.Fatalf("corpus/baseline changed: rows=%d, overall=%+v, hard=%+v, cross=%+v", rows, overall, hard, cross)
+		overall.before != 88 || hard.before != 18 || cross.before != 4 || filenames.total != 5 || filenames.before != 0 {
+		t.Fatalf("corpus/baseline changed: rows=%d, overall=%+v, hard=%+v, cross=%+v, filenames=%+v", rows, overall, hard, cross, filenames)
 	}
-	for name, s := range map[string]score{"en/ru": overall, "hard": hard, "cross-pair": cross} {
+	for name, s := range map[string]score{"en/ru": overall, "hard": hard, "cross-pair": cross, "filenames": filenames} {
 		t.Logf("%s: before %d/%d, after %d/%d", name, s.before, s.total, s.after, s.total)
 		if s.after < s.before {
 			t.Errorf("%s fell below recorded baseline", name)
 		}
+	}
+	if filenames.after != filenames.total {
+		t.Errorf("hyphen/underscore filenames: want all %d cases correct", filenames.total)
 	}
 }
