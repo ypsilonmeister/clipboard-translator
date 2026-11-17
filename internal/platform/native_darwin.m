@@ -205,6 +205,42 @@ void ct_mac_tray_close(void) {
     }
 }
 void ct_mac_status(const char *text) { @autoreleasepool { [[status_item button] setToolTip:[NSString stringWithUTF8String:text]]; } }
+void ct_mac_set_state(int state) {
+    @autoreleasepool {
+        if (!status_item) return;
+        NSStatusBarButton *button = [status_item button];
+        if (!button) return;
+        NSString *symbol = @"character.bubble";
+        NSString *title = @"訳";
+        switch (state) {
+        case 1: // TrayBusy
+            symbol = @"ellipsis.bubble";
+            title = @"訳…";
+            break;
+        case 2: // TrayDone / TrayReady
+            symbol = @"checkmark.bubble";
+            title = @"訳✓";
+            break;
+        case 3: // TrayProblem
+            symbol = @"exclamationmark.bubble";
+            title = @"訳!";
+            break;
+        default: // TrayIdle
+            symbol = @"character.bubble";
+            title = @"訳";
+            break;
+        }
+        NSImage *image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:@"Clipboard Translator"];
+        if (image) {
+            [image setTemplate:YES];
+            [button setImage:image];
+            [button setTitle:@""];
+        } else {
+            [button setImage:nil];
+            [button setTitle:title];
+        }
+    }
+}
 void ct_mac_pump(void) {
     @autoreleasepool {
         NSEvent *event;

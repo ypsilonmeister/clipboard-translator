@@ -164,6 +164,7 @@ type macTray struct {
 	build    func() []MenuItem
 	logPath  string
 	commands []int
+	state    TrayState
 	quit     bool
 }
 
@@ -179,6 +180,13 @@ func NewTray(logPath string) Tray {
 	return t
 }
 func (*macTray) SetStatus(text string) { withCString(text, func(p *C.char) { C.ct_mac_status(p) }) }
+func (t *macTray) SetState(state TrayState) {
+	if t.state == state {
+		return
+	}
+	t.state = state
+	C.ct_mac_set_state(C.int(state))
+}
 func (t *macTray) Notify(title, message string, isError bool) {
 	// No notification permission prompts or notification-service dependency.
 	log.Printf("%s: %s", title, message)

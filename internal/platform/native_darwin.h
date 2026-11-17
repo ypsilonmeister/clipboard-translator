@@ -18,6 +18,7 @@ void ct_mac_free(void *p);
 void ct_mac_tray_create(void);
 void ct_mac_tray_close(void);
 void ct_mac_status(const char *text);
+void ct_mac_set_state(int state);
 int ct_mac_wants_menu(void);
 void *ct_mac_menu_new(void);
 void ct_mac_menu_add(void *menu, const char *label, int id, int checked, int disabled, int separator, void *sub);

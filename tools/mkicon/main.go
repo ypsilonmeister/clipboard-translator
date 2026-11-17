@@ -1,6 +1,7 @@
-// Command mkicon builds assets/icon.ico (multi-size) and assets/icon.png from
+// Command mkicon builds assets/icon*.ico (multi-size) and assets/icon*.png from
 // assets/icon-source.jpg. The source is a rounded square on a white backdrop;
-// the backdrop is cut away so the corners are transparent.
+// the backdrop is cut away so the corners are transparent. Extra state icons
+// (busy, ready, problem) are generated with distinctive badges.
 //
 // Run from the repository root:
 //
@@ -15,7 +16,17 @@ import (
 	"image/jpeg"
 	"image/png"
 	"log"
+	"math"
 	"os"
+)
+
+type badgeState int
+
+const (
+	stateIdle badgeState = iota
+	stateBusy
+	stateReady
+	stateProblem
 )
 
 func main() {
@@ -28,20 +39,162 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	img := cutBackground(src)
+	base := cutBackground(src)
 
 	sizes := []int{16, 24, 32, 48, 64, 128, 256}
-	var pngs [][]byte
-	for _, n := range sizes {
-		pngs = append(pngs, encodePNG(resize(img, n)))
+
+	targets := []struct {
+		state   badgeState
+		icoPath string
+		pngPath string
+	}{
+		{stateIdle, "assets/icon.ico", "assets/icon.png"},
+		{stateBusy, "assets/icon-busy.ico", "assets/icon-busy.png"},
+		{stateReady, "assets/icon-ready.ico", "assets/icon-ready.png"},
+		{stateProblem, "assets/icon-problem.ico", "assets/icon-problem.png"},
 	}
-	if err := os.WriteFile("assets/icon.ico", buildICO(sizes, pngs), 0o644); err != nil {
-		log.Fatal(err)
+
+	for _, tgt := range targets {
+		var img *image.NRGBA
+		if tgt.state == stateIdle {
+			img = base
+		} else {
+			img = addBadge(base, tgt.state)
+		}
+
+		var pngs [][]byte
+		for _, n := range sizes {
+			pngs = append(pngs, encodePNG(resize(img, n)))
+		}
+		if err := os.WriteFile(tgt.icoPath, buildICO(sizes, pngs), 0o644); err != nil {
+			log.Fatal(err)
+		}
+		if err := os.WriteFile(tgt.pngPath, encodePNG(resize(img, 512)), 0o644); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("wrote %s and %s", tgt.icoPath, tgt.pngPath)
 	}
-	if err := os.WriteFile("assets/icon.png", encodePNG(resize(img, 512)), 0o644); err != nil {
-		log.Fatal(err)
+}
+
+func addBadge(base *image.NRGBA, state badgeState) *image.NRGBA {
+	b := base.Bounds()
+	w, h := b.Dx(), b.Dy()
+	out := image.NewNRGBA(b)
+	copy(out.Pix, base.Pix)
+
+	cx, cy := 770.0, 770.0
+	r := 180.0
+	border := 22.0
+
+	var fillCol color.NRGBA
+	switch state {
+	case stateBusy:
+		fillCol = color.NRGBA{0xf5, 0x9e, 0x0b, 0xff} // vibrant amber
+	case stateReady:
+		fillCol = color.NRGBA{0x16, 0xa3, 0x4a, 0xff} // vibrant green
+	case stateProblem:
+		fillCol = color.NRGBA{0xdc, 0x26, 0x26, 0xff} // vibrant red
 	}
-	log.Printf("wrote assets/icon.ico (%v) and assets/icon.png", sizes)
+	borderCol := color.NRGBA{0xff, 0xff, 0xff, 0xff} // crisp white border
+
+	// Draw outer border and filled circle
+	for y := int(cy - r - border - 2); y <= int(cy+r+border+2); y++ {
+		if y < 0 || y >= h {
+			continue
+		}
+		for x := int(cx - r - border - 2); x <= int(cx+r+border+2); x++ {
+			if x < 0 || x >= w {
+				continue
+			}
+			d := math.Hypot(float64(x)-cx, float64(y)-cy)
+			if d <= r {
+				out.SetNRGBA(x, y, fillCol)
+			} else if d <= r+border {
+				out.SetNRGBA(x, y, borderCol)
+			}
+		}
+	}
+
+	// Draw badge symbols
+	switch state {
+	case stateBusy:
+		// Three dark dots in horizontal line (ellipsis)
+		dotR := 28.0
+		dotCol := color.NRGBA{0x1e, 0x29, 0x3b, 0xff} // dark slate
+		for _, dx := range []float64{-75, 0, 75} {
+			drawCircle(out, cx+dx, cy, dotR, dotCol)
+		}
+	case stateReady:
+		// White checkmark
+		white := color.NRGBA{0xff, 0xff, 0xff, 0xff}
+		thick := 34.0
+		drawLine(out, cx-70, cy+5, cx-15, cy+65, thick, white)
+		drawLine(out, cx-15, cy+65, cx+75, cy-55, thick, white)
+	case stateProblem:
+		// White exclamation mark
+		white := color.NRGBA{0xff, 0xff, 0xff, 0xff}
+		thick := 34.0
+		drawLine(out, cx, cy-75, cx, cy+15, thick, white)
+		drawCircle(out, cx, cy+65, 20.0, white)
+	}
+
+	return out
+}
+
+func drawCircle(img *image.NRGBA, cx, cy, r float64, c color.NRGBA) {
+	b := img.Bounds()
+	minX, maxX := int(cx-r-1), int(cx+r+1)
+	minY, maxY := int(cy-r-1), int(cy+r+1)
+	for y := minY; y <= maxY; y++ {
+		if y < b.Min.Y || y >= b.Max.Y {
+			continue
+		}
+		for x := minX; x <= maxX; x++ {
+			if x < b.Min.X || x >= b.Max.X {
+				continue
+			}
+			if math.Hypot(float64(x)-cx, float64(y)-cy) <= r {
+				img.SetNRGBA(x, y, c)
+			}
+		}
+	}
+}
+
+func distToSegment(px, py, x1, y1, x2, y2 float64) float64 {
+	dx := x2 - x1
+	dy := y2 - y1
+	if dx == 0 && dy == 0 {
+		return math.Hypot(px-x1, py-y1)
+	}
+	t := ((px-x1)*dx + (py-y1)*dy) / (dx*dx + dy*dy)
+	if t < 0 {
+		t = 0
+	} else if t > 1 {
+		t = 1
+	}
+	return math.Hypot(px-(x1+t*dx), py-(y1+t*dy))
+}
+
+func drawLine(img *image.NRGBA, x1, y1, x2, y2, thickness float64, c color.NRGBA) {
+	b := img.Bounds()
+	r := thickness / 2
+	minX := int(math.Min(x1, x2) - r - 1)
+	maxX := int(math.Max(x1, x2) + r + 1)
+	minY := int(math.Min(y1, y2) - r - 1)
+	maxY := int(math.Max(y1, y2) + r + 1)
+	for y := minY; y <= maxY; y++ {
+		if y < b.Min.Y || y >= b.Max.Y {
+			continue
+		}
+		for x := minX; x <= maxX; x++ {
+			if x < b.Min.X || x >= b.Max.X {
+				continue
+			}
+			if distToSegment(float64(x), float64(y), x1, y1, x2, y2) <= r {
+				img.SetNRGBA(x, y, c)
+			}
+		}
+	}
 }
 
 // cutBackground makes the white area outside the rounded square transparent.

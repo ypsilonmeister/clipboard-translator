@@ -198,6 +198,8 @@ func readX11Text(primary bool) string {
 type linuxTray struct {
 	build             func() []MenuItem
 	logPath, iconPath string
+	stateIconPaths    map[TrayState]string
+	state             TrayState
 	quit              bool
 	commands          []int
 }
@@ -205,7 +207,10 @@ type linuxTray struct {
 var activeLinuxTray *linuxTray
 
 func NewTray(logPath string) Tray {
-	t := &linuxTray{logPath: logPath}
+	t := &linuxTray{
+		logPath:        logPath,
+		stateIconPaths: make(map[TrayState]string),
+	}
 	f, err := os.CreateTemp("", "clipboard-translator-icon-*.png")
 	if err == nil {
 		t.iconPath = f.Name()
@@ -217,6 +222,7 @@ func NewTray(logPath string) Tray {
 	if err != nil {
 		log.Printf("tray icon: %v", err)
 	}
+	t.stateIconPaths[TrayIdle] = t.iconPath
 	withCString(t.iconPath, func(p *C.char) { C.ct_tray_create(p) })
 	activeLinuxTray = t
 	return t
@@ -228,6 +234,61 @@ func boolInt(v bool) int {
 	return 0
 }
 func (*linuxTray) SetStatus(text string) { withCString(text, func(p *C.char) { C.ct_status(p) }) }
+
+func (t *linuxTray) iconForState(state TrayState) string {
+	if path, ok := t.stateIconPaths[state]; ok {
+		return path
+	}
+	var data []byte
+	switch state {
+	case TrayBusy:
+		data = assets.IconBusyPNG
+	case TrayReady:
+		data = assets.IconReadyPNG
+	case TrayProblem:
+		data = assets.IconProblemPNG
+	default:
+		return t.iconPath
+	}
+	f, err := os.CreateTemp("", "clipboard-translator-icon-*.png")
+	if err != nil {
+		log.Printf("tray state icon %v: %v", state, err)
+		return t.iconPath
+	}
+	path := f.Name()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return t.iconPath
+	}
+	_ = f.Close()
+	t.stateIconPaths[state] = path
+	return path
+}
+
+func (t *linuxTray) SetState(state TrayState) {
+	if t.state == state {
+		return
+	}
+	t.state = state
+	path := t.iconForState(state)
+	if path != "" {
+		withCString(path, func(p *C.char) { C.ct_tray_set_icon(p) })
+	}
+	var title string
+	switch state {
+	case TrayBusy:
+		title = "Clipboard Translator (working...)"
+	case TrayReady:
+		title = "Clipboard Translator (ready)"
+	case TrayProblem:
+		title = "Clipboard Translator (problem)"
+	default:
+		title = "Clipboard Translator"
+	}
+	withCString(title, func(p *C.char) { C.ct_tray_set_title(p) })
+}
+
 func (*linuxTray) Notify(title, message string, isError bool) {
 	log.Printf("%s: %s", title, message)
 	args := []string{"--app-name=Clipboard Translator"}
@@ -247,6 +308,11 @@ func (t *linuxTray) Close() {
 	activeLinuxTray = nil
 	if t.iconPath != "" {
 		_ = os.Remove(t.iconPath)
+	}
+	for _, p := range t.stateIconPaths {
+		if p != "" {
+			_ = os.Remove(p)
+		}
 	}
 }
 func (t *linuxTray) NextCommand() (int, bool) {

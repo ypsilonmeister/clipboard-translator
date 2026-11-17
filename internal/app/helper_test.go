@@ -27,6 +27,8 @@ type fakeTray struct {
 	quit     bool
 	status   string
 	statuses []string
+	state    platform.TrayState
+	states   []platform.TrayState
 	notes    []string
 	titles   []string
 	errs     []bool
@@ -38,6 +40,10 @@ func (f *fakeTray) QuitRequested() bool { return f.quit }
 func (f *fakeTray) SetStatus(s string) {
 	f.status = s
 	f.statuses = append(f.statuses, s)
+}
+func (f *fakeTray) SetState(s platform.TrayState) {
+	f.state = s
+	f.states = append(f.states, s)
 }
 func (f *fakeTray) Notify(title, msg string, isError bool) {
 	f.titles = append(f.titles, title)
@@ -74,6 +80,13 @@ func (f *fakeTray) lastStatus() string {
 		return ""
 	}
 	return f.statuses[len(f.statuses)-1]
+}
+
+func (f *fakeTray) lastState() platform.TrayState {
+	if len(f.states) == 0 {
+		return platform.TrayIdle
+	}
+	return f.states[len(f.states)-1]
 }
 
 func (f *fakeTray) lastError() bool {
