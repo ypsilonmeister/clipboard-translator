@@ -31,6 +31,26 @@ func TestDirectionForPairs(t *testing.T) {
 		{[]string{"en", "zh-hans"}, "Our Shanghai (上海) team will join the call at 3 pm.", "en", "han name", "zh-hans", true},
 		{[]string{"en", "ko"}, "Samsung (삼성) announced a new phone today.", "en", "hangul name", "ko", true},
 		{[]string{"ru", "en"}, "The Russian word тоска has no exact equivalent in English.", "en", "one cyrillic word", "ru", true},
+		// #205: quoted native vocabulary is not necessarily Japanese grammar.
+		{[]string{"en", "ja"}, "The concept of わびさび is central to Japanese aesthetics and design philosophy", "en", "quoted hiragana word", "ja", true},
+		{[]string{"en", "ja"}, "people say お疲れ様 to each other every day after work", "en", "quoted hiragana-led kanji word", "ja", true},
+		{[]string{"en", "ja"}, "people say ありがとう to each other every day after work", "en", "quoted thanks", "ja", true},
+		{[]string{"en", "ja"}, "Please address 田中 さん with the same respect as everyone else", "en", "spaced honorific", "ja", true},
+		{[]string{"en", "ja"}, "We quote 侘寂、and use simple words", "en", "CJK comma separates words", "ja", true},
+		{[]string{"en", "ja"}, "We quote 侘寂。and use simple words", "en", "CJK period separates words", "ja", true},
+		{[]string{"en", "ko"}, "people often write 안녕하세요 세계 to greet each other", "en", "Korean words rather than characters", "ko", true},
+		{[]string{"en", "th"}, "people often say สวัสดีครับ to greet each other when they meet at work", "en", "Thai combining marks do not add units", "th", true},
+		{[]string{"en", "km"}, "people say សួស្តី to greet each other", "en", "Khmer combining marks do not add units", "km", true},
+		{[]string{"en", "my"}, "people often say မင်္ဂလာပါ to greet each other at work", "en", "Myanmar combining marks do not add units", "my", true},
+		// Keep grammar conservative even when there is enough lowercase prose.
+		{[]string{"en", "ja"}, "we use Docker Composeを使う every day at work", "ja", "attached grammar with prose", "en", true},
+		{[]string{"en", "ja"}, "git push origin main する before we start the next task", "ja", "suru between Latin words", "en", true},
+		{[]string{"en", "ja"}, "all code review comments の比較 is what we do every day", "ja", "particle-led kanji after Latin", "en", true},
+		// #205 deliberately retained ambiguities: boundary and prose guards.
+		{[]string{"en", "ja"}, "I hope you are well, 田中さん.", "ja", "short mail ending with name", "en", true},
+		{[]string{"en", "ja"}, "Hello everyone, please review the attached document before our meeting.\n田中太郎", "ja", "mail with Japanese signature", "en", true},
+		{[]string{"en", "ru"}, "npm run build и потом npm run test", "en", "command words resemble Latin prose", "ru", true},
+		{[]string{"en", "zh-hans"}, "npm run build 之后再 npm run test", "en", "command words resemble Latin prose with Han", "zh-hans", true},
 		{[]string{"ja", "en"}, "Hi Tanaka-san (田中太郎さん), could you review the attached proposal by Friday? Thanks!", "en", "six-char name", "ja", true},
 		// The other script stays the skeleton: unchanged results.
 		{[]string{"ja", "en"}, "このAPIはJSONを返します", "ja", "particles", "en", true},

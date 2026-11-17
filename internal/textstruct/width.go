@@ -38,6 +38,11 @@ func isCJK(r rune) bool {
 		(r >= 0xFFE0 && r <= 0xFFE6) // Fullwidth Signs
 }
 
+// isCJKNoSpace excludes Hangul: Korean words use spaces despite being wide.
+func isCJKNoSpace(r rune) bool {
+	return isCJK(r) && !unicode.Is(unicode.Hangul, r)
+}
+
 // isLatin reports whether a rune belongs to Latin script.
 func isLatin(r rune) bool {
 	return unicode.Is(unicode.Latin, r)

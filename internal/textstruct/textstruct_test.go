@@ -614,6 +614,16 @@ func TestJoinChunks_SpaceBoundaryTargetScript(t *testing.T) {
 			want:   "word tail",
 		},
 		{
+			name:   "Korean words retain space",
+			pieces: []string{"안녕하세요", "세계"},
+			want:   "안녕하세요 세계",
+		},
+		{
+			name:   "Korean phrase retains final space",
+			pieces: []string{"단어 단어", "끝"},
+			want:   "단어 단어 끝",
+		},
+		{
 			name:   "mixed CJK then Latin gains no space",
 			pieces: []string{"これは日本語", "tail"},
 			want:   "これは日本語tail",
@@ -640,6 +650,23 @@ func TestJoinChunks_SpaceBoundaryTargetScript(t *testing.T) {
 	}
 	if got := JoinChunks([]string{"これは日本語", "です", "次の行"}, lineBoundaries); got != "これは日本語です\n次の行" {
 		t.Fatalf("JoinChunks(multi-line CJK target) = %q, want %q", got, "これは日本語です\n次の行")
+	}
+}
+
+func TestJoinChunks_KoreanSentenceBoundaryUnchanged(t *testing.T) {
+	if got := JoinChunks([]string{"안녕하세요", "세계"}, []Boundary{BoundarySentence}); got != "안녕하세요세계" {
+		t.Fatalf("sentence boundary behavior changed: %q", got)
+	}
+}
+
+func TestJoinChunks_CJKSourceExplicitSpace(t *testing.T) {
+	// N2 remains a trade-off: metadata cannot distinguish an explicit source
+	// space from one that a CJK translation should omit.
+	source := strings.Repeat("語 ", 600) + "尾"
+	chunks, boundaries := ChunkParagraphWithBoundaries(source, 1200)
+	want := strings.Repeat("語 ", 599) + "語尾"
+	if got := JoinChunks(trimAllChunks(chunks), boundaries); got != want {
+		t.Fatalf("CJK source trade-off changed: got %q, want %q", got, want)
 	}
 }
 

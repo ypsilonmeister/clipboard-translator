@@ -16,11 +16,12 @@ var (
 	// reEmailSig matches standard email signature separator ("-- ")
 	reEmailSig = regexp.MustCompile(`^--\s*$`)
 
-	// reArrayDecl matches array declarations like "Type[] name;" or "Type[10] name;"
-	reArrayDecl = regexp.MustCompile(`\b[A-Za-z_]\w*(?:\[\s*\d*\s*\])+\s+[A-Za-z_]\w*`)
+	// Require a type at the start (after modifiers), not inline notation in
+	// prose ("The measured value[0] remains stable;"). Retain declaration suffixes.
+	reArrayDecl = regexp.MustCompile(`^(?:(?:final|volatile|extern|unsigned|signed)\s+)*(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*(?:\[\s*\d*\s*\])+\s+[A-Za-z_]\w*`)
 
 	// reGenericDecl matches generic declarations like "List<string> name;" or "Map<K, V> name;"
-	reGenericDecl = regexp.MustCompile(`\b[A-Za-z_]\w*<[A-Za-z0-9_,\s<>\[\]*&]+>\s+[A-Za-z_]\w*`)
+	reGenericDecl = regexp.MustCompile(`^(?:(?:final|volatile|extern)\s+)*(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*<[A-Za-z0-9_,\s<>\[\]*&]+>\s+[A-Za-z_]\w*`)
 )
 
 // isPreservedLine reports whether line is a structural element that must not be flattened.
