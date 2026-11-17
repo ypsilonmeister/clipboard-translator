@@ -8,7 +8,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   macos:
@@ -18,10 +18,10 @@ jobs:
         runner: [macos-15, macos-15-intel]
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
-          go-version: stable
+          go-version: '1.27.4'
       - run: go vet ./...
       - run: go test ./...
       - run: CT_TEST_MACOS=1 go test -tags mactest -run '^TestMacNative' -v -timeout 60s ./internal/platform
@@ -29,7 +29,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: bash tools/package-macos.sh "$TAG"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-app-${{ matrix.runner }}
           path: |
@@ -39,10 +39,10 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
-          go-version: stable
+          go-version: '1.27.4'
       - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libx11-dev libxtst-dev xvfb dbus-x11
       - run: go vet ./...
       - run: go test ./...
@@ -51,7 +51,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: bash tools/package-linux.sh "$TAG"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-tarball
           path: |
@@ -61,11 +61,15 @@ jobs:
   release:
     needs: [linux, macos]
     runs-on: windows-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
-          go-version: stable
+          go-version: '1.27.4'
 
       - run: go vet ./...
       - run: go test ./...
@@ -87,10 +91,32 @@ jobs:
           $zip = "Portable-Clipboard-Translator-Windows-x64-$env:TAG.zip"
           $files = 'ClipboardTranslator.exe','Setup.cmd','Start.cmd','Stop.cmd','setup.ps1','config.json','README.txt','LICENSE'
           Compress-Archive -Path $files -DestinationPath $zip
-          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $zipSha = "$zip.sha256"
+          "$hash  $zip" | Set-Content -LiteralPath $zipSha -Encoding ascii
           "ZIP=$zip" >> $env:GITHUB_ENV
+          "ZIP_SHA=$zipSha" >> $env:GITHUB_ENV
           "SHA256=$hash" >> $env:GITHUB_ENV
           "$hash  $zip"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: linux-tarball
+          path: linux-dist
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: macos-app-*
+          merge-multiple: true
+          path: macos-dist
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: |
+            ${{ env.ZIP }}
+            linux-dist/*.tar.gz
+            macos-dist/*.zip
 
       - name: Publish
         shell: pwsh
@@ -100,27 +126,21 @@ jobs:
         run: |
           gh release view $env:TAG *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG $env:ZIP --clobber
+            gh release upload $env:TAG $env:ZIP $env:ZIP_SHA --clobber
           } else {
             $notes = "Portable Windows x64 build. See the README for setup.`n`nSHA-256 of the zip: ``$env:SHA256``"
-            gh release create $env:TAG $env:ZIP --title $env:TAG --notes $notes
+            gh release create $env:TAG $env:ZIP $env:ZIP_SHA --title $env:TAG --notes $notes
           }
-      - uses: actions/download-artifact@v4
-        with:
-          name: linux-tarball
-          path: linux-dist
+
       - name: Attach Linux build
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release upload $env:TAG (Get-ChildItem linux-dist -File).FullName --clobber
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: macos-app-*
-          merge-multiple: true
-          path: macos-dist
+
       - name: Attach macOS apps
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release upload $env:TAG (Get-ChildItem macos-dist -File).FullName --clobber
+

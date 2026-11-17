@@ -26,8 +26,13 @@ Ollama も Python も不要で、初回セットアップはアプリ本体が�
 
 ## どれをダウンロードするか
 
-[リリース](https://github.com/ypsilonmeister/clipboard-translator/releases)には、環境ごとに 1 つずつファイルがあります
-(macOS と Linux のファイルには隣に `.sha256` ファイルが付きます。Windows の zip の SHA-256 はリリースノートに載ります)。
+[リリース](https://github.com/ypsilonmeister/clipboard-translator/releases)には、環境ごとに 1 つずつファイルがあり、
+隣に `.sha256` チェックサムファイルが付きます (Windows の zip の SHA-256 はリリースノートにも載ります)。
+また、各リリースアーカイブには GitHub Actions によるビルドの真正性証明 (attestation) が付与されており、GitHub CLI で検証できます:
+
+```bash
+gh attestation verify <file> --repo ypsilonmeister/clipboard-translator
+```
 
 | お使いのコンピューター | ファイル | 手順 |
 | --- | --- | --- |
