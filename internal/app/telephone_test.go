@@ -399,11 +399,10 @@ func TestTelephoneMode_StopsAt10RoundTrips(t *testing.T) {
 	}
 }
 
-func TestTelephoneMode_CancelMidwayLeavesClipboardUntouched(t *testing.T) {
+func runCancelMidwayFixture(t *testing.T, exitEarlyGated bool) error {
 	gate := make(chan struct{})
 	var gateClosed sync.Once
 	closeGate := func() { gateClosed.Do(func() { close(gate) }) }
-	defer closeGate()
 	var callCount int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -416,6 +415,7 @@ func TestTelephoneMode_CancelMidwayLeavesClipboardUntouched(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": content}}}})
 	}))
 	defer srv.Close()
+	defer closeGate()
 
 	a := profilesApp(t, config.Profile{
 		Hotkey:    "Ctrl+Alt+E",
@@ -436,9 +436,14 @@ func TestTelephoneMode_CancelMidwayLeavesClipboardUntouched(t *testing.T) {
 	waitDeadline := time.Now().Add(5 * time.Second)
 	for atomic.LoadInt32(&callCount) < 2 {
 		if time.Now().After(waitDeadline) {
-			t.Fatal("timed out waiting for call 2")
+			return errors.New("timed out waiting for call 2")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+
+	if exitEarlyGated {
+		// Exit while leg 2 is gated without manual closeGate; cleanup defers must handle release promptly.
+		return nil
 	}
 
 	// Abort translation midway
@@ -462,15 +467,38 @@ func TestTelephoneMode_CancelMidwayLeavesClipboardUntouched(t *testing.T) {
 
 	// Clipboard MUST remain untouched
 	if got := a.cb.(*testClipboard).text; got != initialText {
-		t.Fatalf("clipboard modified on cancelled run: got %q, want %q", got, initialText)
+		return fmt.Errorf("clipboard modified on cancelled run: got %q, want %q", got, initialText)
 	}
 	if a.cb.(*testClipboard).writes != 0 {
-		t.Fatalf("clipboard was written %d times on cancelled run", a.cb.(*testClipboard).writes)
+		return fmt.Errorf("clipboard was written %d times on cancelled run", a.cb.(*testClipboard).writes)
 	}
 
 	// History MUST remain empty
 	if items := a.hist.Items(); len(items) != 0 {
-		t.Fatalf("expected empty history on cancelled run, got %d items", len(items))
+		return fmt.Errorf("expected empty history on cancelled run, got %d items", len(items))
+	}
+	return nil
+}
+
+func TestTelephoneMode_CancelMidwayLeavesClipboardUntouched(t *testing.T) {
+	if err := runCancelMidwayFixture(t, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTelephoneMode_CancelMidway_CleanupPromptOnGatedFailure(t *testing.T) {
+	done := make(chan error, 1)
+	go func() {
+		done <- runCancelMidwayFixture(t, true)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("cleanup timed out while leg 2 was gated; defer ordering must release gate before srv.Close")
 	}
 }
 
