@@ -84,6 +84,7 @@ type app struct {
 	maxCharsRev         int // bumped when max_chars changes
 
 	updates  chan updateResult
+	pings    chan struct{}
 	checking bool
 	latest   update.ReleaseInfo // newest release seen by "Check for updates"
 
@@ -163,6 +164,7 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 		newHotkey:    platform.NewHotkey,
 		showErr:      platform.ShowError,
 		updates:      make(chan updateResult, 1),
+		pings:        make(chan struct{}, 1),
 		results:      make(chan result, 16),
 		progress:     make(chan translationProgress, 16),
 		foreground:   platform.ForegroundWindow,
@@ -762,6 +764,8 @@ func (a *app) serve(cb platform.Clipboard) {
 			a.onProgress(p)
 		case res := <-a.results:
 			a.handleResult(res)
+		case <-a.pings:
+			a.showAlreadyRunning()
 		}
 	}
 }
@@ -1311,4 +1315,16 @@ func readyMessage(hotkeys string) string {
 		return "ready: copy text and choose Translate clipboard, then paste"
 	}
 	return fmt.Sprintf("ready: select text and press %s (or translate existing clipboard)", hotkeys)
+}
+
+func (a *app) ping() {
+	select {
+	case a.pings <- struct{}{}:
+	default:
+	}
+}
+
+func (a *app) showAlreadyRunning() {
+	log.Print("another instance started; showing tray notification")
+	a.tray.Notify("Clipboard Translator", "Clipboard Translator is already running. Its icon is here in the tray.", false)
 }
