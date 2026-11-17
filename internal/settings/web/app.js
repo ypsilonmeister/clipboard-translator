@@ -944,7 +944,13 @@
       e.target.disabled = true;
       try {
         const r = await api('/api/translate-api', { enabled: String(e.target.checked) });
-        if (r.data.state) renderTranslateAPI(r.data.state);
+        if (r.data.state) {
+          if (state) {
+            state.translate_api_enabled = r.data.state.translate_api_enabled;
+            state.translate_api_token = r.data.state.translate_api_token;
+          }
+          renderTranslateAPI(r.data.state);
+        }
         $('translate-api-status').textContent = r.ok ? 'Endpoint setting saved.' : (r.data.error || 'Could not change endpoint.');
         if (!r.ok && state) renderTranslateAPI(state);
       } finally { e.target.disabled = false; }
@@ -955,7 +961,13 @@
         $('translate-api-status').textContent = r.data.error || 'Could not get connection info.';
         return;
       }
-      if (r.data.state) renderTranslateAPI(r.data.state);
+      if (r.data.state) {
+        if (state) {
+          state.translate_api_enabled = r.data.state.translate_api_enabled;
+          state.translate_api_token = r.data.state.translate_api_token;
+        }
+        renderTranslateAPI(r.data.state);
+      }
       try {
         await navigator.clipboard.writeText($('translate-api-token').value);
         $('translate-api-status').textContent = 'Token copied.';

@@ -2,6 +2,7 @@ package settings
 
 import (
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -17,5 +18,80 @@ func TestTranslationAPIConnectionInfoAction(t *testing.T) {
 	s.handleAction("translate_api_info", "")(w, httptest.NewRequest("POST", "/api/translate-api/info", strings.NewReader(`{}`)))
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"translate_api_token":"existing"`) {
 		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+func TestTranslateAPIStatePreservation(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable for settings state check")
+	}
+	cmd := exec.Command(node, "-e", `
+const fs = require('fs'), assert = require('node:assert/strict');
+const js = fs.readFileSync('web/app.js', 'utf8');
+
+const elements = {};
+function getEl(id) {
+  if (!elements[id]) {
+    elements[id] = { id, disabled: false, checked: false, value: '', textContent: '', addEventListener(event, fn) { this['on' + event] = fn; }, select() {} };
+  }
+  return elements[id];
+}
+const $ = getEl;
+
+let state = { translate_api_enabled: false, translate_api_token: '', translate_api_available: true, translate_api_url: '' };
+let apiResponses = [];
+const api = async (url, params) => apiResponses.shift();
+
+const vm = require('vm');
+const sandbox = {
+  $,
+  get state() { return state; },
+  set state(v) { state = v; },
+  api,
+  navigator: { clipboard: { writeText: async () => {} } },
+  console,
+};
+vm.createContext(sandbox);
+
+const renderIdx = js.indexOf('function renderTranslateAPI(');
+const renderEnd = js.indexOf('\n  }', renderIdx) + 4;
+vm.runInContext(js.slice(renderIdx, renderEnd), sandbox);
+
+const initIdx = js.indexOf("$('translate-api-enabled').addEventListener('change'");
+const initEnd = js.indexOf("$('guide').addEventListener('toggle'", initIdx);
+vm.runInContext('(async () => {\n' + js.slice(initIdx, initEnd) + '\n})()', sandbox);
+
+(async () => {
+  sandbox.renderTranslateAPI(state);
+  assert.equal(getEl('translate-api-enabled').checked, false);
+
+  // 1. Successful enable updates state
+  apiResponses.push({ ok: true, data: { state: { translate_api_enabled: true, translate_api_token: 'tok123', translate_api_available: true, translate_api_url: 'http://localhost:18121/translate' } } });
+  await getEl('translate-api-enabled').onchange({ target: { checked: true } });
+
+  assert.equal(state.translate_api_enabled, true);
+  assert.equal(state.translate_api_token, 'tok123');
+  assert.equal(getEl('translate-api-enabled').checked, true);
+  assert.equal(getEl('translate-api-token').value, 'tok123');
+
+  // 2. Failed toggle reverts to current state (true), not page-load state (false)
+  apiResponses.push({ ok: false, data: { error: 'Server error' } });
+  await getEl('translate-api-enabled').onchange({ target: { checked: false } });
+
+  assert.equal(getEl('translate-api-enabled').checked, true);
+  assert.equal(getEl('translate-api-token').value, 'tok123');
+
+  // 3. Info/copy updates state.translate_api_token
+  apiResponses.push({ ok: true, data: { state: { translate_api_enabled: true, translate_api_token: 'tok456', translate_api_available: true, translate_api_url: 'http://localhost:18121/translate' } } });
+  await getEl('translate-api-copy').onclick();
+
+  assert.equal(state.translate_api_token, 'tok456');
+  assert.equal(getEl('translate-api-token').value, 'tok456');
+})();
+`)
+	cmd.Dir = "."
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("translate API state preservation test: %v\n%s", err, out)
 	}
 }
