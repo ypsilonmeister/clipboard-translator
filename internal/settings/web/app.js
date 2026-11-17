@@ -118,6 +118,9 @@
         output: p.output || 'replace',
         input: p.input || 'selection',
         cleanup_newlines: p.cleanup_newlines || 'off',
+        action: p.action || 'translate',
+        rules: [...(p.rules || [])],
+        punct_style: p.punct_style || 'japanese',
       })),
     };
   }
@@ -141,6 +144,9 @@
       idle_unload_minutes: m.idle_unload_minutes,
       profiles: m.profiles.map((p) => {
         const out = { ctrl: p.ctrl, alt: p.alt, shift: p.shift, win: p.win, key: p.key, output: p.output || 'replace', input: p.input || 'selection', cleanup_newlines: p.cleanup_newlines || 'off' };
+        out.action = p.action || 'translate';
+        out.rules = [...(p.rules || [])];
+        out.punct_style = p.punct_style || 'japanese';
         if (p.mode === 'target') out.target = p.target; else out.languages = [p.a, p.b];
         return out;
       }),
@@ -270,23 +276,59 @@
       keyRow.append(letter);
       card.append(keyRow);
     }
-    const name = 'mode-' + i;
-    const seg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': languageOnly ? 'Translate mode' : 'How hotkey ' + (i + 1) + ' translates' },
-      [['pair', 'Between two languages'], ['target', 'Into one language']].map(([v, text]) =>
-        h('label', {}, h('input', { type: 'radio', name, value: v, checked: p.mode === v,
-          onchange: () => { p.mode = v; touchField('profiles'); renderHotkeys(); } }), text)));
-    card.append(h('div', { class: 'row' }, h('span', { class: 'label', text: 'Translate' }), seg));
+    {
+      const actionId = 'action-' + i;
+      const actionSelect = h('select', { id: actionId, name: actionId,
+        onchange: (e) => { p.action = e.target.value; touchField('profiles'); renderHotkeys(); $('action-' + i).focus(); } },
+        h('option', { value: 'translate', text: 'Translate' }),
+        h('option', { value: 'tidy', text: 'Tidy text (no model)' }));
+      actionSelect.value = p.action || 'translate';
+      card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: actionId, text: 'Action' }), actionSelect));
+    }
+    if (p.action === 'tidy') {
+      const rules = h('fieldset', { class: 'tidy-rules' }, h('legend', { text: 'Tidy rules (all optional)' }));
+      for (const [rule, text] of [
+        ['newlines', 'Remove spurious line breaks'], ['width', 'Normalize alphanumeric / katakana width'],
+        ['punct', 'Unify Japanese punctuation'], ['spaces', 'Collapse spaces / trim line ends'],
+        ['quotes', 'Normalize smart quotes'], ['bullets', 'Unify bullet markers to -'],
+      ]) {
+        const id = 'rule-' + i + '-' + rule;
+        rules.append(h('label', { class: 'chip', for: id },
+          h('input', { id, name: id, type: 'checkbox', checked: (p.rules || []).includes(rule),
+            onchange: (e) => {
+              p.rules = (p.rules || []).filter((r) => r !== rule);
+              if (e.target.checked) p.rules.push(rule);
+              touchField('profiles');
+            } }), text));
+      }
+      const punctId = 'punct-style-' + i;
+      const punctSelect = h('select', { id: punctId, name: punctId,
+        onchange: (e) => { p.punct_style = e.target.value; touchField('profiles'); } },
+        h('option', { value: 'japanese', text: 'Japanese: 、。' }),
+        h('option', { value: 'fullwidth', text: 'Full-width: ，．' }));
+      punctSelect.value = p.punct_style || 'japanese';
+      rules.append(h('div', { class: 'row' }, h('label', { for: punctId, text: 'Punctuation style' }), punctSelect));
+      card.append(rules, h('p', { class: 'hint', text: 'Rules run in the order enabled. Code and address-like content are preserved conservatively. If nothing changes, the clipboard is left untouched.' }));
+    }
+    if (p.action !== 'tidy') {
+      const name = 'mode-' + i;
+      const seg = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': languageOnly ? 'Translate mode' : 'How hotkey ' + (i + 1) + ' translates' },
+        [['pair', 'Between two languages'], ['target', 'Into one language']].map(([v, text]) =>
+          h('label', {}, h('input', { type: 'radio', name, value: v, checked: p.mode === v,
+            onchange: () => { p.mode = v; touchField('profiles'); renderHotkeys(); } }), text)));
+      card.append(h('div', { class: 'row' }, h('span', { class: 'label', text: 'Translate' }), seg));
 
-    if (p.mode === 'pair') {
-      card.append(h('div', { class: 'row' }, h('span', { class: 'label', text: 'Languages' }),
-        langSelect(p.a, (v) => { p.a = v; }, 'First language'),
-        h('span', { class: 'plus', text: '↔' }),
-        langSelect(p.b, (v) => { p.b = v; }, 'Second language')));
-      card.append(h('p', { class: 'hint', text: 'Text in either language is translated into the other. The two languages need different scripts so the app can tell them apart (for example English and German cannot ' + (languageOnly ? 'be paired).' : 'share one hotkey).') }));
-    } else {
-      card.append(h('div', { class: 'row' }, h('span', { class: 'label', text: 'Into' }),
-        langSelect(p.target, (v) => { p.target = v; }, 'Target language')));
-      card.append(h('p', { class: 'hint', text: 'Any language is translated into this one; the model works out the source language itself.' }));
+      if (p.mode === 'pair') {
+        card.append(h('div', { class: 'row' }, h('span', { class: 'label', text: 'Languages' }),
+          langSelect(p.a, (v) => { p.a = v; }, 'First language'),
+          h('span', { class: 'plus', text: '↔' }),
+          langSelect(p.b, (v) => { p.b = v; }, 'Second language')));
+        card.append(h('p', { class: 'hint', text: 'Text in either language is translated into the other. The two languages need different scripts so the app can tell them apart (for example English and German cannot ' + (languageOnly ? 'be paired).' : 'share one hotkey).') }));
+      } else {
+        card.append(h('div', { class: 'row' }, h('span', { class: 'label', text: 'Into' }),
+          langSelect(p.target, (v) => { p.target = v; }, 'Target language')));
+        card.append(h('p', { class: 'hint', text: 'Any language is translated into this one; the model works out the source language itself.' }));
+      }
     }
 
     if (!languageOnly) {
@@ -307,37 +349,39 @@
       card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: inputId, text: 'Text from' }), inputSelect));
     }
 
-    const outputId = 'output-' + i;
-    const outputSelect = h('select', {
-      id: outputId,
-      class: 'output',
-      'aria-label': languageOnly ? 'Output format' : 'Output format for hotkey ' + (i + 1),
-      onchange: (e) => {
-        p.output = e.target.value;
-        touchField('profiles');
+    if (p.action !== 'tidy') {
+      const outputId = 'output-' + i;
+      const outputSelect = h('select', {
+        id: outputId,
+        class: 'output',
+        'aria-label': languageOnly ? 'Output format' : 'Output format for hotkey ' + (i + 1),
+        onchange: (e) => {
+          p.output = e.target.value;
+          touchField('profiles');
+        },
       },
-    },
-      h('option', { value: 'replace', text: 'Replace with the translation' }),
-      h('option', { value: 'bilingual', text: 'Keep the original, then the translation' }),
-    );
-    outputSelect.value = p.output || 'replace';
-    card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: outputId, text: 'Output' }), outputSelect));
+        h('option', { value: 'replace', text: 'Replace with the translation' }),
+        h('option', { value: 'bilingual', text: 'Keep the original, then the translation' }),
+      );
+      outputSelect.value = p.output || 'replace';
+      card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: outputId, text: 'Output' }), outputSelect));
 
-    const cleanupId = 'cleanup-' + i;
-    const cleanupSelect = h('select', {
-      id: cleanupId,
-      class: 'cleanup-newlines',
-      'aria-label': languageOnly ? 'Newline cleanup' : 'Newline cleanup for hotkey ' + (i + 1),
-      onchange: (e) => {
-        p.cleanup_newlines = e.target.value;
-        touchField('profiles');
+      const cleanupId = 'cleanup-' + i;
+      const cleanupSelect = h('select', {
+        id: cleanupId,
+        class: 'cleanup-newlines',
+        'aria-label': languageOnly ? 'Newline cleanup' : 'Newline cleanup for hotkey ' + (i + 1),
+        onchange: (e) => {
+          p.cleanup_newlines = e.target.value;
+          touchField('profiles');
+        },
       },
-    },
-      h('option', { value: 'off', text: 'Keep original line breaks' }),
-      h('option', { value: 'auto', text: 'Clean up spurious line breaks (e.g. from PDFs)' }),
-    );
-    cleanupSelect.value = p.cleanup_newlines || 'off';
-    card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: cleanupId, text: 'Line breaks' }), cleanupSelect));
+        h('option', { value: 'off', text: 'Keep original line breaks' }),
+        h('option', { value: 'auto', text: 'Clean up spurious line breaks (e.g. from PDFs)' }),
+      );
+      cleanupSelect.value = p.cleanup_newlines || 'off';
+      card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: cleanupId, text: 'Line breaks' }), cleanupSelect));
+    }
 
     card.append(h('p', { class: 'field-error', role: 'alert', hidden: true }));
     return card;
@@ -347,8 +391,8 @@
     const languageOnly = !!state.language_only;
     $('hotkeys-title').textContent = languageOnly ? 'Languages' : 'Hotkeys';
     $('hotkeys-intro').textContent = languageOnly
-      ? 'Hotkeys are not available on ChromeOS; these language settings apply to translation.'
-      : 'Select text in any program and press a hotkey. The translation replaces what is on the clipboard. Each hotkey can translate in its own way.';
+      ? 'Hotkeys are not available on ChromeOS; these action settings apply to clipboard and extension requests.'
+      : 'Select text in any program and press a hotkey. The translation replaces what is on the clipboard. Each hotkey can translate or tidy text.';
     $('profiles').replaceChildren(...(languageOnly ? model.profiles.slice(0, 1) : model.profiles).map(profileCard));
     if (languageOnly) {
       $('add').hidden = true;
@@ -987,7 +1031,7 @@
     });
     $('guide').addEventListener('toggle', () => { guideTouched = true; });
     $('add').addEventListener('click', () => {
-      model.profiles.push({ ctrl: true, alt: true, shift: false, win: false, key: nextFreeKey(), mode: 'target', a: 'ja', b: 'en', target: 'en', output: 'replace', input: 'selection', cleanup_newlines: 'off' });
+      model.profiles.push({ ctrl: true, alt: true, shift: false, win: false, key: nextFreeKey(), mode: 'target', a: 'ja', b: 'en', target: 'en', output: 'replace', input: 'selection', cleanup_newlines: 'off', action: 'translate', rules: [], punct_style: 'japanese' });
       touchField('profiles');
       renderHotkeys();
     });

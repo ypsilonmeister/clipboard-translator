@@ -25,6 +25,15 @@ func UpdateTranslationSettings(dir string, p Profile, languageChanged bool, glob
 			langs, _ := json.Marshal(p.Languages)
 			target, _ := json.Marshal(p.Target)
 			fields := map[string]json.RawMessage{}
+			if p.ActionMode() != ActionTranslate {
+				fields["action"], _ = json.Marshal(p.Action)
+			}
+			if len(p.Rules) > 0 {
+				fields["rules"], _ = json.Marshal(p.Rules)
+			}
+			if p.PunctStyleMode() != PunctJapanese {
+				fields["punct_style"], _ = json.Marshal(p.PunctStyle)
+			}
 			if p.Output != "" {
 				fields["output"], _ = json.Marshal(p.Output)
 			}
@@ -59,6 +68,11 @@ func UpdateTranslationSettings(dir string, p Profile, languageChanged bool, glob
 				if err := json.Unmarshal(first, &existing); err != nil {
 					return nil, err
 				}
+				for key, value := range map[string]any{"action": p.ActionMode(), "rules": p.Rules, "punct_style": p.PunctStyleMode()} {
+					if _, ok := existing[key]; ok {
+						fields[key], _ = json.Marshal(value)
+					}
+				}
 				if _, ok := existing["target"]; ok {
 					fields["target"] = target
 				}
@@ -73,7 +87,7 @@ func UpdateTranslationSettings(dir string, p Profile, languageChanged bool, glob
 			} else {
 				// Patch legacy fields when there is no first profile, even for an
 				// empty array. Load still rejects explicit empty profile arrays.
-				if p.Target != "" || p.Output != "" || p.CleanupNewlines != "" {
+				if p.Target != "" || p.Output != "" || p.CleanupNewlines != "" || p.ActionMode() == ActionTidy {
 					profiles, err := json.Marshal([]Profile{p})
 					if err != nil {
 						return nil, err

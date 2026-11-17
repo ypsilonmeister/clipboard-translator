@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
@@ -251,6 +252,9 @@ func sameProfiles(a, b []config.Profile) bool {
 		return false
 	}
 	for i := range a {
+		if a[i].ActionMode() != b[i].ActionMode() || !slices.Equal(a[i].Rules, b[i].Rules) || a[i].PunctStyleMode() != b[i].PunctStyleMode() {
+			return false
+		}
 		if a[i].Hotkey != b[i].Hotkey || a[i].Target != b[i].Target || a[i].OutputMode() != b[i].OutputMode() || a[i].InputMode() != b[i].InputMode() || a[i].CleanupNewlinesMode() != b[i].CleanupNewlinesMode() || len(a[i].Languages) != len(b[i].Languages) {
 			return false
 		}
@@ -302,7 +306,7 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 		}
 	}
 
-	// The manual workflow edits profile zero's translation options. Never accept
+	// The manual workflow edits profile zero's processing options. Never accept
 	// hidden hotkey/input fields back from this page.
 	if a.chromeOSProfile() && hasField("profiles") {
 		if len(form.Profiles) == 0 {
@@ -318,6 +322,7 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 			if i == 0 {
 				f.Languages, f.Target = language.Languages, language.Target
 				f.Output, f.CleanupNewlines = language.Output, language.CleanupNewlines
+				f.Action, f.Rules, f.PunctStyle = language.Action, language.Rules, language.PunctStyle
 			}
 			form.Profiles = append(form.Profiles, f)
 		}
@@ -331,6 +336,7 @@ func (a *app) applySettings(form settings.Form) (warnings []string, err error) {
 		cand.Profiles = append([]config.Profile(nil), a.conf.Profiles...)
 		cand.Profiles[0].Languages, cand.Profiles[0].Target = language.Languages, language.Target
 		cand.Profiles[0].Output, cand.Profiles[0].CleanupNewlines = language.Output, language.CleanupNewlines
+		cand.Profiles[0].Action, cand.Profiles[0].Rules, cand.Profiles[0].PunctStyle = language.Action, language.Rules, language.PunctStyle
 		cand.NormalizeProfiles()
 	}
 	sameProf := sameProfiles(cand.Profiles, a.conf.Profiles)

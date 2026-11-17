@@ -35,6 +35,7 @@ type result struct {
 	fromSelection        bool                     // the text was a fresh selection, not the old clipboard
 	fallback             platform.CaptureFallback // why the old clipboard text was used instead of a selection
 	output               string
+	action               string
 	capturedAt           time.Time
 }
 
@@ -146,9 +147,11 @@ func Run(opts Options) {
 	// (macOS only; Windows and Linux stop it with the app).
 	platform.StopLeftoverServer(platform.ChildRecordPath(dir, conf.Port))
 
-	conf, ok = ensureInstalled(dir, conf)
-	if !ok {
-		return
+	if conf.NeedsTranslation() {
+		conf, ok = ensureInstalled(dir, conf)
+		if !ok {
+			return
+		}
 	}
 	paths, err := config.ResolvePaths(dir, conf)
 	if err != nil {

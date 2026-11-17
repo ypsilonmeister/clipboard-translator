@@ -213,3 +213,6 @@ button:disabled { opacity: 0.5; cursor: default; }
 [hidden] { display: none !important; }
 
 #hotkeys-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+.tidy-rules { margin-block-start: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.tidy-rules .chip { min-block-size: 44px; margin: 4px; box-sizing: border-box; }
