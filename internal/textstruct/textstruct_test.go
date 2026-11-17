@@ -779,6 +779,18 @@ func TestCleanSpuriousNewlines_MidSentenceUppercaseAndPunctuation(t *testing.T) 
 			lang:  "en",
 			want:  "Overview\r\nThis paragraph was wrapped mid-sentence Berlin and Munich are listed here.",
 		},
+		{
+			name:  "Prose ending in semicolon with bracketed aside reflows",
+			input: "The experiment used a stable configuration [version two];\nBerlin provided the reference dataset.",
+			lang:  "en",
+			want:  "The experiment used a stable configuration [version two]; Berlin provided the reference dataset.",
+		},
+		{
+			name:  "Prose ending in semicolon with comparison sign reflows",
+			input: "The benchmark results improved by >10%;\nBerlin provided the reference dataset.",
+			lang:  "en",
+			want:  "The benchmark results improved by >10%; Berlin provided the reference dataset.",
+		},
 	}
 
 	for _, tc := range cases {
@@ -974,6 +986,31 @@ func TestSplitSentences_EllipsesAbbreviationsAndLowercaseContinuation(t *testing
 			name:  "Sentence-final etc. before new sentence",
 			input: "We bought paper, pens, etc. Then we left.",
 			want:  []string{"We bought paper, pens, etc.", "Then we left."},
+		},
+		{
+			name:  "Preserve Fig. before capital-letter reference identifier S1",
+			input: "See Fig. S1 for details.",
+			want:  []string{"See Fig. S1 for details."},
+		},
+		{
+			name:  "Preserve Eq. before capital-letter reference identifier A1",
+			input: "See Eq. A1 for details.",
+			want:  []string{"See Eq. A1 for details."},
+		},
+		{
+			name:  "Preserve Figs. before capital-letter reference identifier A",
+			input: "See Figs. A and B for details.",
+			want:  []string{"See Figs. A and B for details."},
+		},
+		{
+			name:  "Preserve e.g. before capitalized proper noun continuation",
+			input: "We used alternative sources, e.g. The Times and The Guardian.",
+			want:  []string{"We used alternative sources, e.g. The Times and The Guardian."},
+		},
+		{
+			name:  "Preserve i.e. before capitalized proper noun continuation",
+			input: "The destination is clear, i.e. The Hague.",
+			want:  []string{"The destination is clear, i.e. The Hague."},
 		},
 	}
 

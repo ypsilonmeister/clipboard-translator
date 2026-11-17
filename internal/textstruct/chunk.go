@@ -41,6 +41,18 @@ var (
 		"sr": true, "jr": true, "st": true, "v": true, "eds": true,
 	}
 
+	// docRefAbbreviations are abbreviations for figures, equations, sections, etc.,
+	// that can attach to a following capital-letter or alphanumeric reference identifier
+	// (e.g. "Fig. S1", "Eq. A1", "Figs. A and B", "Vol. II").
+	docRefAbbreviations = map[string]bool{
+		"fig": true, "figs": true, "eq": true, "eqs": true,
+		"vol": true, "vols": true, "no": true, "nos": true, "nr": true,
+		"pp": true, "p": true, "ch": true, "chs": true, "chap": true, "chaps": true,
+		"sec": true, "secs": true, "ref": true, "refs": true,
+	}
+
+	reRomanNumeral = regexp.MustCompile(`^(?i:M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3}))$`)
+
 	sentenceStarterWords = map[string]bool{
 		"the": true, "then": true, "this": true, "that": true, "these": true, "those": true,
 		"there": true, "they": true, "their": true, "it": true, "its": true, "we": true,
@@ -588,15 +600,19 @@ func isAbbreviation(runes []rune, dotIdx int) bool {
 
 	if unicode.IsUpper(runes[nextIdx]) {
 		endNext := nextIdx
-		for endNext < len(runes) && unicode.IsLetter(runes[endNext]) {
+		for endNext < len(runes) && (unicode.IsLetter(runes[endNext]) || unicode.IsDigit(runes[endNext])) {
 			endNext++
 		}
-		nextWord := strings.ToLower(string(runes[nextIdx:endNext]))
+		nextToken := string(runes[nextIdx:endNext])
+		nextWord := strings.ToLower(nextToken)
 		if strictTitleAbbreviations[word] {
 			return true
 		}
 		if start >= 1 && runes[start] == '.' {
-			return !sentenceStarterWords[nextWord]
+			return true
+		}
+		if docRefAbbreviations[word] && isReferenceIdentifier(nextToken) {
+			return true
 		}
 		if contextualTitleAbbreviations[word] || (len(word) == 1 && unicode.IsUpper(runes[dotIdx-1])) {
 			return !sentenceStarterWords[nextWord]
@@ -605,6 +621,28 @@ func isAbbreviation(runes []rune, dotIdx int) bool {
 	}
 
 	return len(word) == 1 || abbreviations[word] || (start >= 1 && runes[start] == '.')
+}
+
+func isReferenceIdentifier(token string) bool {
+	if len(token) == 0 {
+		return false
+	}
+	runes := []rune(token)
+	// Single uppercase letter: e.g. "A" in "Figs. A and B"
+	if len(runes) == 1 && unicode.IsUpper(runes[0]) {
+		return true
+	}
+	// Contains digits: e.g. "S1", "A1", "B2"
+	for _, r := range runes {
+		if unicode.IsDigit(r) {
+			return true
+		}
+	}
+	// Roman numerals: e.g. "I", "II", "III", "IV", "V", "VI", etc.
+	if reRomanNumeral.MatchString(token) {
+		return true
+	}
+	return false
 }
 
 // splitRuneBudget slices a string into chunks of at most maxChunkChars runes.

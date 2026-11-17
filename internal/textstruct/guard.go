@@ -134,7 +134,9 @@ func isCodeLine(line string) bool {
 }
 
 func isCodeStatementWithSemicolon(trimmed string) bool {
-	if strings.ContainsAny(trimmed, "={}<>[]") ||
+	if strings.ContainsAny(trimmed, "={}") ||
+		strings.Contains(trimmed, "<<") ||
+		strings.Contains(trimmed, ">>") ||
 		strings.Contains(trimmed, "++") ||
 		strings.Contains(trimmed, "--") ||
 		strings.Contains(trimmed, "->") ||
