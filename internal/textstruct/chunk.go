@@ -13,11 +13,74 @@ var (
 
 	abbreviations = map[string]bool{
 		"mr": true, "mrs": true, "ms": true, "dr": true, "prof": true,
-		"sr": true, "jr": true, "vs": true, "etc": true, "al": true,
-		"fig": true, "inc": true, "ltd": true, "corp": true, "co": true,
-		"approx": true, "dept": true, "est": true, "govt": true,
+		"sr": true, "jr": true, "vs": true, "v": true, "etc": true, "al": true,
+		"fig": true, "figs": true, "eq": true, "eqs": true,
+		"vol": true, "vols": true, "no": true, "nos": true, "nr": true,
+		"pp": true, "p": true, "ch": true, "chs": true, "chap": true, "chaps": true,
+		"sec": true, "secs": true, "cf": true, "ca": true,
+		"ed": true, "eds": true, "ref": true, "refs": true,
+		"op": true, "cit": true, "ibid": true,
+		"inc": true, "ltd": true, "corp": true, "co": true,
+		"approx": true, "dept": true, "depts": true, "est": true, "govt": true,
+		"min": true, "max": true, "st": true, "ave": true, "blvd": true, "rd": true,
 		"jan": true, "feb": true, "mar": true, "apr": true, "jun": true,
 		"jul": true, "aug": true, "sep": true, "oct": true, "nov": true, "dec": true,
+	}
+
+	// strictTitleAbbreviations always attach to a following capitalized name or reference
+	// and do not end sentences in normal prose.
+	strictTitleAbbreviations = map[string]bool{
+		"mr": true, "mrs": true, "ms": true, "dr": true, "prof": true,
+		"vs": true, "cf": true,
+	}
+
+	// contextualTitleAbbreviations attach to a following capitalized proper noun
+	// (e.g. "St. Louis", "Eds. Smith", "Smith v. Jones", "John Jr.") unless the
+	// next word is a common sentence starter (e.g. "Main St. Then we turned left.").
+	contextualTitleAbbreviations = map[string]bool{
+		"sr": true, "jr": true, "st": true, "v": true, "eds": true,
+	}
+
+	// docRefAbbreviations are abbreviations for figures, equations, sections, etc.,
+	// that can attach to a following capital-letter or alphanumeric reference identifier
+	// (e.g. "Fig. S1", "Eq. A1", "Figs. A and B", "Vol. II").
+	docRefAbbreviations = map[string]bool{
+		"fig": true, "figs": true, "eq": true, "eqs": true,
+		"vol": true, "vols": true, "no": true, "nos": true, "nr": true,
+		"pp": true, "p": true, "ch": true, "chs": true, "chap": true,
+		"chaps": true, "sec": true, "secs": true, "ref": true, "refs": true,
+	}
+
+	// exampleIntroducerAbbreviations are multipart abbreviations that introduce
+	// examples or clarifications and do not terminate a sentence, even when followed
+	// by capitalized proper nouns or capitalized sentence-starter words (e.g. "e.g. The Times", "i.e. The Hague").
+	exampleIntroducerAbbreviations = map[string]bool{
+		"e.g": true,
+		"i.e": true,
+	}
+
+	reRomanNumeral = regexp.MustCompile(`^(?i:M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3}))$`)
+
+	sentenceStarterWords = map[string]bool{
+		"the": true, "then": true, "this": true, "that": true, "these": true, "those": true,
+		"there": true, "they": true, "their": true, "it": true, "its": true, "we": true,
+		"our": true, "he": true, "his": true, "she": true, "her": true, "you": true,
+		"your": true, "i": true, "in": true, "on": true, "at": true, "for": true,
+		"from": true, "to": true, "with": true, "without": true, "by": true, "after": true,
+		"before": true, "during": true, "while": true, "when": true, "where": true,
+		"why": true, "how": true, "what": true, "which": true, "who": true, "if": true,
+		"unless": true, "until": true, "although": true, "though": true, "because": true,
+		"since": true, "as": true, "so": true, "but": true, "and": true, "or": true,
+		"nor": true, "yet": true, "however": true, "therefore": true, "furthermore": true,
+		"moreover": true, "nevertheless": true, "nonetheless": true, "meanwhile": true,
+		"instead": true, "otherwise": true, "consequently": true, "subsequently": true,
+		"accordingly": true, "thus": true, "hence": true, "next": true, "first": true,
+		"second": true, "third": true, "finally": true, "last": true, "more": true,
+		"most": true, "some": true, "many": true, "several": true, "each": true,
+		"every": true, "all": true, "both": true, "neither": true, "either": true,
+		"another": true, "other": true, "such": true, "here": true, "now": true,
+		"soon": true, "later": true, "today": true, "yesterday": true, "tomorrow": true,
+		"yes": true, "no": true, "please": true, "see": true, "note": true,
 	}
 )
 
@@ -477,6 +540,16 @@ func splitSentences(para string) []string {
 				endIdx++
 			}
 			if endIdx+1 < len(runes) && unicode.IsSpace(runes[endIdx+1]) {
+				if r == '.' {
+					nextIdx := endIdx + 1
+					for nextIdx < len(runes) && unicode.IsSpace(runes[nextIdx]) {
+						nextIdx++
+					}
+					if nextIdx < len(runes) && unicode.IsLower(runes[nextIdx]) {
+						i = endIdx
+						continue
+					}
+				}
 				i = endIdx
 				isBoundary = true
 			}
@@ -502,24 +575,120 @@ func splitSentences(para string) []string {
 }
 
 func isAbbreviation(runes []rune, dotIdx int) bool {
+	// Consecutive periods (e.g. ellipsis "...") are not sentence boundaries by themselves.
+	if (dotIdx >= 1 && runes[dotIdx-1] == '.') || (dotIdx+1 < len(runes) && runes[dotIdx+1] == '.') {
+		return true
+	}
 	// Look backwards to extract the token before the period
 	start := dotIdx - 1
 	for start >= 0 && unicode.IsLetter(runes[start]) {
 		start--
 	}
+	// Alphanumeric suffixes such as "1a." or "2b." are item identifiers, not initials.
+	if start >= 0 && unicode.IsDigit(runes[start]) {
+		return false
+	}
 	word := strings.ToLower(string(runes[start+1 : dotIdx]))
 	if len(word) == 0 {
 		return false
 	}
-	// Single-letter initials (e.g. "J." in "J. Smith")
-	if len(word) == 1 {
+
+	isMultipart := start >= 1 && runes[start] == '.'
+	var fullMultipart string
+	if isMultipart {
+		abbrevStart := start
+		for abbrevStart > 0 && runes[abbrevStart] == '.' {
+			p := abbrevStart - 1
+			for p >= 0 && unicode.IsLetter(runes[p]) {
+				p--
+			}
+			abbrevStart = p + 1
+			if p >= 0 && runes[p] == '.' {
+				abbrevStart = p
+			}
+		}
+		fullMultipart = strings.ToLower(string(runes[abbrevStart:dotIdx]))
+	}
+
+	endIdx := dotIdx
+	for endIdx+1 < len(runes) && isClosingPunctuation(runes[endIdx+1]) {
+		endIdx++
+	}
+	nextIdx := endIdx + 1
+	for nextIdx < len(runes) && unicode.IsSpace(runes[nextIdx]) {
+		nextIdx++
+	}
+
+	if nextIdx >= len(runes) || nextIdx == endIdx+1 || unicode.IsLower(runes[nextIdx]) || unicode.IsDigit(runes[nextIdx]) {
+		return len(word) == 1 || abbreviations[word] || isMultipart
+	}
+
+	if unicode.IsUpper(runes[nextIdx]) {
+		endNext := nextIdx
+		for endNext < len(runes) && (unicode.IsLetter(runes[endNext]) || unicode.IsDigit(runes[endNext])) {
+			endNext++
+		}
+		nextToken := string(runes[nextIdx:endNext])
+		nextWord := strings.ToLower(nextToken)
+		if strictTitleAbbreviations[word] {
+			return true
+		}
+		if isMultipart {
+			if exampleIntroducerAbbreviations[fullMultipart] {
+				return true
+			}
+			return !sentenceStarterWords[nextWord]
+		}
+		if docRefAbbreviations[word] && isReferenceIdentifier(word, nextToken) {
+			return true
+		}
+		if contextualTitleAbbreviations[word] || (len(word) == 1 && unicode.IsUpper(runes[dotIdx-1])) {
+			return !sentenceStarterWords[nextWord]
+		}
+		return false
+	}
+
+	return len(word) == 1 || abbreviations[word] || isMultipart
+}
+
+func isReferenceIdentifier(word, token string) bool {
+	if len(token) == 0 {
+		return false
+	}
+	runes := []rune(token)
+
+	// "no" and "nos" denote numbers, not lettered sections or figures.
+	// In prose, "No. I ..." and "No. A ..." are ordinary responses where "No." is followed
+	// by the pronoun "I" or article "A". A single capital letter is never a valid number identifier.
+	if word == "no" || word == "nos" {
+		hasDigit := false
+		for _, r := range runes {
+			if unicode.IsDigit(r) {
+				hasDigit = true
+				break
+			}
+		}
+		if hasDigit {
+			return true
+		}
+		if len(runes) > 1 && reRomanNumeral.MatchString(token) {
+			return true
+		}
+		return false
+	}
+
+	// Single uppercase letter: e.g. "A" in "Figs. A and B"
+	if len(runes) == 1 && unicode.IsUpper(runes[0]) {
 		return true
 	}
-	if abbreviations[word] {
-		return true
+	// Contains digits: e.g. "S1", "A1", "B2"
+	for _, r := range runes {
+		if unicode.IsDigit(r) {
+			return true
+		}
 	}
-	// Multi-part abbreviations with adjacent periods (e.g. second dot of "e.g.")
-	if start >= 1 && runes[start] == '.' {
+	// Roman numerals: e.g. "I", "II", "III", "IV", "V", "VI", etc.
+	if reRomanNumeral.MatchString(token) {
 		return true
 	}
 	return false
