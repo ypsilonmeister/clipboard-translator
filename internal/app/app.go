@@ -854,7 +854,7 @@ func (a *app) setTrayStateWithTimeout(state platform.TrayState, d time.Duration)
 }
 
 func (a *app) tickTrayState() {
-	if a.translating || a.capturing != nil {
+	if a.translating || a.capturing != nil || a.pendingRead != nil {
 		return
 	}
 	if !a.trayStateResetAt.IsZero() && !a.timeNow().Before(a.trayStateResetAt) {
@@ -918,6 +918,9 @@ func (a *app) abortTranslation() {
 	}
 	a.resetIdleTimer()
 	a.cancelTransientStatus()
+	if a.trayState == platform.TrayBusy {
+		a.trayStateResetAt = a.timeNow()
+	}
 	if a.capturing != nil {
 		a.capturing = nil
 		a.tray.SetStatus(a.readyTip) // do not leave "copying the selection..." behind

@@ -244,6 +244,8 @@ func (a *app) handleAPITranslation(req settings.Request) {
 		return
 	}
 	a.abortTranslation()
+	a.trayStateResetAt = time.Time{}
+	a.setTrayState(platform.TrayBusy)
 	a.apiReply = req.Reply
 	a.apiContext = req.Context
 	a.translateCaptured(p, 0, req.Text, false, platform.FallbackNone, nil)
