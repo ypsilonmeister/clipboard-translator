@@ -45,9 +45,13 @@ main() {
     exe=$install_dir/clipboard-translator
     desktop=$data_home/applications/clipboard-translator.desktop
     desktop_exec=$(printf '%s' "$exe" | sed 's/\\/\\\\\\\\/g; s/"/\\\\"/g; s/`/\\\\`/g; s/\$/\\\\$/g; s/%/%%/g')
-    owned='clipboard-translator setup.sh README.md README.ja.md LICENSE config.json config.json.bak translator.log server.log STOP .installed'
+    owned='clipboard-translator setup.sh README.md README.ja.md LICENSE config.json config.json.bak translator.log server.log setup.log STOP .installed'
+    marker='Clipboard Translator Linux installer'
+    ours=0
+    if [ ! -L "$install_dir/.installed" ] && [ -f "$install_dir/.installed" ] &&
+       [ "$(cat "$install_dir/.installed")" = "$marker" ]; then ours=1; fi
     if [ "$uninstall" = 1 ]; then
-        [ -f "$exe" ] || fail "Clipboard Translator is not installed at $install_dir"
+        [ "$ours" = 1 ] || fail "No installer-managed Clipboard Translator installation at $install_dir"
         if [ "$yes" != 1 ]; then
             printf 'Remove Clipboard Translator, its configuration, models and runtime from %s? [y/N] ' "$install_dir" >/dev/tty
             read -r answer </dev/tty || fail 'No confirmation; use --yes for unattended uninstall.'
@@ -80,7 +84,7 @@ main() {
         echo 'Clipboard Translator removed; unrelated files, if any, were left alone.'
         return
     fi
-    if [ -d "$install_dir" ] && [ ! -f "$exe" ] && [ ! -f "$install_dir/.installed" ] && [ -n "$(ls -A -- "$install_dir")" ]; then
+    if [ -d "$install_dir" ] && [ "$ours" != 1 ] && [ -n "$(ls -A -- "$install_dir")" ]; then
         fail "$install_dir is not empty and is not a Clipboard Translator folder. Use a dedicated empty or new directory."
     fi
     for tool in curl tar sha256sum bash nohup; do command -v "$tool" >/dev/null 2>&1 || fail "Install required command: $tool"; done
@@ -166,7 +170,7 @@ main() {
         mv -f -- "$staged" "$install_dir/$file"
     done
     rm -f -- "$install_dir/.installed"
-    printf '%s\n' 'Clipboard Translator Linux installer' > "$install_dir/.installed"
+    printf '%s\n' "$marker" > "$install_dir/.installed"
     if [ "$skip_setup" != 1 ]; then
         bash "$install_dir/setup.sh" </dev/null
     else

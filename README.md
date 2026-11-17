@@ -240,7 +240,10 @@ curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator
 ```
 
 `CT_VERSION` accepts a release version with or without `v`; omit it for latest.
-`CT_INSTALL_DIR` overrides the dedicated install directory. Boolean options are
+`CT_INSTALL_DIR` overrides the dedicated install directory. Non-empty directories
+are accepted only when marked by this installer; use a new directory for a manual
+installation. `CT_SKIP_SETUP=1` skips model/runtime setup; `CT_NO_LAUNCH=1` skips
+starting the app. Boolean options are
 on with `1`, off with `0`. To inspect the script or uninstall, save it first:
 
 ```sh
@@ -253,8 +256,10 @@ sh install.sh --uninstall                 # confirms through /dev/tty
 
 Saved-script flags are `--version`, `--install-dir`, `--skip-setup`, `--no-launch`,
 `--uninstall` and `--yes`. Uninstall removes the app's files, configuration,
-downloaded models/runtime, private Wayland token and registrations pointing to
-this executable; unrelated files remain, and the directory is removed only if empty.
+known catalog model/template files (including partial downloads), the entire
+`runtime/cpu` and `runtime/vulkan` trees, private Wayland token and registrations
+pointing to this executable. Other files remain, and the directory is removed only
+if empty. Uninstall requires the installer marker; custom model paths are retained.
 The visible launcher is `applications/clipboard-translator.desktop` under the data
 home, separate from the app's hidden Wayland registration.
 

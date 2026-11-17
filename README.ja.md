@@ -228,7 +228,10 @@ curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator
 ```
 
 `CT_VERSION` は `v` の有無を問わずバージョンを指定でき、省略時は最新版です。
-`CT_INSTALL_DIR` で専用フォルダーを変更できます。真偽値は `1` で有効、`0` で無効です。
+`CT_INSTALL_DIR` で専用フォルダーを変更できます。空でないフォルダーは、このインストーラーの
+管理マーカーがある場合だけ使用できます。手動導入済みの場合は新しいフォルダーを指定してください。
+`CT_SKIP_SETUP=1` はモデル／ランタイムのセットアップを、`CT_NO_LAUNCH=1` は起動を省略します。
+真偽値は `1` で有効、`0` で無効です。
 内容の確認やアンインストールには、スクリプトを保存して使います。
 
 ```sh
@@ -241,8 +244,10 @@ sh install.sh --uninstall                 # /dev/tty で確認
 
 保存したスクリプトでは `--version`、`--install-dir`、`--skip-setup`、`--no-launch`、
 `--uninstall`、`--yes` が使えます。削除対象はアプリのファイル、設定、取得済みの
-モデル／ランタイム、Wayland の許可トークン、この実行ファイルを指す登録です。
-無関係なファイルは残し、フォルダー自体は空の場合だけ削除します。
+カタログ内の既知のモデル／テンプレート（部分ダウンロードを含む）、`runtime/cpu` と
+`runtime/vulkan` のツリー全体、Wayland の許可トークン、この実行ファイルを指す登録です。
+その他のファイルは残し、フォルダー自体は空の場合だけ削除します。削除には管理マーカーが必要で、
+独自のモデルパスは残します。
 表示用ランチャーはデータホームの `applications/clipboard-translator.desktop` に配置し、
 アプリ自身の非表示の Wayland 登録とは分けています。
 

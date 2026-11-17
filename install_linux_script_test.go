@@ -29,6 +29,11 @@ func writeInstallFixture(t *testing.T, path, content string, mode os.FileMode) {
 
 func newLinuxInstallerFixture(t *testing.T) linuxInstallerFixture {
 	t.Helper()
+	return newLinuxInstallerFixtureConfig(t, true)
+}
+
+func newLinuxInstallerFixtureConfig(t *testing.T, bundledConfig bool) linuxInstallerFixture {
+	t.Helper()
 	f := linuxInstallerFixture{root: t.TempDir()}
 	f.dir = filepath.Join(f.root, "app with spaces")
 	f.bin = filepath.Join(f.root, "bin")
@@ -52,6 +57,9 @@ func newLinuxInstallerFixture(t *testing.T) linuxInstallerFixture {
 		{"setup.sh", "#!/bin/bash\nprintf setup > \"$(dirname \"$0\")/setup-ran\"\n", 0755},
 		{"config.json", "original config", 0644}, {"LICENSE", "license", 0644},
 	} {
+		if entry.name == "config.json" && !bundledConfig {
+			continue
+		}
 		if err := tw.WriteHeader(&tar.Header{Name: name + "/" + entry.name, Mode: entry.mode, Size: int64(len(entry.body))}); err != nil {
 			t.Fatal(err)
 		}
@@ -141,6 +149,7 @@ func TestLinuxInstallChecksumBeforeWrites(t *testing.T) {
 			f := newLinuxInstallerFixture(t)
 			if existing {
 				writeInstallFixture(t, filepath.Join(f.dir, "clipboard-translator"), "old app", 0755)
+				writeInstallFixture(t, filepath.Join(f.dir, ".installed"), "Clipboard Translator Linux installer\n", 0644)
 				writeInstallFixture(t, filepath.Join(f.dir, "STOP"), "unchanged", 0644)
 			}
 			writeInstallFixture(t, filepath.Join(f.assets, "clipboard-translator-linux-amd64-v1.2.3.tar.gz.sha256"), strings.Repeat("0", 64), 0644)
@@ -316,5 +325,59 @@ esac
 		if warned != (devices == "2") {
 			t.Fatalf("devices=%s warning=%v: %s", devices, warned, out)
 		}
+	}
+}
+
+func TestLinuxInstallRejectsImpostor(t *testing.T) {
+	for _, name := range []string{"clipboard-translator", ".installed"} {
+		for _, uninstall := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/uninstall=%v", name, uninstall), func(t *testing.T) {
+				f := newLinuxInstallerFixture(t)
+				writeInstallFixture(t, filepath.Join(f.dir, name), "unrelated", 0755)
+				args := []string{}
+				if uninstall {
+					args = []string{"--uninstall", "--yes"}
+				}
+				if out, err := f.run(t, nil, args...); err == nil {
+					t.Fatalf("accepted unrelated directory: %s", out)
+				}
+				b, err := os.ReadFile(filepath.Join(f.dir, name))
+				if err != nil || string(b) != "unrelated" {
+					t.Fatalf("modified foreign file: %q %v", b, err)
+				}
+			})
+		}
+	}
+}
+func TestLinuxInstallUninstallSetupLog(t *testing.T) {
+	f := newLinuxInstallerFixture(t)
+	if out, err := f.run(t, nil); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	writeInstallFixture(t, filepath.Join(f.dir, "setup.log"), "setup details", 0644)
+	if out, err := f.run(t, nil, "--uninstall", "--yes"); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	if _, err := os.Stat(f.dir); !os.IsNotExist(err) {
+		t.Fatal("setup log kept dedicated directory")
+	}
+}
+
+// Current release packages leave config creation to setup, rather than bundling it.
+func TestLinuxInstallWithoutBundledConfig(t *testing.T) {
+	f := newLinuxInstallerFixtureConfig(t, false)
+	if out, err := f.run(t, nil); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(f.dir, "config.json")); !os.IsNotExist(err) {
+		t.Fatal("skip-setup unexpectedly created config")
+	}
+	writeInstallFixture(t, filepath.Join(f.dir, "config.json"), "custom config", 0644)
+	if out, err := f.run(t, nil); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	b, err := os.ReadFile(filepath.Join(f.dir, "config.json"))
+	if err != nil || string(b) != "custom config" {
+		t.Fatalf("config changed: %q %v", b, err)
 	}
 }
