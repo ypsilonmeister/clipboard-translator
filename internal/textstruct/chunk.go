@@ -47,8 +47,16 @@ var (
 	docRefAbbreviations = map[string]bool{
 		"fig": true, "figs": true, "eq": true, "eqs": true,
 		"vol": true, "vols": true, "no": true, "nos": true, "nr": true,
-		"pp": true, "p": true, "ch": true, "chs": true, "chap": true, "chaps": true,
-		"sec": true, "secs": true, "ref": true, "refs": true,
+		"pp": true, "p": true, "ch": true, "chs": true, "chap": true,
+		"chaps": true, "sec": true, "secs": true, "ref": true, "refs": true,
+	}
+
+	// exampleIntroducerAbbreviations are multipart abbreviations that introduce
+	// examples or clarifications and do not terminate a sentence, even when followed
+	// by capitalized proper nouns or capitalized sentence-starter words (e.g. "e.g. The Times", "i.e. The Hague").
+	exampleIntroducerAbbreviations = map[string]bool{
+		"e.g": true,
+		"i.e": true,
 	}
 
 	reRomanNumeral = regexp.MustCompile(`^(?i:M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3}))$`)
@@ -585,6 +593,23 @@ func isAbbreviation(runes []rune, dotIdx int) bool {
 		return false
 	}
 
+	isMultipart := start >= 1 && runes[start] == '.'
+	var fullMultipart string
+	if isMultipart {
+		abbrevStart := start
+		for abbrevStart > 0 && runes[abbrevStart] == '.' {
+			p := abbrevStart - 1
+			for p >= 0 && unicode.IsLetter(runes[p]) {
+				p--
+			}
+			abbrevStart = p + 1
+			if p >= 0 && runes[p] == '.' {
+				abbrevStart = p
+			}
+		}
+		fullMultipart = strings.ToLower(string(runes[abbrevStart:dotIdx]))
+	}
+
 	endIdx := dotIdx
 	for endIdx+1 < len(runes) && isClosingPunctuation(runes[endIdx+1]) {
 		endIdx++
@@ -595,7 +620,7 @@ func isAbbreviation(runes []rune, dotIdx int) bool {
 	}
 
 	if nextIdx >= len(runes) || nextIdx == endIdx+1 || unicode.IsLower(runes[nextIdx]) || unicode.IsDigit(runes[nextIdx]) {
-		return len(word) == 1 || abbreviations[word] || (start >= 1 && runes[start] == '.')
+		return len(word) == 1 || abbreviations[word] || isMultipart
 	}
 
 	if unicode.IsUpper(runes[nextIdx]) {
@@ -608,10 +633,13 @@ func isAbbreviation(runes []rune, dotIdx int) bool {
 		if strictTitleAbbreviations[word] {
 			return true
 		}
-		if start >= 1 && runes[start] == '.' {
-			return true
+		if isMultipart {
+			if exampleIntroducerAbbreviations[fullMultipart] {
+				return true
+			}
+			return !sentenceStarterWords[nextWord]
 		}
-		if docRefAbbreviations[word] && isReferenceIdentifier(nextToken) {
+		if docRefAbbreviations[word] && isReferenceIdentifier(word, nextToken) {
 			return true
 		}
 		if contextualTitleAbbreviations[word] || (len(word) == 1 && unicode.IsUpper(runes[dotIdx-1])) {
@@ -620,14 +648,35 @@ func isAbbreviation(runes []rune, dotIdx int) bool {
 		return false
 	}
 
-	return len(word) == 1 || abbreviations[word] || (start >= 1 && runes[start] == '.')
+	return len(word) == 1 || abbreviations[word] || isMultipart
 }
 
-func isReferenceIdentifier(token string) bool {
+func isReferenceIdentifier(word, token string) bool {
 	if len(token) == 0 {
 		return false
 	}
 	runes := []rune(token)
+
+	// "no" and "nos" denote numbers, not lettered sections or figures.
+	// In prose, "No. I ..." and "No. A ..." are ordinary responses where "No." is followed
+	// by the pronoun "I" or article "A". A single capital letter is never a valid number identifier.
+	if word == "no" || word == "nos" {
+		hasDigit := false
+		for _, r := range runes {
+			if unicode.IsDigit(r) {
+				hasDigit = true
+				break
+			}
+		}
+		if hasDigit {
+			return true
+		}
+		if len(runes) > 1 && reRomanNumeral.MatchString(token) {
+			return true
+		}
+		return false
+	}
+
 	// Single uppercase letter: e.g. "A" in "Figs. A and B"
 	if len(runes) == 1 && unicode.IsUpper(runes[0]) {
 		return true

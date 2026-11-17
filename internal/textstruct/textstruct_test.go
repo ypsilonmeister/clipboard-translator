@@ -897,6 +897,18 @@ func TestCleanSpuriousNewlines_NegativeGuardsPreserved(t *testing.T) {
 				"logger << \"The next request is pending\";",
 			lang: "en",
 		},
+		{
+			name: "Unindented array declarations ending in semicolon",
+			input: "TranslationResult[] translatedResults;\n" +
+				"TranslationRequest[] pendingRequests;",
+			lang: "en",
+		},
+		{
+			name: "Unindented generic declarations ending in semicolon",
+			input: "List<string> translatedParagraphs;\n" +
+				"List<string> sourceParagraphs;",
+			lang: "en",
+		},
 	}
 
 	for _, tc := range cases {
@@ -1012,6 +1024,31 @@ func TestSplitSentences_EllipsesAbbreviationsAndLowercaseContinuation(t *testing
 			input: "The destination is clear, i.e. The Hague.",
 			want:  []string{"The destination is clear, i.e. The Hague."},
 		},
+		{
+			name:  "Split sentence after U.S. before sentence starter Then",
+			input: "The company operates in the U.S. Then it expanded.",
+			want:  []string{"The company operates in the U.S.", "Then it expanded."},
+		},
+		{
+			name:  "Split sentence after p.m. before sentence starter We",
+			input: "The meeting ended at 5 p.m. We went home.",
+			want:  []string{"The meeting ended at 5 p.m.", "We went home."},
+		},
+		{
+			name:  "Split sentence after U.K. before sentence starter The",
+			input: "This happened in the U.K. The results were clear.",
+			want:  []string{"This happened in the U.K.", "The results were clear."},
+		},
+		{
+			name:  "Split ordinary sentence starting with No. before pronoun I",
+			input: "No. I disagree.",
+			want:  []string{"No.", "I disagree."},
+		},
+		{
+			name:  "Split ordinary sentence starting with No. before article A",
+			input: "No. A different approach is needed.",
+			want:  []string{"No.", "A different approach is needed."},
+		},
 	}
 
 	for _, tc := range cases {
@@ -1039,5 +1076,16 @@ func TestChunkParagraphWithBoundaries_EllipsesAndAbbreviations(t *testing.T) {
 	}
 	if got := JoinChunks(trimAllChunks(chunks), boundaries); got != input {
 		t.Fatalf("JoinChunks mismatch: got %q, want %q", got, input)
+	}
+}
+
+func TestChunkParagraphWithBoundaries_SentenceFinalMultipartAbbrev(t *testing.T) {
+	input := "The company operates in the U.S. Then it expanded."
+	chunks, boundaries := ChunkParagraphWithBoundaries(input, 40)
+	wantChunks := []string{"The company operates in the U.S.", "Then it expanded."}
+	wantBoundaries := []Boundary{BoundarySentence}
+	if !reflect.DeepEqual(chunks, wantChunks) || !reflect.DeepEqual(boundaries, wantBoundaries) {
+		t.Fatalf("ChunkParagraphWithBoundaries mismatch:\nchunks: %#v, want %#v\nboundaries: %#v, want %#v",
+			chunks, wantChunks, boundaries, wantBoundaries)
 	}
 }

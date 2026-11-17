@@ -15,6 +15,12 @@ var (
 
 	// reEmailSig matches standard email signature separator ("-- ")
 	reEmailSig = regexp.MustCompile(`^--\s*$`)
+
+	// reArrayDecl matches array declarations like "Type[] name;" or "Type[10] name;"
+	reArrayDecl = regexp.MustCompile(`\b[A-Za-z_]\w*(?:\[\s*\d*\s*\])+\s+[A-Za-z_]\w*`)
+
+	// reGenericDecl matches generic declarations like "List<string> name;" or "Map<K, V> name;"
+	reGenericDecl = regexp.MustCompile(`\b[A-Za-z_]\w*<[A-Za-z0-9_,\s<>\[\]*&]+>\s+[A-Za-z_]\w*`)
 )
 
 // isPreservedLine reports whether line is a structural element that must not be flattened.
@@ -141,6 +147,8 @@ func isCodeStatementWithSemicolon(trimmed string) bool {
 		strings.Contains(trimmed, "--") ||
 		strings.Contains(trimmed, "->") ||
 		strings.Contains(trimmed, "::") ||
+		reArrayDecl.MatchString(trimmed) ||
+		reGenericDecl.MatchString(trimmed) ||
 		hasCodeCallSyntax(trimmed) {
 		return true
 	}
@@ -150,6 +158,7 @@ func isCodeStatementWithSemicolon(trimmed string) bool {
 		"var ", "const ", "type ", "import ", "package ",
 		"let ", "int ", "char ", "bool ", "void ", "float ", "double ",
 		"struct ", "typedef ", "using ", "namespace ", "throw ",
+		"public ", "private ", "protected ", "internal ", "static ", "readonly ",
 	} {
 		if strings.HasPrefix(trimmed, kw) {
 			return true
