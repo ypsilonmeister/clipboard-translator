@@ -12,7 +12,7 @@ Permissions:
 - `storage`: endpoint and token in `chrome.storage.local`, without sync; restricted to trusted extension contexts.
 - `offscreen` and `clipboardWrite`: write the result after explicit translation, without reading the clipboard.
 - `notifications`: success/failure and a short preview.
-- `host_permissions`: only HTTP `localhost`, `127.0.0.1`, and `penguin.linux.test`. Chrome match patterns cannot restrict ports, so runtime URL validation further requires exactly `/translate`, no credentials/query/fragment, and fetch rejects redirects. Only the saved endpoint is used. Direct arbitrary container IPs and external URLs are deliberately unsupported; use ChromeOS forwarding or the named container address.
+- `host_permissions`: only HTTP `localhost`, `127.0.0.1`, and `penguin.linux.test`. Chrome match patterns cannot restrict ports, so runtime URL validation further requires exactly `/translate`, no credentials/query/fragment, and fetch rejects redirects. Only the saved endpoint is used. Direct arbitrary container IPs and external URLs are deliberately unsupported; use ChromeOS forwarding (localhost). The named container address (penguin.linux.test) is permitted in host permissions, but direct connections from Chrome may fail.
 
 Icons are resized copies of the application's `assets/icon.png` (16/32/48/128). No new icon artwork or third-party assets were introduced.
 
