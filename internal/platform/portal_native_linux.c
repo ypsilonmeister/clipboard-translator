@@ -10,6 +10,7 @@
 #define PATH "/org/freedesktop/portal/desktop"
 struct CTPortal {
     int refs, closed;
+    int saver_provider; // 0 until GetActive selects a provider, then index + 1
     GDBusConnection *bus;
     GCancellable *cancel;
     GQueue events;
@@ -117,18 +118,22 @@ static void owner_changed(GDBusConnection *bus, const gchar *sender, const gchar
 }
 // Screen shield state (#133 P1-2). GNOME Shell inhibits RemoteDesktop session
 // creation while the shield is up; the app waits for it to lift instead of
-// treating the refusal as a denial. Kind 14, code 1 = active, 0 = inactive.
-static void screensaver_signal(GDBusConnection *bus, const gchar *sender, const gchar *path,
-                               const gchar *iface, const gchar *name, GVariant *args, gpointer data) {
-    gboolean active;
-    if (!g_variant_is_of_type(args,G_VARIANT_TYPE("(b)"))) return;
-    g_variant_get(args,"(b)",&active);
-    enqueue(data,14,NULL,NULL,active ? 1 : 0);
-}
+// treating the refusal as a denial. Kind 14: 0 = inactive, 1 = active, 2 = unavailable.
 static const char *saver_names[][3]={
     {"org.gnome.ScreenSaver","/org/gnome/ScreenSaver","org.gnome.ScreenSaver"},
     {"org.freedesktop.ScreenSaver","/org/freedesktop/ScreenSaver","org.freedesktop.ScreenSaver"},
 };
+static void screensaver_signal(GDBusConnection *bus, const gchar *sender, const gchar *path,
+                               const gchar *iface, const gchar *name, GVariant *args, gpointer data) {
+    CTPortal *p=data;
+    int index=p->saver_provider-1;
+    if (index<0 || strcmp(iface,saver_names[index][2])) return;
+    if (strcmp(path,saver_names[index][1]) && (index!=1 || strcmp(path,"/ScreenSaver"))) return;
+    gboolean active;
+    if (!g_variant_is_of_type(args,G_VARIANT_TYPE("(b)"))) return;
+    g_variant_get(args,"(b)",&active);
+    enqueue(p,14,NULL,NULL,active ? 1 : 0);
+}
 typedef struct { CTPortal *p; int index; } SaverQuery;
 static void saver_query(CTPortal *p, int index);
 static void saver_done(GObject *obj, GAsyncResult *result, gpointer data) {
@@ -136,10 +141,12 @@ static void saver_done(GObject *obj, GAsyncResult *result, gpointer data) {
     GVariant *reply=g_dbus_connection_call_finish(G_DBUS_CONNECTION(obj),result,&error);
     if (reply) {
         gboolean active; g_variant_get(reply,"(b)",&active); g_variant_unref(reply);
+        q->p->saver_provider=q->index+1;
         enqueue(q->p,14,NULL,NULL,active ? 1 : 0);
-    } else if (!g_error_matches(error,G_IO_ERROR,G_IO_ERROR_CANCELLED) && q->index+1<(int)G_N_ELEMENTS(saver_names)) {
-        saver_query(q->p,q->index+1);
-    } // No screen saver service: the state stays unknown, which the app treats as "not inhibited".
+    } else if (!g_error_matches(error,G_IO_ERROR,G_IO_ERROR_CANCELLED)) {
+        if (q->index+1<(int)G_N_ELEMENTS(saver_names)) saver_query(q->p,q->index+1);
+        else enqueue(q->p,14,NULL,NULL,2);
+    }
     g_clear_error(&error); release(q->p); g_free(q);
 }
 static void saver_query(CTPortal *p, int index) {

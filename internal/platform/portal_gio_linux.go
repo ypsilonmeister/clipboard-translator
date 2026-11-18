@@ -245,8 +245,8 @@ func (w *gioPortalWire) Key(session, token string, sym int, down bool) {
 }
 
 // QueryScreenSaver asks for the current screen shield state; the answer arrives
-// as a "screensaver" event (code 1 = active). ActiveChanged is subscribed in
-// ct_portal_open, so later changes arrive as the same event.
+// as a "screensaver" event (0 = inactive, 1 = active, 2 = unavailable).
+// ActiveChanged from the selected provider uses the same event.
 func (w *gioPortalWire) QueryScreenSaver() {
 	if w.native != nil {
 		C.ct_portal_query_screensaver(w.native)

@@ -20,7 +20,7 @@ type portalWire interface {
 }
 
 type portalEvent struct {
-	kind             string // registered, response, closed, failed
+	kind             string
 	token            string
 	session          string
 	code             uint32

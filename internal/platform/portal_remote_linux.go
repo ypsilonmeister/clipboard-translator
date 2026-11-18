@@ -43,6 +43,7 @@ const (
 	shieldUnknown = iota
 	shieldInactive
 	shieldActive
+	shieldPending
 )
 
 type portalRemote struct {
@@ -51,7 +52,8 @@ type portalRemote struct {
 	phase, session, pending, operation string // phase: idle, create, select, clipboard, start, ready, waiting, failed, closed
 	wanted                             bool
 	deadline                           time.Time
-	shield                             int       // shieldUnknown, shieldInactive, shieldActive
+	shield                             int
+	createSawShield, createRejected    bool      // shield history and deferred Response 2 for the current create
 	retryAt, readySince                time.Time // waiting: next reconnect; ready: when Start succeeded
 	attempt                            int       // index into portalReconnectBackoff
 	err, warning                       error
@@ -61,7 +63,7 @@ type portalRemote struct {
 }
 
 func newPortalRemote(p *portalClient, w portalRemoteWire) *portalRemote {
-	r := &portalRemote{client: p, wire: w, phase: "idle", keys: make(map[string]*portalKeys), retired: make(map[string]bool)}
+	r := &portalRemote{client: p, wire: w, phase: "idle", shield: shieldPending, keys: make(map[string]*portalKeys), retired: make(map[string]bool)}
 	r.clip = &portalClipboard{remote: r, mime: portalTextMIME, transfers: make(map[string]uint32)}
 	previous := p.onEvent
 	p.onEvent = func(e portalEvent) bool {
@@ -78,6 +80,7 @@ func (r *portalRemote) Authorize() {
 		r.wanted = true
 		r.err = nil
 		r.warning = nil
+		r.retryAt = time.Time{}
 		r.attempt = 0
 	}
 }
@@ -93,6 +96,7 @@ func (r *portalRemote) teardown(err error) {
 	}
 	r.pending = ""
 	r.operation = ""
+	r.createRejected = false
 	r.wanted = false
 	r.clip.reset()
 	for token, k := range r.keys {
@@ -124,7 +128,11 @@ func (r *portalRemote) wait() {
 	r.attempt++
 }
 
-// WaitMessage is the user-facing status while phase is "waiting".
+func (r *portalRemote) reconnecting() bool {
+	return r.phase == "waiting" || (r.phase == "create" && !r.retryAt.IsZero())
+}
+
+// WaitMessage is the user-facing status during reconnect.
 func (r *portalRemote) WaitMessage() string {
 	if r.shield == shieldActive {
 		return "Waiting for the screen to be unlocked to restore Wayland keyboard and clipboard access..."
@@ -177,6 +185,7 @@ func (r *portalRemote) request(operation string) {
 	r.deadline = r.client.now().Add(3 * time.Minute)
 	switch operation {
 	case "create":
+		r.createSawShield = r.shield == shieldActive
 		session, err := portalToken()
 		if err != nil {
 			r.stop("could not create a Wayland session identifier")
@@ -199,9 +208,8 @@ func (r *portalRemote) selectDevices() {
 			r.stop("could not load the saved Wayland permission token")
 			return
 		}
-		// Keep the token on disk until Start returns its replacement. If this
-		// attempt is interrupted (an inhibit between steps, a timeout), the next
-		// one restores silently; a stale token only makes the portal ask again.
+		// Keep the token until Start returns a replacement so the next attempt
+		// can offer it again. The portal may have consumed it and ask for consent.
 	}
 	token, err := portalToken()
 	if err != nil {
@@ -214,6 +222,25 @@ func (r *portalRemote) selectDevices() {
 	r.deadline = r.client.now().Add(3 * time.Minute)
 	r.wire.SelectDevices(r.session, token, restore)
 }
+
+// A create's Response 2 is ambiguous until the initial GetActive finishes.
+func (r *portalRemote) classifyCreateRejection() {
+	if r.shield == shieldPending {
+		r.createRejected = true
+		return
+	}
+	if !r.createSawShield {
+		r.stop(portalCreateError(portalRemoteDesktop, portalEvent{kind: "response", code: 2}))
+		return
+	}
+	r.wait()
+	if r.shield == shieldInactive {
+		// The shield lifted before the inhibited request finished.
+		r.attempt = 0
+		r.retryAt = r.client.now()
+	}
+}
+
 func (r *portalRemote) event(e portalEvent) bool {
 	if (e.kind == "response" || e.kind == "failed") && r.retired[e.token] {
 		delete(r.retired, e.token)
@@ -224,6 +251,10 @@ func (r *portalRemote) event(e portalEvent) bool {
 		operation := r.operation
 		r.pending = ""
 		r.operation = ""
+		if operation == "create" && e.kind == "response" && e.code == 2 {
+			r.classifyCreateRejection()
+			return true
+		}
 		// Response 2 while the screen shield is up is GNOME's remote-access
 		// inhibit (§0.2), not a refusal: wait for the shield to lift.
 		if e.kind == "response" && e.code == 2 && r.shield == shieldActive {
@@ -255,7 +286,7 @@ func (r *portalRemote) event(e portalEvent) bool {
 				r.stop("Wayland keyboard and clipboard access was not granted")
 				return true
 			}
-			if r.client.tokens.dir != "" {
+			if e.restore != "" && r.client.tokens.dir != "" {
 				if err := r.client.tokens.Save(e.restore); err != nil {
 					r.warning = errors.New("Wayland access works, but its permission token could not be saved")
 				}
@@ -279,9 +310,19 @@ func (r *portalRemote) event(e portalEvent) bool {
 	}
 	if e.kind == "screensaver" {
 		was := r.shield
-		r.shield = shieldInactive
-		if e.code != 0 {
+		switch e.code {
+		case 0:
+			r.shield = shieldInactive
+		case 1:
 			r.shield = shieldActive
+			if r.phase == "create" {
+				r.createSawShield = true
+			}
+		case 2:
+			r.shield = shieldUnknown
+		}
+		if r.createRejected {
+			r.classifyCreateRejection()
 		}
 		if was == shieldActive && r.shield == shieldInactive && r.phase == "waiting" {
 			r.attempt = 0

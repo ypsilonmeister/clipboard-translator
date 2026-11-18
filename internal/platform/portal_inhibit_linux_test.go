@@ -103,6 +103,32 @@ func TestPortalRemoteInhibitedCreateWaitsWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestPortalReconnectStatusDuringCreate(t *testing.T) {
+	d, w, _ := boundDesktop(t)
+	defer d.Close()
+	now := d.client.now()
+	d.client.now = func() time.Time { return now }
+	shield(&w.fakeRemoteWire, true)
+	w.events = append(w.events, portalEvent{kind: "response", token: d.remote.pending, code: 2})
+	d.Step()
+
+	now = d.remote.retryAt
+	d.Step()
+	if d.remote.operation != "create" || d.remote.pending == "" {
+		t.Fatal("backoff did not start a create")
+	}
+	for _, active := range []bool{true, false} {
+		shield(&w.fakeRemoteWire, active)
+		d.Step()
+		if s := d.DesktopStatus(); s.Ready || s.Retry || s.Message != d.remote.WaitMessage() {
+			t.Fatalf("shield active=%v: unexpected reconnect status %+v", active, s)
+		}
+		if _, err := d.Read(); err == nil || err.Error() != d.remote.WaitMessage() {
+			t.Fatalf("shield active=%v: clipboard must report reconnect, got %v", active, err)
+		}
+	}
+}
+
 // Without the shield (or with no screen saver service) Response 2 is still a
 // failure the user can retry; Response 1 is a refusal even under the shield.
 func TestPortalRemoteResponseWithoutShieldStillFails(t *testing.T) {
@@ -117,10 +143,19 @@ func TestPortalRemoteResponseWithoutShieldStillFails(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, w, _ := remoteFixture(t)
-			r.shield = tc.shield
+			if tc.shield != shieldUnknown {
+				shield(w, tc.shield == shieldActive)
+			}
 			r.Authorize()
 			r.Step()
 			w.events = append(w.events, portalEvent{kind: "response", token: r.pending, code: tc.code})
+			if tc.shield == shieldUnknown {
+				r.Step()
+				if r.err != nil || r.phase == "failed" {
+					t.Fatal("failed before the initial screen saver query completed")
+				}
+				w.events = append(w.events, portalEvent{kind: "screensaver", code: 2})
+			}
 			r.Step()
 			if r.phase != "failed" || r.err == nil {
 				t.Fatalf("phase=%s err=%v; want failed", r.phase, r.err)
@@ -360,5 +395,63 @@ func TestPortalRemoteWaitingStopsOnConnectionLoss(t *testing.T) {
 	}
 	if token, _ := r.client.tokens.Load(); token != "new-private-token" {
 		t.Fatal("connection loss must keep the token")
+	}
+}
+
+func TestPortalRemoteWaitsForLateInitialShieldState(t *testing.T) {
+	r, w, _ := remoteFixture(t)
+	r.Authorize()
+	r.Step()
+	w.events = append(w.events, portalEvent{kind: "response", token: r.pending, code: 2})
+	r.Step()
+	if r.err != nil || r.phase == "failed" {
+		t.Fatal("failed before the initial screen saver query completed")
+	}
+	shield(w, true)
+	r.Step()
+	if r.phase != "waiting" || r.err != nil {
+		t.Fatalf("after late GetActive(true): phase=%s err=%v", r.phase, r.err)
+	}
+}
+
+func TestPortalRemoteStartWithoutReplacementKeepsToken(t *testing.T) {
+	r, w, _ := remoteFixture(t)
+	if err := r.client.tokens.Save("kept-token"); err != nil {
+		t.Fatal(err)
+	}
+	r.Authorize()
+	r.Step()
+	answerRemoteCreate(t, r, w)
+	finishRestore(t, r, w, "")
+	if token, err := r.client.tokens.Load(); err != nil || token != "kept-token" {
+		t.Fatalf("after successful Start without replacement: token=%q err=%v", token, err)
+	}
+}
+
+func TestPortalRemoteUnlockWhileRetryInFlight(t *testing.T) {
+	r, w, now := remoteFixture(t)
+	shield(w, true)
+	r.Authorize()
+	r.Step()
+	w.events = append(w.events, portalEvent{kind: "response", token: r.pending, code: 2})
+	r.Step()
+	*now = r.retryAt
+	r.Step()
+	token := r.pending
+	requests := len(w.requests)
+	shield(w, false)
+	r.Step()
+	if r.pending != token || len(w.requests) != requests {
+		t.Fatal("unlock must leave the in-flight create alone")
+	}
+	w.events = append(w.events, portalEvent{kind: "response", token: token, code: 2})
+	r.Step()
+	if r.err != nil || r.operation != "create" || r.pending == token || len(w.requests) != requests+1 {
+		t.Fatalf("unlock must reconnect immediately after the inhibited response: phase=%s err=%v", r.phase, r.err)
+	}
+	w.events = append(w.events, portalEvent{kind: "response", token: r.pending, code: 2})
+	r.Step()
+	if r.phase != "failed" || r.err == nil {
+		t.Fatal("the next create must classify its own unshielded failure")
 	}
 }

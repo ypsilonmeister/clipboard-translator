@@ -133,7 +133,7 @@ func (d *portalDesktop) DesktopStatus() DesktopStatus {
 	case d.remote.err != nil:
 		s.Message = d.remote.err.Error()
 		s.Retry = true
-	case d.remote.phase == "waiting":
+	case d.remote.reconnecting():
 		// Temporarily unavailable (screen shield or reconnect backoff); Retry
 		// cannot help, the remote feature reconnects by itself.
 		s.Message = d.remote.WaitMessage()
@@ -193,7 +193,7 @@ func (d *portalDesktop) access() error {
 		if d.remote.err != nil {
 			return d.remote.err
 		}
-		if d.remote.phase == "waiting" {
+		if d.remote.reconnecting() {
 			return errors.New(d.remote.WaitMessage())
 		}
 		return errors.New("Wayland keyboard and clipboard permission is pending; allow access in the desktop dialog")
