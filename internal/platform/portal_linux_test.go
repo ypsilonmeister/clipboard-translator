@@ -34,34 +34,29 @@ func portalFixture() (*portalClient, *fakePortalWire, *time.Time) {
 	p := startPortalClient(w, waylandAppID, func() time.Time { return now })
 	return p, w, &now
 }
-func TestPortalRegistrationAndSessionLifecycle(t *testing.T) {
+func TestPortalClientRegistersWithoutCreatingSessions(t *testing.T) {
 	p, w, _ := portalFixture()
 	if w.registered != waylandAppID || len(w.requests) != 0 {
 		t.Fatal("must register before any portal request")
 	}
 	w.events = append(w.events, portalEvent{kind: "registered"})
 	p.Step()
-	if len(w.requests) != 2 || p.phase != "creating" {
-		t.Fatalf("requests=%+v phase=%s", w.requests, p.phase)
+	if p.phase != "ready" || p.err != nil || len(w.requests) != 0 {
+		t.Fatalf("client must be ready after Register and own no sessions: phase=%s requests=%+v", p.phase, w.requests)
 	}
-	tokens := map[string]bool{}
-	for i := len(w.requests) - 1; i >= 0; i-- {
-		q := w.requests[i]
-		if tokens[q.token] || tokens[q.session] || q.token == q.session {
-			t.Fatal("tokens must be unique")
-		}
-		tokens[q.token] = true
-		tokens[q.session] = true
-		w.events = append(w.events, portalEvent{kind: "response", token: q.token, session: "/org/freedesktop/portal/desktop/session/test/" + q.session})
-	}
+	// Feature-level events nobody claims are stale and never connection failures.
+	w.events = append(w.events,
+		portalEvent{kind: "closed", session: "/org/freedesktop/portal/desktop/session/test/other"},
+		portalEvent{kind: "response", token: "unknown", code: 2},
+		portalEvent{kind: "failed", token: "retired-request"})
 	p.Step()
-	if p.phase != "ready" || len(p.sessions) != 2 {
-		t.Fatalf("phase=%s sessions=%v", p.phase, p.sessions)
+	if p.phase != "ready" || p.err != nil || w.closes != 0 {
+		t.Fatalf("feature events reached the connection: phase=%s err=%v closes=%d", p.phase, p.err, w.closes)
 	}
-	w.events = append(w.events, portalEvent{kind: "closed", session: p.sessions[portalShortcuts]})
+	w.events = append(w.events, portalEvent{kind: "failed"})
 	p.Step()
-	if p.phase != "failed" || len(p.sessions) != 0 || w.closes != 1 {
-		t.Fatal("revocation must discard both sessions and disconnect")
+	if p.phase != "failed" || p.err == nil || w.closes != 1 {
+		t.Fatal("connection loss must fail the client and disconnect")
 	}
 	p.Close()
 	p.Close()
@@ -70,29 +65,23 @@ func TestPortalRegistrationAndSessionLifecycle(t *testing.T) {
 	}
 }
 func TestPortalFailureAndCancellation(t *testing.T) {
-	for _, kind := range []string{"registration", "denied", "malformed", "lost", "early-close", "timeout", "cancel"} {
+	for _, kind := range []string{"registration", "lost", "timeout", "cancel"} {
 		t.Run(kind, func(t *testing.T) {
 			p, w, now := portalFixture()
-			if kind != "registration" {
+			if kind == "lost" {
 				w.events = append(w.events, portalEvent{kind: "registered"})
 				p.Step()
 			}
 			switch kind {
 			case "registration", "lost":
 				w.events = append(w.events, portalEvent{kind: "failed"})
-			case "denied":
-				w.events = append(w.events, portalEvent{kind: "response", token: w.requests[0].token, code: 1})
-			case "malformed":
-				w.events = append(w.events, portalEvent{kind: "response", token: w.requests[0].token, session: "bad"})
-			case "early-close":
-				w.events = append(w.events, portalEvent{kind: "closed", session: "/org/freedesktop/portal/desktop/session/test/pending"})
 			case "timeout":
 				*now = now.Add(16 * time.Second)
 			case "cancel":
 				p.Close()
 			}
 			p.Step()
-			if w.closes != 1 || len(p.sessions) != 0 || (kind != "cancel" && (p.phase != "failed" || p.err == nil)) {
+			if w.closes != 1 || (kind != "cancel" && (p.phase != "failed" || p.err == nil)) {
 				t.Fatalf("phase=%s closes=%d err=%v", p.phase, w.closes, p.err)
 			}
 			p.Close()
@@ -102,17 +91,27 @@ func TestPortalFailureAndCancellation(t *testing.T) {
 		})
 	}
 }
+func TestPortalClientReadyDoesNotTimeOut(t *testing.T) {
+	p, w, now := portalFixture()
+	w.events = append(w.events, portalEvent{kind: "registered"})
+	p.Step()
+	*now = now.Add(time.Hour)
+	p.Step()
+	if p.phase != "ready" || w.closes != 0 {
+		t.Fatal("a registered connection must not expire")
+	}
+}
 func TestPortalIgnoresUnknownAndDuplicateReplies(t *testing.T) {
 	p, w, _ := portalFixture()
 	w.events = []portalEvent{{kind: "registered"}, {kind: "registered"}, {kind: "response", token: "unknown", code: 2}}
 	p.Step()
-	if p.phase != "creating" || len(w.requests) != 2 || len(p.pending) != 2 {
+	if p.phase != "ready" || len(w.requests) != 0 || w.closes != 0 {
 		t.Fatal("unrelated replies changed state")
 	}
 	p.Close()
 	w.events = append(w.events, portalEvent{kind: "registered"})
 	p.Step()
-	if len(w.requests) != 2 {
+	if p.phase != "closed" || len(w.requests) != 0 {
 		t.Fatal("closed client restarted")
 	}
 }

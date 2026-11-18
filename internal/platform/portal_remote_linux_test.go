@@ -53,8 +53,6 @@ func remoteFixture(t *testing.T) (*portalRemote, *fakeRemoteWire, *time.Time) {
 	w := &fakeRemoteWire{}
 	p := startPortalClient(w, waylandAppID, func() time.Time { return now })
 	p.phase = "ready"
-	p.sessions[portalShortcuts] = "/org/freedesktop/portal/desktop/session/test/shortcuts"
-	p.sessions[portalRemoteDesktop] = "/org/freedesktop/portal/desktop/session/test/remote"
 	store, err := newPortalTokenStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -62,10 +60,26 @@ func remoteFixture(t *testing.T) (*portalRemote, *fakeRemoteWire, *time.Time) {
 	p.tokens = store
 	return newPortalRemote(p, w), w, &now
 }
+
+// answerRemoteCreate completes the RemoteDesktop CreateSession that portalRemote
+// itself issued; the client no longer creates sessions on its behalf.
+func answerRemoteCreate(t *testing.T, r *portalRemote, w *fakeRemoteWire) {
+	t.Helper()
+	if r.operation != "create" || len(w.requests) == 0 {
+		t.Fatalf("remote must create its own session: operation=%q requests=%d", r.operation, len(w.requests))
+	}
+	q := w.requests[len(w.requests)-1]
+	if q.iface != portalRemoteDesktop || q.token != r.pending {
+		t.Fatalf("unexpected session request %+v", q)
+	}
+	w.events = append(w.events, portalEvent{kind: "response", token: q.token, session: "/org/freedesktop/portal/desktop/session/test/remote"})
+	r.Step()
+}
 func authorizeRemote(t *testing.T, r *portalRemote, w *fakeRemoteWire) {
 	t.Helper()
 	r.Authorize()
 	r.Step()
+	answerRemoteCreate(t, r, w)
 	w.events = append(w.events, portalEvent{kind: "response", token: r.pending})
 	r.Step()
 	w.events = append(w.events, portalEvent{kind: "method", token: r.pending})
@@ -83,6 +97,7 @@ func TestPortalRemoteAuthorizationAndTokenRotation(t *testing.T) {
 	}
 	r.Authorize()
 	r.Step()
+	answerRemoteCreate(t, r, w)
 	if len(w.calls) != 1 || w.calls[0].kind != "select" || w.calls[0].value != "old-private-token" {
 		t.Fatal("restore token was not supplied to SelectDevices")
 	}
@@ -115,6 +130,7 @@ func TestPortalRemoteDenialAndRevocationKeepShortcuts(t *testing.T) {
 			r, w, now := remoteFixture(t)
 			r.Authorize()
 			r.Step()
+			answerRemoteCreate(t, r, w)
 			if phase != "select" && phase != "timeout" {
 				w.events = append(w.events, portalEvent{kind: "response", token: r.pending})
 				r.Step()
@@ -139,15 +155,15 @@ func TestPortalRemoteDenialAndRevocationKeepShortcuts(t *testing.T) {
 			if r.phase != "failed" || r.err == nil || strings.Contains(r.err.Error(), "must-not-leak") {
 				t.Fatal("failure handling leaked or accepted denied permissions")
 			}
-			if r.client.phase != "ready" || r.client.sessions[portalShortcuts] == "" || w.closes != 0 {
-				t.Fatal("denying remote access must not close shortcuts")
+			if r.client.phase != "ready" || r.client.err != nil || w.closes != 0 {
+				t.Fatal("denying remote access must not close the shared portal connection")
 			}
 			if _, err := r.clip.Read(); !errors.Is(err, errPortalNotAuthorized) {
 				t.Fatal("unauthorized clipboard read allowed")
 			}
 			r.Authorize()
 			r.Step()
-			if r.operation != "create" || len(w.requests) != 1 {
+			if r.operation != "create" || len(w.requests) != 2 {
 				t.Fatal("retry must create a new remote session")
 			}
 		})

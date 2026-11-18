@@ -38,10 +38,11 @@ type portalRemote struct {
 	err, warning                       error
 	clip                               *portalClipboard
 	keys                               map[string]*portalKeys
+	retired                            map[string]bool // canceled CreateSession tokens
 }
 
 func newPortalRemote(p *portalClient, w portalRemoteWire) *portalRemote {
-	r := &portalRemote{client: p, wire: w, phase: "idle", keys: make(map[string]*portalKeys)}
+	r := &portalRemote{client: p, wire: w, phase: "idle", keys: make(map[string]*portalKeys), retired: make(map[string]bool)}
 	r.clip = &portalClipboard{remote: r, mime: portalTextMIME, transfers: make(map[string]uint32)}
 	previous := p.onEvent
 	p.onEvent = func(e portalEvent) bool {
@@ -62,6 +63,9 @@ func (r *portalRemote) Authorize() {
 func (r *portalRemote) stop(message string, clearToken bool) {
 	if r.pending != "" && r.operation != "clipboard" {
 		r.wire.CloseRequest(r.pending)
+		if r.operation == "create" {
+			r.retired[r.pending] = true
+		}
 	}
 	r.pending = ""
 	r.operation = ""
@@ -76,7 +80,6 @@ func (r *portalRemote) stop(message string, clearToken bool) {
 	}
 	if r.session != "" {
 		r.wire.CloseSession(r.session)
-		delete(r.client.sessions, portalRemoteDesktop)
 		r.session = ""
 	}
 	if clearToken && r.client.tokens.dir != "" {
@@ -108,7 +111,8 @@ func (r *portalRemote) Step() {
 		return
 	}
 	r.wanted = false
-	r.session = r.client.sessions[portalRemoteDesktop]
+	// portalRemote creates and owns its RemoteDesktop session; a refusal here
+	// stops only the remote feature and leaves the shortcuts session alone.
 	if r.session == "" {
 		r.request("create")
 		return
@@ -169,10 +173,19 @@ func (r *portalRemote) selectDevices() {
 	r.wire.SelectDevices(r.session, token, restore)
 }
 func (r *portalRemote) event(e portalEvent) bool {
+	if (e.kind == "response" || e.kind == "failed") && r.retired[e.token] {
+		delete(r.retired, e.token)
+		closeLateSession(r.wire, e)
+		return true
+	}
 	if (e.kind == "response" || e.kind == "method" || e.kind == "failed") && r.pending != "" && e.token == r.pending {
 		operation := r.operation
 		r.pending = ""
 		r.operation = ""
+		if operation == "create" && (e.kind == "failed" || e.code != 0) {
+			r.stop(portalCreateError(portalRemoteDesktop, e), false)
+			return true
+		}
 		if e.kind == "failed" || e.code != 0 {
 			r.stop("Wayland input or clipboard permission was refused; try again", false)
 			return true
@@ -184,7 +197,6 @@ func (r *portalRemote) event(e portalEvent) bool {
 				return true
 			}
 			r.session = e.session
-			r.client.sessions[portalRemoteDesktop] = e.session
 			r.selectDevices()
 		case "select":
 			r.request("clipboard")
@@ -206,6 +218,7 @@ func (r *portalRemote) event(e portalEvent) bool {
 		return true
 	}
 	if e.kind == "closed" && e.session == r.session && r.session != "" {
+		r.session = "" // The portal already closed it; do not send Session.Close.
 		r.stop("Wayland input permission was revoked; authorize it again", true)
 		return true
 	}
