@@ -62,6 +62,16 @@ type portalHotkeys struct {
 	configDeadline time.Time
 	noConfigure    bool
 	configureCalls int
+	// requested is the per-ID snapshot sent to the live session. The portal's
+	// last outcome survives a settings save that recreates equivalent handles.
+	requested []portalBinding
+	outcome   map[string]portalOutcome
+}
+
+type portalOutcome struct {
+	actual string
+	state  bindingState
+	err    error
 }
 
 type portalHotkey struct {
@@ -191,7 +201,64 @@ func (r *portalHotkeys) retire() {
 		r.wire.CloseSession(r.session)
 		r.session = ""
 	}
+	r.requested = nil
+	r.outcome = nil
 }
+
+// wanted is the binding set for the open hotkeys, as BindShortcuts would send it.
+func (r *portalHotkeys) wanted() []portalBinding {
+	var bindings []portalBinding
+	for _, h := range r.entries {
+		if !h.closed {
+			bindings = append(bindings, portalBinding{id: h.id, description: fmt.Sprintf("Translate with profile %d", len(bindings)+1), trigger: h.preferred})
+		}
+	}
+	return bindings
+}
+
+// unchanged compares by ID so a settings save that leaves the portal
+// bindings alone can keep the live session and the portal's chosen keys.
+func (r *portalHotkeys) unchanged() bool {
+	want := r.wanted()
+	if r.session == "" || len(want) != len(r.requested) {
+		return false
+	}
+	have := make(map[string]portalBinding, len(r.requested))
+	for _, b := range r.requested {
+		have[b.id] = b
+	}
+	for _, b := range want {
+		if have[b.id] != b {
+			return false
+		}
+	}
+	return true
+}
+
+// adopt accepts the open hotkeys as the session's set without rebinding: closed
+// handles are dropped and the queued change is settled.
+func (r *portalHotkeys) adopt() {
+	kept := r.entries[:0]
+	for _, h := range r.entries {
+		if !h.closed {
+			kept = append(kept, h)
+		}
+	}
+	r.entries = kept
+	r.dirty = false
+}
+
+// restore gives reopened handles the portal's last outcome for their id.
+func (r *portalHotkeys) restore() {
+	for _, h := range r.entries {
+		o, ok := r.outcome[h.id]
+		if !ok {
+			continue
+		}
+		h.setOutcome(o)
+	}
+}
+
 func (r *portalHotkeys) fail(message string) {
 	r.clear()
 	r.err = errors.New(message)
@@ -209,13 +276,9 @@ func (r *portalHotkeys) fail(message string) {
 
 func (r *portalHotkeys) Step() {
 	// Invalidate old activations before draining events when a profile set changed.
+	// Leave the dialog open and let the latest settings wait behind its response.
+	// Closing the request on KDE can persist a rejected, keyless shortcut.
 	if r.dirty {
-		if r.pending != "" && r.operation == "bind" {
-			r.wire.CloseRequest(r.pending)
-			r.pending = ""
-			r.operation = ""
-			r.retire()
-		}
 		for _, h := range r.entries {
 			h.active = false
 			h.fired = false
@@ -234,6 +297,13 @@ func (r *portalHotkeys) Step() {
 	if !r.dirty || r.pending != "" || r.client.phase != "ready" {
 		return
 	}
+	if r.unchanged() {
+		r.adopt()
+		r.restore()
+		return
+	}
+	// BindShortcuts is single-use per session. KDE also removes shortcuts
+	// omitted from a replacement bind, so keep the complete desired set.
 	r.clear()
 	r.err = nil
 	r.dirty = false
@@ -263,10 +333,9 @@ func (r *portalHotkeys) bind() {
 		r.fail("could not create a shortcut request identifier")
 		return
 	}
-	var bindings []portalBinding
-	for i, h := range r.entries {
-		bindings = append(bindings, portalBinding{id: h.id, description: fmt.Sprintf("Translate with profile %d", i+1), trigger: h.preferred})
-	}
+	bindings := r.wanted()
+	r.requested = bindings
+	r.outcome = make(map[string]portalOutcome, len(bindings))
 	r.pending = token
 	r.operation = "bind"
 	r.deadline = r.client.now().Add(3 * time.Minute)
@@ -328,34 +397,43 @@ func (r *portalHotkeys) event(e portalEvent) bool {
 			}
 			return true
 		}
-		// If settings changed while the dialog was open, discard its obsolete result.
+		// A changed set is reconciled in Step. A no-op save can adopt
+		// the response immediately, including any empty triggers.
 		if r.dirty {
-			return true
+			if !r.unchanged() {
+				return true
+			}
+			r.adopt()
 		}
 		r.apply(e.bindings)
 		return true
 	case "activated", "deactivated", "shortcuts-changed":
-		if e.session != r.session || r.dirty || r.pending != "" {
+		if e.session != r.session || r.pending != "" {
 			return true
 		}
 		if e.kind == "shortcuts-changed" {
 			r.configuring = false
 			for _, b := range e.bindings {
-				for _, h := range r.entries {
-					if h.id == b.id {
-						h.actual = b.trigger
-						h.active = b.trigger != ""
-						h.fired = false
-						h.held = false
-						h.err = nil
-						h.state = bindingBound
-						if !h.active {
-							h.state = bindingUnbound
-							h.err = errors.New("the portal disabled this shortcut")
+				if _, ok := r.outcome[b.id]; !ok {
+					continue
+				}
+				o := portalOutcome{actual: b.trigger, state: bindingBound}
+				if b.trigger == "" {
+					o.state = bindingUnbound
+					o.err = errors.New("the portal disabled this shortcut")
+				}
+				r.outcome[b.id] = o
+				if !r.dirty {
+					for _, h := range r.entries {
+						if h.id == b.id {
+							h.setOutcome(o)
 						}
 					}
 				}
 			}
+			return true
+		}
+		if r.dirty {
 			return true
 		}
 		for _, h := range r.entries {
@@ -374,21 +452,26 @@ func (r *portalHotkeys) event(e portalEvent) bool {
 	}
 	return false
 }
+func (h *portalHotkey) setOutcome(o portalOutcome) {
+	h.actual, h.state, h.err = o.actual, o.state, o.err
+	h.active = o.state == bindingBound
+	h.fired, h.held = false, false
+}
+
 func (r *portalHotkeys) apply(bindings []portalBinding) {
 	for _, h := range r.entries {
-		h.active = false
-		h.actual = ""
-		h.state = bindingUnbound
-		h.err = errors.New("the portal did not register this hotkey; choose a shortcut in desktop settings")
+		o := portalOutcome{
+			state: bindingUnbound,
+			err:   errors.New("the portal did not register this hotkey; choose a shortcut in desktop settings"),
+		}
 		for _, b := range bindings {
 			if b.id == h.id && b.trigger != "" {
-				h.active = true
-				h.actual = b.trigger
-				h.state = bindingBound
-				h.err = nil
+				o = portalOutcome{actual: b.trigger, state: bindingBound}
 				break
 			}
 		}
+		r.outcome[h.id] = o
+		h.setOutcome(o)
 	}
 }
 

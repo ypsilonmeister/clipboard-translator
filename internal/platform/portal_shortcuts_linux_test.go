@@ -222,7 +222,9 @@ func TestPortalShortcutSubsetAndMidBindEdit(t *testing.T) {
 	}
 }
 
-func TestPortalShortcutEditCancelsObsoleteDialog(t *testing.T) {
+// P1-4: an edit while the bind dialog is open queues; it never closes the
+// request (on KDE that closes the dialog and stores a keyless shortcut).
+func TestPortalShortcutEditQueuesBehindOpenDialog(t *testing.T) {
 	r, w, _ := shortcutFixture()
 	a, _ := r.NewHotkey("Ctrl+E")
 	r.Step()
@@ -234,12 +236,12 @@ func TestPortalShortcutEditCancelsObsoleteDialog(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Step()
-	if len(w.closedRequests) != 1 || w.closedRequests[0] != obsolete || len(w.requests) != 2 {
-		t.Fatal("obsolete consent dialog was not canceled promptly")
+	if len(w.closedRequests) != 0 || len(w.closedSessions) != 0 || len(w.requests) != 1 || r.pending != obsolete {
+		t.Fatalf("open consent dialog was disturbed: closedRequests=%v closedSessions=%v requests=%d", w.closedRequests, w.closedSessions, len(w.requests))
 	}
 	w.events = append(w.events, portalEvent{kind: "failed", token: obsolete})
 	r.Step()
 	if r.client.phase != "ready" || r.client.err != nil {
-		t.Fatal("late canceled call destroyed the shared portal connection")
+		t.Fatal("a failed bind call destroyed the shared portal connection")
 	}
 }
