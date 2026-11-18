@@ -33,21 +33,91 @@ func TestPortalCaptureWaitsForReconnectWithinBound(t *testing.T) {
 	if len(w.requests) != requests+1 || r.operation != "create" {
 		t.Fatal("a capture during reconnect must start the reconnect at once, not wait for the backoff")
 	}
-	*now = now.Add(900 * time.Millisecond)
+	// Step the capture in every intermediate reconnect phase: it must keep waiting.
+	stepWaiting := func(phase string) {
+		t.Helper()
+		*now = now.Add(100 * time.Millisecond)
+		if r.phase != phase {
+			t.Fatalf("remote phase=%s, want %s", r.phase, phase)
+		}
+		if done, _, _, err := task.Step(); done || err != nil || task.phase != "reconnect" {
+			t.Fatalf("capture must wait while the remote is in %s: done=%v err=%v phase=%s", phase, done, err, task.phase)
+		}
+	}
+	stepWaiting("create")
 	answerRemoteCreate(t, r, w)
-	finishRestore(t, r, w, "restored-token")
+	stepWaiting("select")
+	w.events = append(w.events, portalEvent{kind: "response", token: r.pending})
+	r.Step()
+	stepWaiting("clipboard")
+	w.events = append(w.events, portalEvent{kind: "method", token: r.pending})
+	r.Step()
+	stepWaiting("start")
+	w.events = append(w.events, portalEvent{kind: "response", token: r.pending, devices: 1, clipboard: true, restore: "restored-token"})
+	r.Step()
+	if r.phase != "ready" {
+		t.Fatalf("restore did not reach ready: phase=%s err=%v", r.phase, r.err)
+	}
 	if done, _, _, err := task.Step(); done || err != nil || task.phase != "modifiers" {
 		t.Fatalf("capture must resume after the session returns: done=%v err=%v phase=%s", done, err, task.phase)
 	}
 	if task.session != r.session {
 		t.Fatal("capture must bind to the new session")
 	}
+	task.Step() // modifiers released: arms the 150 ms settle timer
 	*now = now.Add(160 * time.Millisecond)
+	task.Step() // enter "old", clipboard read pending
+	primeClipboard(t, r, w, "old text")
+	*now = now.Add(10 * time.Millisecond)
 	task.Step()
-	*now = now.Add(160 * time.Millisecond)
-	task.Step()
-	if task.phase != "old" && task.phase != "keys" {
+	if task.phase != "keys" {
 		t.Fatalf("capture did not proceed after reconnect, phase=%s", task.phase)
+	}
+	finishRemoteKeys(t, r, w, task.keys)
+	task.Step()
+	w.events = append(w.events, portalEvent{kind: "selection-owner", session: r.session, mime: portalTextMIME})
+	r.Step()
+	task.Step()
+	*now = now.Add(100 * time.Millisecond)
+	task.Step()
+	if r.clip.read != nil && !r.clip.read.done {
+		w.events = append(w.events, portalEvent{kind: "read", token: r.clip.read.token, data: []byte("captured")})
+	}
+	done, text, fromSel, err := task.Step()
+	if !done || err != nil || text != "captured" || fromSel {
+		t.Fatalf("capture must finish with the copied text: done=%v text=%q fromSel=%v err=%v phase=%s", done, text, fromSel, err, task.phase)
+	}
+}
+
+// A hotkey that arrives while the remote is already past CreateSession
+// (select/clipboard/start) is still a reconnect and must wait.
+func TestPortalCaptureStartsDuringLaterReconnectPhases(t *testing.T) {
+	for _, phase := range []string{"select", "clipboard", "start"} {
+		t.Run(phase, func(t *testing.T) {
+			r, w, now := closedRemote(t)
+			r.reconnectNow()
+			r.Step()
+			answerRemoteCreate(t, r, w)
+			if phase != "select" {
+				w.events = append(w.events, portalEvent{kind: "response", token: r.pending})
+				r.Step()
+			}
+			if phase == "start" {
+				w.events = append(w.events, portalEvent{kind: "method", token: r.pending})
+				r.Step()
+			}
+			if r.phase != phase {
+				t.Fatalf("fixture phase=%s, want %s", r.phase, phase)
+			}
+			task := beginPortalCapture(r, func() bool { return true }).(*portalCapture)
+			if task.phase != "reconnect" {
+				t.Fatalf("capture must enter reconnect while remote is in %s, got %s", phase, task.phase)
+			}
+			*now = now.Add(100 * time.Millisecond)
+			if done, _, _, err := task.Step(); done || err != nil {
+				t.Fatalf("capture must wait in %s: done=%v err=%v", phase, done, err)
+			}
+		})
 	}
 }
 
