@@ -144,15 +144,16 @@ type EngineState struct {
 // the state". The loop drops it once deadline has passed, so a save the page was
 // told had failed is never applied later.
 type Request struct {
-	Context  context.Context // optional caller lifetime, used by translation requests
-	Save     *Form
-	Action   string // "" (state or save), "use_model" or "engine"
-	Text     string
-	Profile  string
-	Arg      string // the model key or the engine name
-	Kind     string // for "delete_model": "model" or "partial"
-	Deadline time.Time
-	Reply    chan Reply // buffered: the loop never blocks on a reader that gave up
+	Context           context.Context // optional caller lifetime, used by translation requests
+	Save              *Form
+	Action            string // "" (state or save), "use_model" or "engine"
+	Text              string
+	Profile           string
+	PossiblyFlattened bool
+	Arg               string // the model key or the engine name
+	Kind              string // for "delete_model": "model" or "partial"
+	Deadline          time.Time
+	Reply             chan Reply // buffered: the loop never blocks on a reader that gave up
 }
 
 type Reply struct {

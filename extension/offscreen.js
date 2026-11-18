@@ -12,7 +12,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   run(message, controller);
 });
 
-async function run({endpoint, token, text}, controller) {
+async function run({endpoint, token, text, possiblyFlattened}, controller) {
   // The offscreen document can survive a long fetch without the worker's fetch
   // response deadline. It never reads or monitors the clipboard.
   if (heartbeat) clearInterval(heartbeat);
@@ -21,7 +21,7 @@ async function run({endpoint, token, text}, controller) {
   }, 20000);
   let result;
   try {
-    const translated = await translate(endpoint, token, text, controller.signal);
+    const translated = await translate(endpoint, token, text, controller.signal, possiblyFlattened);
     if (controller.signal.aborted) return;
     await writeClipboard(translated, controller.signal);
     if (controller.signal.aborted) return;
@@ -37,7 +37,7 @@ async function run({endpoint, token, text}, controller) {
     }
   }
   if (controller.signal.aborted) return;
-  await chrome.runtime.sendMessage({type: 'translation-done', ...result});
+  await chrome.runtime.sendMessage({type: 'translation-done', ...result, possiblyFlattened});
 }
 
 async function writeClipboard(text, signal) {

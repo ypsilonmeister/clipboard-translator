@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -71,6 +72,7 @@ type app struct {
 	settings       *settings.Server // the settings page, while it is open
 	apiContext     context.Context
 	apiReply       chan settings.Reply
+	apiFlattened   bool
 	apiServer      *http.Server
 	apiAuth        *translateAPIAuth
 	settingsReqs   chan settings.Request     // page -> main loop
@@ -1123,7 +1125,13 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 	if profile.ActionMode() == config.ActionTidy {
 		a.cancelTransientStatus()
 		a.translating = true
-		a.handleResult(result{original: source, translated: textstruct.Tidy(source, profile.Rules, profile.PunctStyle),
+		rules := profile.Rules
+		if a.apiFlattened {
+			rules = slices.DeleteFunc(slices.Clone(rules), func(rule string) bool {
+				return rule == "newlines" || rule == "bullets"
+			})
+		}
+		a.handleResult(result{original: source, translated: textstruct.Tidy(source, rules, profile.PunctStyle),
 			generation: a.generation, window: win, fromSelection: fromSelection,
 			fallback: fallback, capturedAt: capturedAt, action: config.ActionTidy})
 		return
@@ -1244,7 +1252,11 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 	maxTokens := a.conf.MaxTokens
 	budget := chunkBudget(a.conf.MaxChars) // configuration belongs to the UI thread
 	promptText := source
-	if profile.CleanupNewlinesMode() == config.CleanupNewlinesAuto {
+	if a.apiFlattened {
+		// The browser fallback has unreliable layout. Keep sentence and size
+		// splitting, but skip cleanup and treat the input as a single paragraph.
+		promptText = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(source)
+	} else if profile.CleanupNewlinesMode() == config.CleanupNewlinesAuto {
 		promptText = textstruct.CleanSpuriousNewlines(source, direction.Source)
 	}
 	go func() {
@@ -1283,7 +1295,11 @@ func (a *app) handleResult(res result) {
 	if a.apiReply != nil {
 		text := res.translated
 		if res.output == config.OutputBilingual && res.action != config.ActionTelephone && res.err == nil {
-			text = formatBilingual(res.original, text)
+			if a.apiFlattened {
+				text = strings.TrimRight(res.original, "\r\n") + "\n" + text
+			} else {
+				text = formatBilingual(res.original, text)
+			}
 		}
 		a.finishAPI(text, res.err)
 		a.refreshStatus()

@@ -870,3 +870,65 @@ func TestReReviewManualEmptyClipboard(t *testing.T) {
 		}
 	}
 }
+
+func TestTranslateAPISelectionStructure(t *testing.T) {
+	a := apiUnitApp(t)
+	a.conf.TranslateAPIEnabled = true
+	a.conf.Profiles[0].Output = config.OutputBilingual
+	const source = "First paragraph.\n\nSecond paragraph."
+	const translated = "訳一\n\n訳二"
+	prompts := make(chan string, 2)
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct{ Content string }
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Messages) != 1 {
+			t.Error("invalid engine request", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		prompts <- body.Messages[0].Content
+		io.WriteString(w, `{"choices":[{"message":{"content":"訳一\n\n訳二"},"finish_reason":"stop"}]}`)
+	}))
+	defer engine.Close()
+	a.endpoint = engine.URL
+
+	h := translateAPIHandler(newTranslateAPIAuth("secret", ""), func(req settings.Request) settings.Reply {
+		a.handleSettingsRequest(req)
+		select {
+		case res := <-a.results:
+			a.handleResult(res)
+		case <-time.After(5 * time.Second):
+			t.Fatal("translation timed out")
+		}
+		return <-req.Reply
+	})
+	// Leave line breaks in the flagged request to verify that the flag itself
+	// disables structure processing. Follow it with an unflagged request.
+	for _, tc := range []struct {
+		body, prompt, want string
+	}{
+		{`{"text":"First paragraph.\n\nSecond paragraph.","possiblyFlattened":true}`,
+			"First paragraph.  Second paragraph.", source + "\n" + translated},
+		{`{"text":"First paragraph.\n\nSecond paragraph."}`,
+			source, "First paragraph.\n訳一\n\nSecond paragraph.\n訳二"},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/translate", strings.NewReader(tc.body))
+		req.Header.Set(translateTokenHeader, "secret")
+		req.Header.Set("Origin", "chrome-extension://abcdefghijklmnopabcdefghijklmnop")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		var body struct{ Translation string }
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != http.StatusOK || body.Translation != tc.want {
+			t.Fatalf("status=%d body=%s, want translation %q", w.Code, w.Body.String(), tc.want)
+		}
+		select {
+		case got := <-prompts:
+			if got != tc.prompt {
+				t.Errorf("engine prompt=%q, want %q", got, tc.prompt)
+			}
+		default:
+			t.Fatal("no engine prompt")
+		}
+	}
+}
