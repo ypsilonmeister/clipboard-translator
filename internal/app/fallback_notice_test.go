@@ -95,6 +95,43 @@ func TestReloadAfterFallbackSkipsThePreferredEngine(t *testing.T) {
 	}
 }
 
+func TestCustomServerFallbackNamesConfiguredEngine(t *testing.T) {
+	a, tray, _ := newTestApp(t)
+	a.conf.ServerFile = platform.ServerBinaryName()
+	paths, err := config.ResolvePaths(a.dir, a.conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.paths = paths
+	if err := os.WriteFile(paths.Server, []byte("not an executable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+	if got := tray.lastNote(); !strings.Contains(got, "The configured engine did not start.") {
+		t.Errorf("fallback notice: %q", got)
+	}
+	if got := engineMenuLine(a); got != "Engine: CPU - configured engine did not start" {
+		t.Errorf("menu engine line: %q", got)
+	}
+}
+
+func TestServeKeepsStartupFallbackNotice(t *testing.T) {
+	a := startOnFallback(t)
+	tray := a.tray.(*fakeTray)
+	a.hotkey = fakeHotkey{a.conf.Hotkey}
+	tray.quit = true
+	a.serve(&testClipboard{})
+
+	if got := tray.lastNote(); !strings.Contains(got, "did not start") {
+		t.Errorf("last startup notice: %q", got)
+	}
+	if a.conf.QuickstartShown {
+		t.Error("the skipped guide was marked as shown")
+	}
+}
+
 func TestChoosingTheEngineAgainRetriesAndClearsTheNotice(t *testing.T) {
 	a := startOnFallback(t)
 	a.unloadModel()
