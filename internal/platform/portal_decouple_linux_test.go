@@ -158,6 +158,9 @@ func TestPortalRemoteLaterFailuresLeaveHotkeysBound(t *testing.T) {
 			if kind != "revoked" && !closedRemote {
 				t.Fatal("a failed remote feature must close its own session")
 			}
+			if kind == "revoked" && closedRemote {
+				t.Fatal("a session the portal closed must not be closed again")
+			}
 			assertHotkeyStillWorks(t, d, w, h, shortcuts, requests)
 		})
 	}

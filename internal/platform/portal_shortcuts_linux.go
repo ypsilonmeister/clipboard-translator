@@ -28,6 +28,7 @@ type portalHotkeys struct {
 	session, pending, operation string
 	deadline                    time.Time
 	err                         error
+	retired                     map[string]bool // canceled CreateSession tokens
 }
 
 type portalHotkey struct {
@@ -63,7 +64,7 @@ func portalPreferredTrigger(spec string) (string, error) {
 }
 
 func newPortalHotkeys(p *portalClient, w portalShortcutWire) *portalHotkeys {
-	r := &portalHotkeys{client: p, wire: w}
+	r := &portalHotkeys{client: p, wire: w, retired: make(map[string]bool)}
 	previous := p.onEvent
 	p.onEvent = func(e portalEvent) bool {
 		if r.event(e) {
@@ -160,6 +161,9 @@ func (r *portalHotkeys) fail(message string) {
 	r.err = errors.New(message)
 	if r.pending != "" {
 		r.wire.CloseRequest(r.pending)
+		if r.operation == "create" {
+			r.retired[r.pending] = true
+		}
 	}
 	r.pending = ""
 	r.operation = ""
@@ -242,12 +246,21 @@ func (r *portalHotkeys) event(e portalEvent) bool {
 			return true
 		}
 	case "response", "failed":
+		if r.retired[e.token] {
+			delete(r.retired, e.token)
+			closeLateSession(r.wire, e)
+			return true
+		}
 		if r.pending == "" || e.token != r.pending {
 			return false
 		}
 		operation := r.operation
 		r.pending = ""
 		r.operation = ""
+		if operation == "create" && (e.kind == "failed" || e.code != 0) {
+			r.fail(portalCreateError(portalShortcuts, e))
+			return true
+		}
 		if e.kind == "failed" || e.code != 0 {
 			r.fail("shortcut registration was refused; retry the hotkey settings")
 			return true
@@ -336,4 +349,23 @@ func (r *portalHotkeys) AllReleased() bool {
 		}
 	}
 	return true
+}
+
+// portalCreateError names the interface whose CreateSession failed, so a session
+// that could not be created is not reported as a consent refusal.
+func portalCreateError(iface string, e portalEvent) string {
+	if e.kind == "failed" {
+		return fmt.Sprintf("could not create %s session (the portal call failed); check that the desktop portal service is running and try again", iface)
+	}
+	return fmt.Sprintf("could not create %s session (response %d); check desktop portal permissions and try again", iface, e.code)
+}
+
+// closeLateSession handles the answer to a CreateSession request the feature
+// already canceled. Request.Close does not stop a success that was already
+// queued, and the private peer outlives one feature's failure, so a session
+// created that late must be closed here or it lingers until disconnect.
+func closeLateSession(w interface{ CloseSession(string) }, e portalEvent) {
+	if e.kind == "response" && e.code == 0 && strings.HasPrefix(e.session, "/org/freedesktop/portal/desktop/session/") {
+		w.CloseSession(e.session)
+	}
 }
