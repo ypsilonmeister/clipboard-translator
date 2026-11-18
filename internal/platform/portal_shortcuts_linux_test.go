@@ -253,6 +253,12 @@ func TestPortalShortcutUsesSuppliedProfileID(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Step()
+	// Since P1-1 the hotkeys own their GlobalShortcuts session, so the bind
+	// carrying the supplied IDs follows the CreateSession response.
+	if len(w.binds) != 0 {
+		t.Fatal("the shortcut session must be created before binding")
+	}
+	answerShortcutCreate(t, r, w, "initial")
 	if len(w.binds) != 1 {
 		t.Fatalf("got %d bind calls, want 1", len(w.binds))
 	}
