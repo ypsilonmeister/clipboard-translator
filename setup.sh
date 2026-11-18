@@ -33,6 +33,14 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 #         'file': 'llama-b12359-bin-ubuntu-vulkan-x64.tar.gz',
 #         'sha256': '19b60f00395a3f4954e46a5037695bc1d843404fc9d3124f82a612ecd8fbe9f0',
 #     },
+#     'cpu_arm64': {
+#         'file': 'llama-b12359-bin-ubuntu-arm64.tar.gz',
+#         'sha256': 'dc7aa17a67884619b7223870aca9fd6addbc01717713b04a714add1c31137359',
+#     },
+#     'vulkan_arm64': {
+#         'file': 'llama-b12359-bin-ubuntu-vulkan-arm64.tar.gz',
+#         'sha256': '3f8ae812a58ac92e5a596ca9fbc988f52854d147c5a7fe1264dddc90c1d085b4',
+#     },
 # }
 # --- end llama.cpp pinned release ---
 

@@ -165,7 +165,7 @@ func TestLlamaCppPinAgreesAcrossScripts(t *testing.T) {
 	for _, m := range shMatches {
 		shAssets[m[1]] = [2]string{m[2], strings.ToLower(m[3])}
 	}
-	for _, k := range []string{"cpu", "vulkan"} {
+	for _, k := range []string{"cpu", "vulkan", "cpu_arm64", "vulkan_arm64"} {
 		a, ok := shAssets[k]
 		if !ok {
 			t.Errorf("setup.sh missing %s asset", k)
@@ -229,14 +229,16 @@ func TestLlamaCppPinAgreesAcrossScripts(t *testing.T) {
 		goAssets[m[1]] = [2]string{m[2], strings.ToLower(m[3])}
 	}
 	for goKey, want := range map[string][2]string{
-		"win/cpu":      psAssets["cpu"],
-		"win/cuda":     psAssets["cuda"],
-		"win/cudart":   psAssets["cudart"],
-		"win/vulkan":   psAssets["vulkan"],
-		"linux/cpu":    shAssets["cpu"],
-		"linux/vulkan": shAssets["vulkan"],
-		"darwin/arm64": macAssets["arm64"],
-		"darwin/x64":   macAssets["x64"],
+		"win/cpu":            psAssets["cpu"],
+		"win/cuda":           psAssets["cuda"],
+		"win/cudart":         psAssets["cudart"],
+		"win/vulkan":         psAssets["vulkan"],
+		"linux/cpu":          shAssets["cpu"],
+		"linux/vulkan":       shAssets["vulkan"],
+		"linux/cpu/arm64":    shAssets["cpu_arm64"],
+		"linux/vulkan/arm64": shAssets["vulkan_arm64"],
+		"darwin/arm64":       macAssets["arm64"],
+		"darwin/x64":         macAssets["x64"],
 	} {
 		if got := goAssets[goKey]; got != want {
 			t.Errorf("internal/setup/llama.go %s = %v, scripts pin %v", goKey, got, want)

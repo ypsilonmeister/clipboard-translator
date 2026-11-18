@@ -34,11 +34,17 @@ func newLinuxInstallerFixture(t *testing.T) linuxInstallerFixture {
 
 func newLinuxInstallerFixtureConfig(t *testing.T, bundledConfig bool) linuxInstallerFixture {
 	t.Helper()
+	return newLinuxInstallerFixtureForArch(t, bundledConfig, "amd64", "x86_64")
+}
+
+func newLinuxInstallerFixtureForArch(t *testing.T, bundledConfig bool, arch, machine string) linuxInstallerFixture {
+	t.Helper()
 	f := linuxInstallerFixture{root: t.TempDir()}
 	f.dir = filepath.Join(f.root, "app with spaces")
 	f.bin = filepath.Join(f.root, "bin")
 	f.assets = filepath.Join(f.root, "assets")
-	name := "clipboard-translator-linux-amd64-v1.2.3"
+	name := "clipboard-translator-linux-" + arch + "-v1.2.3"
+	writeInstallFixture(t, filepath.Join(f.bin, "uname"), "#!/bin/sh\ncase $1 in -s) echo Linux ;; -m) echo "+machine+" ;; esac\n", 0755)
 	archive := filepath.Join(f.assets, name+".tar.gz")
 	if err := os.MkdirAll(f.assets, 0755); err != nil {
 		t.Fatal(err)
@@ -210,15 +216,20 @@ func TestLinuxInstallSetupAndDedicatedRemoval(t *testing.T) {
 	}
 }
 
+func TestLinuxInstallARM64(t *testing.T) {
+	f := newLinuxInstallerFixtureForArch(t, true, "arm64", "aarch64")
+	if out, err := f.run(t, nil); err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+}
+
 func TestLinuxInstallArchitectureAndSessionWarnings(t *testing.T) {
 	f := newLinuxInstallerFixture(t)
-	writeInstallFixture(t, filepath.Join(f.bin, "uname"), "#!/bin/sh\ncase $1 in -s) echo Linux ;; -m) echo aarch64 ;; esac\n", 0755)
-	if out, err := f.run(t, nil); err == nil || !strings.Contains(out, "x86_64 is required") {
+	writeInstallFixture(t, filepath.Join(f.bin, "uname"), "#!/bin/sh\ncase $1 in -s) echo Linux ;; -m) echo riscv64 ;; esac\n", 0755)
+	if out, err := f.run(t, nil); err == nil || !strings.Contains(out, "Unsupported Linux architecture: riscv64") {
 		t.Fatalf("%v %s", err, out)
 	}
-	if err := os.Remove(filepath.Join(f.bin, "uname")); err != nil {
-		t.Fatal(err)
-	}
+	f = newLinuxInstallerFixture(t)
 	for _, session := range []string{"", "wayland"} {
 		writeInstallFixture(t, filepath.Join(f.bin, "gdbus"), "#!/bin/sh\nexit 1\n", 0755)
 		out, err := f.run(t, []string{"XDG_SESSION_TYPE=" + session})

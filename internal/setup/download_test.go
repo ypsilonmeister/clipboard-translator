@@ -130,14 +130,16 @@ func TestLlamaPinsComplete(t *testing.T) {
 		t.Errorf("llamaTag %q is not a llama.cpp release tag", llamaTag)
 	}
 	want := map[string]*regexp.Regexp{
-		"win/cpu":      regexp.MustCompile(`^llama-` + llamaTag + `-bin-win-cpu-x64\.zip$`),
-		"win/cuda":     regexp.MustCompile(`^llama-` + llamaTag + `-bin-win-cuda-12\.4-x64\.zip$`),
-		"win/cudart":   regexp.MustCompile(`^cudart-llama.*-bin-win-cuda-12\.4-x64\.zip$`),
-		"win/vulkan":   regexp.MustCompile(`^llama-` + llamaTag + `-bin-win-vulkan-x64\.zip$`),
-		"linux/cpu":    regexp.MustCompile(`^llama-` + llamaTag + `-bin-ubuntu-x64\.tar\.gz$`),
-		"linux/vulkan": regexp.MustCompile(`^llama-` + llamaTag + `-bin-ubuntu-vulkan-x64\.tar\.gz$`),
-		"darwin/arm64": regexp.MustCompile(`^llama-` + llamaTag + `-bin-macos-arm64\.tar\.gz$`),
-		"darwin/x64":   regexp.MustCompile(`^llama-` + llamaTag + `-bin-macos-x64\.tar\.gz$`),
+		"win/cpu":            regexp.MustCompile(`^llama-` + llamaTag + `-bin-win-cpu-x64\.zip$`),
+		"win/cuda":           regexp.MustCompile(`^llama-` + llamaTag + `-bin-win-cuda-12\.4-x64\.zip$`),
+		"win/cudart":         regexp.MustCompile(`^cudart-llama.*-bin-win-cuda-12\.4-x64\.zip$`),
+		"win/vulkan":         regexp.MustCompile(`^llama-` + llamaTag + `-bin-win-vulkan-x64\.zip$`),
+		"linux/cpu":          regexp.MustCompile(`^llama-` + llamaTag + `-bin-ubuntu-x64\.tar\.gz$`),
+		"linux/vulkan":       regexp.MustCompile(`^llama-` + llamaTag + `-bin-ubuntu-vulkan-x64\.tar\.gz$`),
+		"linux/cpu/arm64":    regexp.MustCompile(`^llama-` + llamaTag + `-bin-ubuntu-arm64\.tar\.gz$`),
+		"linux/vulkan/arm64": regexp.MustCompile(`^llama-` + llamaTag + `-bin-ubuntu-vulkan-arm64\.tar\.gz$`),
+		"darwin/arm64":       regexp.MustCompile(`^llama-` + llamaTag + `-bin-macos-arm64\.tar\.gz$`),
+		"darwin/x64":         regexp.MustCompile(`^llama-` + llamaTag + `-bin-macos-x64\.tar\.gz$`),
 	}
 	if len(llamaAssets) != len(want) {
 		t.Errorf("llamaAssets has %d entries, want %d", len(llamaAssets), len(want))
