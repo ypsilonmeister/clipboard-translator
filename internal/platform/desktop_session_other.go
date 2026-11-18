@@ -7,3 +7,5 @@ func InitializeDesktop(string) error {
 	return nil
 }
 func CloseDesktop() {}
+
+func NewProfileHotkey(spec, _ string) (Hotkey, error) { return NewHotkey(spec) }
