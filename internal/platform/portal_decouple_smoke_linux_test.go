@@ -114,15 +114,17 @@ func TestPortalNativeRemoteInhibitKeepsShortcuts(t *testing.T) {
 		if p.err != nil {
 			t.Fatalf("portal connection failed: %v", p.err)
 		}
-		if remote.phase == "failed" && hotkeys.session != "" && (hotkeys.operation == "bind" || h.active || hotkeys.err != nil) {
+		// Since #133 P1-2 an inhibited create under a known-active shield
+		// parks the remote feature in "waiting" instead of failing it.
+		if remote.phase == "waiting" && hotkeys.session != "" && (hotkeys.operation == "bind" || h.active || hotkeys.err != nil) {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Logf("remote: phase=%s err=%v", remote.phase, remote.err)
 	t.Logf("shortcuts: session=%q operation=%q err=%v active=%v trigger=%q", hotkeys.session, hotkeys.operation, hotkeys.err, h.active, h.actual)
-	if remote.phase != "failed" || remote.err == nil {
-		t.Fatal("RemoteDesktop.CreateSession was expected to be refused while the shield is up")
+	if remote.phase != "waiting" || remote.err != nil || remote.shield != shieldActive {
+		t.Fatal("RemoteDesktop.CreateSession was expected to be inhibited (waiting) while the shield is up")
 	}
 	if p.phase != "ready" || p.err != nil {
 		t.Fatalf("RemoteDesktop refusal reached the shared connection: phase=%s err=%v", p.phase, p.err)

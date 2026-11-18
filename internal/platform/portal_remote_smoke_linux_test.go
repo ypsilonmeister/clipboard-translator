@@ -230,7 +230,7 @@ func cleanupPortalRemoteTest(t *testing.T, id string) {
  import sys
  from gi.repository import Gio,GLib
  app=sys.argv[1]
- assert app in ['io.github.ypsilonmeister.ClipboardTranslator.W3Test','io.github.ypsilonmeister.ClipboardTranslator.W4Test','io.github.ypsilonmeister.ClipboardTranslator.P11Test']
+ assert app in ['io.github.ypsilonmeister.ClipboardTranslator.W3Test','io.github.ypsilonmeister.ClipboardTranslator.W4Test','io.github.ypsilonmeister.ClipboardTranslator.P11Test','io.github.ypsilonmeister.ClipboardTranslator.P12Test']
  bus=Gio.bus_get_sync(Gio.BusType.SESSION,None)
  def call(method,args):
   return bus.call_sync('org.freedesktop.impl.portal.PermissionStore','/org/freedesktop/impl/portal/PermissionStore','org.freedesktop.impl.portal.PermissionStore',method,args,None,Gio.DBusCallFlags.NONE,3000,None)

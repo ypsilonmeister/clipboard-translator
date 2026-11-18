@@ -116,6 +116,7 @@ func TestPortalCreateFailuresAreDiagnosed(t *testing.T) {
 		t.Run("remote-"+tc.name, func(t *testing.T) {
 			d, w, _ := boundDesktop(t)
 			defer d.Close()
+			shield(&w.fakeRemoteWire, false)
 			w.events = append(w.events, tc.event(d.remote.pending))
 			d.Step()
 			if d.remote.err == nil || !strings.HasPrefix(d.remote.err.Error(), tc.want) {

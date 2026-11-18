@@ -10,10 +10,11 @@
 #define PATH "/org/freedesktop/portal/desktop"
 struct CTPortal {
     int refs, closed;
+    int saver_provider; // 0 until GetActive selects a provider, then index + 1
     GDBusConnection *bus;
     GCancellable *cancel;
     GQueue events;
-    guint response_sub, session_sub, owner_sub, shortcut_sub, clipboard_sub;
+    guint response_sub, session_sub, owner_sub, shortcut_sub, clipboard_sub, gnome_saver_sub, fdo_saver_sub;
     GHashTable *ios;
     gulong closed_handler;
     char *request_prefix, *session_prefix;
@@ -115,6 +116,46 @@ static void owner_changed(GDBusConnection *bus, const gchar *sender, const gchar
     g_variant_get(args,"(&s&s&s)",&service,&old_owner,&new_owner);
     if (*old_owner) enqueue(data,4,NULL,NULL,0);
 }
+// Screen shield state (#133 P1-2). GNOME Shell inhibits RemoteDesktop session
+// creation while the shield is up; the app waits for it to lift instead of
+// treating the refusal as a denial. Kind 14: 0 = inactive, 1 = active, 2 = unavailable.
+static const char *saver_names[][3]={
+    {"org.gnome.ScreenSaver","/org/gnome/ScreenSaver","org.gnome.ScreenSaver"},
+    {"org.freedesktop.ScreenSaver","/org/freedesktop/ScreenSaver","org.freedesktop.ScreenSaver"},
+};
+static void screensaver_signal(GDBusConnection *bus, const gchar *sender, const gchar *path,
+                               const gchar *iface, const gchar *name, GVariant *args, gpointer data) {
+    CTPortal *p=data;
+    int index=p->saver_provider-1;
+    if (index<0 || strcmp(iface,saver_names[index][2])) return;
+    if (strcmp(path,saver_names[index][1]) && (index!=1 || strcmp(path,"/ScreenSaver"))) return;
+    gboolean active;
+    if (!g_variant_is_of_type(args,G_VARIANT_TYPE("(b)"))) return;
+    g_variant_get(args,"(b)",&active);
+    enqueue(p,14,NULL,NULL,active ? 1 : 0);
+}
+typedef struct { CTPortal *p; int index; } SaverQuery;
+static void saver_query(CTPortal *p, int index);
+static void saver_done(GObject *obj, GAsyncResult *result, gpointer data) {
+    SaverQuery *q=data; GError *error=NULL;
+    GVariant *reply=g_dbus_connection_call_finish(G_DBUS_CONNECTION(obj),result,&error);
+    if (reply) {
+        gboolean active; g_variant_get(reply,"(b)",&active); g_variant_unref(reply);
+        q->p->saver_provider=q->index+1;
+        enqueue(q->p,14,NULL,NULL,active ? 1 : 0);
+    } else if (!g_error_matches(error,G_IO_ERROR,G_IO_ERROR_CANCELLED)) {
+        if (q->index+1<(int)G_N_ELEMENTS(saver_names)) saver_query(q->p,q->index+1);
+        else enqueue(q->p,14,NULL,NULL,2);
+    }
+    g_clear_error(&error); release(q->p); g_free(q);
+}
+static void saver_query(CTPortal *p, int index) {
+    if (p->closed) return;
+    SaverQuery *q=g_new0(SaverQuery,1); q->p=p; q->index=index; retain(p);
+    g_dbus_connection_call(p->bus,saver_names[index][0],saver_names[index][1],saver_names[index][2],"GetActive",
+        NULL,G_VARIANT_TYPE("(b)"),G_DBUS_CALL_FLAGS_NO_AUTO_START,2000,p->cancel,saver_done,q);
+}
+void ct_portal_query_screensaver(CTPortal *p) { saver_query(p,0); }
 static void connection_closed(GDBusConnection *bus, gboolean remote, GError *error, gpointer data) {
     enqueue(data,4,NULL,NULL,0);
 }
@@ -151,6 +192,8 @@ CTPortal *ct_portal_open(void) {
     p->owner_sub=g_dbus_connection_signal_subscribe(bus,"org.freedesktop.DBus","org.freedesktop.DBus","NameOwnerChanged","/org/freedesktop/DBus",DEST,0,owner_changed,p,NULL);
     p->shortcut_sub=g_dbus_connection_signal_subscribe(bus,DEST,"org.freedesktop.portal.GlobalShortcuts",NULL,PATH,NULL,0,shortcut_signal,p,NULL);
     p->clipboard_sub=g_dbus_connection_signal_subscribe(bus,DEST,"org.freedesktop.portal.Clipboard",NULL,PATH,NULL,0,clipboard_signal,p,NULL);
+    p->gnome_saver_sub=g_dbus_connection_signal_subscribe(bus,saver_names[0][0],saver_names[0][2],"ActiveChanged",NULL,NULL,0,screensaver_signal,p,NULL);
+    p->fdo_saver_sub=g_dbus_connection_signal_subscribe(bus,saver_names[1][0],saver_names[1][2],"ActiveChanged",NULL,NULL,0,screensaver_signal,p,NULL);
     p->closed_handler=g_signal_connect(bus,"closed",G_CALLBACK(connection_closed),p);
     return p;
 }
@@ -354,6 +397,8 @@ void ct_portal_close(CTPortal *p) {
     g_dbus_connection_signal_unsubscribe(p->bus,p->owner_sub);
     g_dbus_connection_signal_unsubscribe(p->bus,p->shortcut_sub);
     g_dbus_connection_signal_unsubscribe(p->bus,p->clipboard_sub);
+    g_dbus_connection_signal_unsubscribe(p->bus,p->gnome_saver_sub);
+    g_dbus_connection_signal_unsubscribe(p->bus,p->fdo_saver_sub);
     g_hash_table_foreach(p->ios,cancel_io,NULL);
     g_signal_handler_disconnect(p->bus,p->closed_handler);
     g_cancellable_cancel(p->cancel);
