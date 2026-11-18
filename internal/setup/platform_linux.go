@@ -21,10 +21,11 @@ func currentPlatform() (platformSpec, error) {
 }
 
 func installLinuxRuntimes(r *runner, backend string) (string, error) {
+	var assetSuffix string
 	switch runtime.GOARCH {
 	case "amd64":
 	case "arm64":
-		return "", errf("pre-built Linux binaries are currently pinned for x86_64")
+		assetSuffix = "/arm64"
 	default:
 		return "", errf("supported Linux architectures: x86_64 and aarch64")
 	}
@@ -43,7 +44,7 @@ func installLinuxRuntimes(r *runner, backend string) (string, error) {
 		r.printf("Using official llama.cpp release %s", llamaTag)
 	}
 	for _, b := range needed {
-		if err := installTarBackend(r, b, "linux/"+b); err != nil {
+		if err := installTarBackend(r, b, "linux/"+b+assetSuffix); err != nil {
 			return "", err
 		}
 	}

@@ -32,7 +32,12 @@ main() {
         esac
     done
     [ "$(uname -s)" = Linux ] || fail 'This installer supports Linux only.'
-    [ "$(uname -m)" = x86_64 ] || fail 'Linux x86_64 is required; no ARM64 release is published.'
+    machine=$(uname -m)
+    case $machine in
+        x86_64) arch=amd64 ;;
+        aarch64) arch=arm64 ;;
+        *) fail "Unsupported Linux architecture: $machine (expected x86_64 or aarch64)." ;;
+    esac
     case $data_home in /*) ;; *) fail 'XDG_DATA_HOME must be absolute.' ;; esac
     case $install_dir in /*) ;; *) install_dir=$PWD/$install_dir ;; esac
     # realpath -m works for a new directory too, without creating it.
@@ -98,7 +103,7 @@ main() {
     fi
     version=${version#v}
     case $version in ''|*[!0-9A-Za-z.+_-]*) fail 'Could not resolve a valid release version.' ;; esac
-    name=clipboard-translator-linux-amd64-v$version
+    name=clipboard-translator-linux-$arch-v$version
     url=$repo/releases/download/v$version/$name.tar.gz
     echo "Downloading $name"
     curl -fsSL "$url" -o "$tmp/app.tar.gz"

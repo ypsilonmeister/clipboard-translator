@@ -62,6 +62,8 @@ ASSET_PATTERNS = {
     'win_vulkan': re.compile(r'^llama-.*-bin-win-vulkan-x64\.zip$'),
     'linux_cpu': re.compile(r'^llama-.*-bin-ubuntu-x64\.tar\.gz$'),
     'linux_vulkan': re.compile(r'^llama-.*-bin-ubuntu-vulkan-x64\.tar\.gz$'),
+    'linux_cpu_arm64': re.compile(r'^llama-.*-bin-ubuntu-arm64\.tar\.gz$'),
+    'linux_vulkan_arm64': re.compile(r'^llama-.*-bin-ubuntu-vulkan-arm64\.tar\.gz$'),
     'macos_arm64': re.compile(r'^llama-.*-bin-macos-arm64\.tar\.gz$'),
     'macos_x64': re.compile(r'^llama-.*-bin-macos-x64\.tar\.gz$'),
 }
@@ -148,6 +150,14 @@ def generate_sh_block(tag, assets, newline):
         f'#         \'file\': \'{assets["linux_vulkan"]["file"]}\',',
         f'#         \'sha256\': \'{assets["linux_vulkan"]["sha256"]}\',',
         '#     },',
+        '#     \'cpu_arm64\': {',
+        f'#         \'file\': \'{assets["linux_cpu_arm64"]["file"]}\',',
+        f'#         \'sha256\': \'{assets["linux_cpu_arm64"]["sha256"]}\',',
+        '#     },',
+        '#     \'vulkan_arm64\': {',
+        f'#         \'file\': \'{assets["linux_vulkan_arm64"]["file"]}\',',
+        f'#         \'sha256\': \'{assets["linux_vulkan_arm64"]["sha256"]}\',',
+        '#     },',
         '# }',
     ]
     return newline.join([START_MARKER] + lines + [END_MARKER])
@@ -179,6 +189,8 @@ GO_ASSET_KEYS = [
     ('win/vulkan', 'win_vulkan'),
     ('linux/cpu', 'linux_cpu'),
     ('linux/vulkan', 'linux_vulkan'),
+    ('linux/cpu/arm64', 'linux_cpu_arm64'),
+    ('linux/vulkan/arm64', 'linux_vulkan_arm64'),
     ('darwin/arm64', 'macos_arm64'),
     ('darwin/x64', 'macos_x64'),
 ]
@@ -308,6 +320,8 @@ def check_scripts(root_dir, expected_tag, expected_assets):
         (root / 'setup.sh', 'setup.sh', {
             'cpu': expected_assets['linux_cpu'],
             'vulkan': expected_assets['linux_vulkan'],
+            'cpu_arm64': expected_assets['linux_cpu_arm64'],
+            'vulkan_arm64': expected_assets['linux_vulkan_arm64'],
         }, START_MARKER, END_MARKER, True),
         (root / 'setup-macos.sh', 'setup-macos.sh', {
             'arm64': expected_assets['macos_arm64'],

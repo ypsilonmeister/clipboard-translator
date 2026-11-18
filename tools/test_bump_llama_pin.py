@@ -18,6 +18,8 @@ FIXTURE_RELEASE = {
         {'name': f'llama-{FIXTURE_TAG}-bin-win-cuda-12.4-x64.zip', 'digest': 'sha256:' + 'b' * 64},
         {'name': 'cudart-llama-bin-win-cuda-12.4-x64.zip', 'digest': 'sha256:' + 'c' * 64},
         {'name': f'llama-{FIXTURE_TAG}-bin-win-vulkan-x64.zip', 'digest': 'sha256:' + 'd' * 64},
+        {'name': f'llama-{FIXTURE_TAG}-bin-ubuntu-arm64.tar.gz', 'digest': 'sha256:' + '5' * 64},
+        {'name': f'llama-{FIXTURE_TAG}-bin-ubuntu-vulkan-arm64.tar.gz', 'digest': 'sha256:' + '6' * 64},
         {'name': f'llama-{FIXTURE_TAG}-bin-ubuntu-x64.tar.gz', 'digest': 'sha256:' + 'e' * 64},
         {'name': f'llama-{FIXTURE_TAG}-bin-ubuntu-vulkan-x64.tar.gz', 'digest': 'sha256:' + 'f' * 64},
         {'name': f'llama-{FIXTURE_TAG}-bin-macos-arm64.tar.gz', 'digest': 'sha256:' + '1' * 64},
@@ -49,13 +51,15 @@ class BumpLlamaPinTests(unittest.TestCase):
     def test_resolve_assets_success(self):
         tag, assets = bump.resolve_assets(FIXTURE_RELEASE)
         self.assertEqual(tag, FIXTURE_TAG)
-        self.assertEqual(len(assets), 8)
+        self.assertEqual(len(assets), 10)
         self.assertEqual(assets['win_cpu']['sha256'], 'a' * 64)
         self.assertEqual(assets['win_cuda']['sha256'], 'b' * 64)
         self.assertEqual(assets['win_cudart']['sha256'], 'c' * 64)
         self.assertEqual(assets['win_vulkan']['sha256'], 'd' * 64)
         self.assertEqual(assets['linux_cpu']['sha256'], 'e' * 64)
         self.assertEqual(assets['linux_vulkan']['sha256'], 'f' * 64)
+        self.assertEqual(assets['linux_cpu_arm64']['sha256'], '5' * 64)
+        self.assertEqual(assets['linux_vulkan_arm64']['sha256'], '6' * 64)
         self.assertEqual(assets['macos_arm64']['sha256'], '1' * 64)
         self.assertEqual(assets['macos_x64']['sha256'], '2' * 64)
 
