@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "minimum_chrome_version": "116",
   "description": "Translate selected text using your local Clipboard Translator app.",
-  "permissions": ["contextMenus", "storage", "offscreen", "clipboardWrite", "notifications"],
+  "permissions": ["contextMenus", "storage", "offscreen", "clipboardWrite", "notifications", "scripting", "activeTab"],
   "host_permissions": ["http://localhost/*", "http://127.0.0.1/*", "http://penguin.linux.test/*"],
   "background": {"service_worker": "background.js", "type": "module"},
   "options_page": "options.html",

@@ -8,14 +8,14 @@ export function endpointURL(value) {
   return url.href;
 }
 
-export async function translate(endpoint, token, text, signal) {
+export async function translate(endpoint, token, text, signal, possiblyFlattened) {
   if (!token) throw new Error('Set the app token in extension options first.');
   const timeoutSignal = AbortSignal.timeout(46 * 60 * 1000);
   const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
   const response = await fetch(endpointURL(endpoint), {
     method: 'POST', redirect: 'error', credentials: 'omit', cache: 'no-store',
     headers: {'Content-Type': 'application/json', 'X-Clipboard-Translator-Token': token},
-    body: JSON.stringify({text}), signal: combinedSignal,
+    body: JSON.stringify(possiblyFlattened ? {text, possiblyFlattened} : {text}), signal: combinedSignal,
   });
   let result;
   try {

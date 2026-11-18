@@ -152,8 +152,9 @@ func translateAPIHandler(auth *translateAPIAuth, ask func(settings.Request) sett
 			return
 		}
 		var body struct {
-			Text    string `json:"text"`
-			Profile string `json:"profile,omitempty"`
+			Text              string `json:"text"`
+			Profile           string `json:"profile,omitempty"`
+			PossiblyFlattened bool   `json:"possiblyFlattened,omitempty"`
 		}
 		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512<<10))
 		dec.DisallowUnknownFields()
@@ -167,6 +168,7 @@ func translateAPIHandler(auth *translateAPIAuth, ask func(settings.Request) sett
 		}
 		req := settings.NewActionRequest("translate", "", 46*time.Minute)
 		req.Text, req.Profile = body.Text, body.Profile
+		req.PossiblyFlattened = body.PossiblyFlattened
 		ctx, cancel := context.WithDeadline(r.Context(), req.Deadline)
 		defer cancel()
 		req.Context = ctx
@@ -277,6 +279,7 @@ func (a *app) handleAPITranslation(req settings.Request) {
 	a.setTrayState(platform.TrayBusy)
 	a.apiReply = req.Reply
 	a.apiContext = req.Context
+	a.apiFlattened = req.PossiblyFlattened
 	a.translateCaptured(p, 0, req.Text, false, platform.FallbackNone, nil)
 	// Reload failures or a canceled startup must not leave an HTTP caller waiting.
 	if !a.translating && a.apiReply != nil {
@@ -291,6 +294,7 @@ func (a *app) finishAPI(text string, err error) {
 		a.apiReply <- settings.Reply{Translation: text, Err: err}
 		a.apiReply = nil
 		a.apiContext = nil
+		a.apiFlattened = false
 	}
 }
 
