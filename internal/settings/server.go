@@ -41,6 +41,9 @@ const (
 // and the key as a string (A-Z, 0-9, or F1-F12), so the page does not need to
 // know the hotkey syntax.
 type ProfileForm struct {
+	Action          string   `json:"action,omitempty"`
+	Rules           []string `json:"rules,omitempty"`
+	PunctStyle      string   `json:"punct_style,omitempty"`
 	Ctrl            bool     `json:"ctrl"`
 	Alt             bool     `json:"alt"`
 	Shift           bool     `json:"shift"`
@@ -576,6 +579,7 @@ func FormFromProfile(p config.Profile, goos string) (ProfileForm, error) {
 		return ProfileForm{}, err
 	}
 	return ProfileForm{Ctrl: spec.Ctrl, Alt: spec.Alt, Shift: spec.Shift, Win: spec.Win, Key: spec.Key,
+		Action: p.ActionMode(), Rules: append([]string(nil), p.Rules...), PunctStyle: p.PunctStyleMode(),
 		Languages: append([]string(nil), p.Languages...), Target: p.Target, Output: p.OutputMode(), Input: p.InputMode(),
 		CleanupNewlines: p.CleanupNewlinesMode()}, nil
 }
@@ -618,10 +622,11 @@ func (f Form) ToConfig(base config.Config) (config.Config, error) {
 			if p.Target != "" && len(p.Languages) > 0 {
 				return base, fmt.Errorf("profiles[%d]: use either two languages or one target language, not both", i)
 			}
-			c.Profiles[i] = config.Profile{Hotkey: p.HotkeyString(), Output: p.Output, Input: p.Input, CleanupNewlines: p.CleanupNewlines}
+			c.Profiles[i] = config.Profile{Hotkey: p.HotkeyString(), Output: p.Output, Input: p.Input, CleanupNewlines: p.CleanupNewlines,
+				Action: p.Action, Rules: append([]string(nil), p.Rules...), PunctStyle: p.PunctStyle}
 			if p.Target != "" {
 				c.Profiles[i].Target = p.Target
-			} else {
+			} else if p.Languages != nil {
 				c.Profiles[i].Languages = append([]string{}, p.Languages...)
 			}
 		}
