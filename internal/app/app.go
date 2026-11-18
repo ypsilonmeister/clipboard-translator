@@ -95,6 +95,8 @@ type app struct {
 	progress               chan translationProgress
 	chunkIndex             int
 	chunkTotal             int
+	telephoneRound         int
+	telephoneTotal         int
 	generation             uint64 // bumped by every new request; older results are ignored
 	cancelCurrent          context.CancelFunc
 	translating            bool
@@ -940,6 +942,8 @@ func (a *app) abortTranslation() {
 	a.translating = false
 	a.chunkIndex = 0
 	a.chunkTotal = 0
+	a.telephoneRound = 0
+	a.telephoneTotal = 0
 	if a.pendingDuringLoad != nil {
 		*a.pendingDuringLoad = -1
 	}
@@ -958,6 +962,10 @@ func (a *app) onProgress(p translationProgress) {
 	if p.generation != a.generation || !a.translating {
 		return
 	}
+	if p.telephoneTotal > 0 {
+		a.telephoneRound = p.telephoneRound
+		a.telephoneTotal = p.telephoneTotal
+	}
 	a.chunkIndex = p.chunkIndex
 	a.chunkTotal = p.totalChunks
 	a.updateTranslationStatus()
@@ -965,6 +973,10 @@ func (a *app) onProgress(p translationProgress) {
 
 func (a *app) updateTranslationStatus() {
 	if !a.translating {
+		return
+	}
+	if a.telephoneTotal > 0 {
+		a.tray.SetStatus(fmt.Sprintf("Clipboard Translator - round %d of %d... (%ds)", a.telephoneRound, a.telephoneTotal, a.lastTranslSec))
 		return
 	}
 	if a.chunkTotal > 1 {
@@ -1186,7 +1198,15 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 	a.cancelCurrent = cancel
 	a.cancelTransientStatus()
 	a.translating, a.translateStart, a.lastTranslSec = true, a.timeNow(), 0
-	a.chunkIndex, a.chunkTotal = 1, 0
+	action := profile.ActionMode()
+	if action == config.ActionTelephone {
+		a.telephoneRound = 1
+		a.telephoneTotal = 10
+		a.chunkIndex = 0
+		a.chunkTotal = 0
+	} else {
+		a.chunkIndex, a.chunkTotal = 1, 0
+	}
 	g := a.generation
 	key := a.sup.APIKey() // read here: the supervisor belongs to this thread
 	from := direction.Source
@@ -1203,11 +1223,17 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		promptText = textstruct.CleanSpuriousNewlines(source, direction.Source)
 	}
 	go func() {
-		translated, err := a.translatePrompt(ctx, g, key, promptText, direction, maxTokens, budget, timeout)
+		var translated string
+		var err error
+		if action == config.ActionTelephone {
+			translated, err = a.translateTelephone(ctx, g, key, promptText, direction, maxTokens, budget, timeout)
+		} else {
+			translated, err = a.translatePrompt(ctx, g, key, promptText, direction, maxTokens, budget, timeout)
+		}
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
 			direction: direction, window: win, fromSelection: fromSelection, fallback: fallback, output: outputMode,
-			capturedAt: capturedAt}:
+			capturedAt: capturedAt, action: action}:
 		default:
 		}
 	}()
@@ -1226,10 +1252,12 @@ func (a *app) handleResult(res result) {
 	a.translating = false
 	a.chunkIndex = 0
 	a.chunkTotal = 0
+	a.telephoneRound = 0
+	a.telephoneTotal = 0
 	a.resetIdleTimer()
 	if a.apiReply != nil {
 		text := res.translated
-		if res.output == config.OutputBilingual && res.err == nil {
+		if res.output == config.OutputBilingual && res.action != config.ActionTelephone && res.err == nil {
 			text = formatBilingual(res.original, text)
 		}
 		a.finishAPI(text, res.err)
@@ -1252,7 +1280,7 @@ func (a *app) handleResult(res result) {
 		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
-	if res.translated == res.original {
+	if res.action != config.ActionTelephone && res.translated == res.original {
 		log.Print(noun + " unchanged; clipboard left intact")
 		a.setTransientStatus("Clipboard Translator - " + noun + " is the same as the source; the clipboard still holds the source")
 		if res.action == config.ActionTidy {
@@ -1266,7 +1294,7 @@ func (a *app) handleResult(res result) {
 	// apps can update clipboard formats without changing the text.
 	// Compare text AND replace under a single OpenClipboard lock.
 	replacement := res.translated
-	if res.output == config.OutputBilingual {
+	if res.output == config.OutputBilingual && res.action != config.ActionTelephone {
 		replacement = formatBilingual(res.original, res.translated)
 	}
 	applied, err := applyTranslation(a.cb, res.original, replacement)
