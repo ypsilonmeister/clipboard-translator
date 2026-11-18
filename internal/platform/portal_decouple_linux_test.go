@@ -148,7 +148,13 @@ func TestPortalRemoteLaterFailuresLeaveHotkeysBound(t *testing.T) {
 			}
 			requests := len(w.requests)
 			d.Step()
-			if d.remote.phase != "failed" || d.remote.session != "" {
+			// #133 P1-2: Session.Closed parks the remote feature in "waiting"
+			// (reconnect with the kept token) instead of failing it.
+			want := "failed"
+			if kind == "revoked" {
+				want = "waiting"
+			}
+			if d.remote.phase != want || d.remote.session != "" {
 				t.Fatalf("remote failure not recorded: phase=%s session=%q", d.remote.phase, d.remote.session)
 			}
 			closedRemote := false
