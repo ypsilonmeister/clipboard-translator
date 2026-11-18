@@ -239,13 +239,27 @@ func TestDirectionForKnownWrong(t *testing.T) {
 		target        string
 		knownWrong    string // issue that fixes the expected direction
 	}{
-		{[]string{"ja", "en"}, "田中さん、please review this document by Friday", "en", "opens in japanese; 、 does not split the token", "ja", "#205"},
+		// Measured with the real model on 2026-11-18 (#205 row 3, SEVERE).
+		// Wrong because the text opens with a Japanese token (the first
+		// token after the 、 split): latinIsSkeleton keeps the old result
+		// (ja) for text that opens in the other script, whatever the counts.
+		{[]string{"ja", "en"}, "田中さん、please review this document by Friday", "en", "opens in japanese; the opening-token rule keeps ja", "ja", "#205"},
+		// NOT among the 11 rows measured with the real model: marked by
+		// analogy with #205 row 3 above (same shape, comma-space instead of
+		// 、, same opening-token rule), so condition (ii) holds by analogy.
 		{[]string{"ja", "en"}, "田中さん, could you review the attached proposal by Friday?", "en", "opens with a name", "ja", "#205"},
+		// Measured with the real model (#205 row 4).
 		{[]string{"ja", "en"}, "Please forward the attached file to 田中さん", "en", "ends with a name", "ja", "#205"},
 	}
 	for _, tc := range cases {
 		got, ok := DirectionFor(tc.pair, tc.input)
-		if ok && got.Source == tc.source && got.Target == tc.target {
+		if !ok {
+			// Not translated at all is worse than the known wrong direction:
+			// main pins ok=true for these rows, so a mark must not hide it.
+			t.Errorf("%s %v %q: not translated (ok=false); a knownWrong row must still translate, only in the wrong direction", tc.label, tc.pair, tc.input)
+			continue
+		}
+		if got.Source == tc.source && got.Target == tc.target {
 			t.Errorf("%s %v %q: now %s->%s as wanted but still marked knownWrong %s; remove the mark and move the entry to TestDirectionForPairs to lock the fix in", tc.label, tc.pair, tc.input, tc.source, tc.target, tc.knownWrong)
 		}
 	}
