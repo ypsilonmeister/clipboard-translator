@@ -189,6 +189,7 @@ func (a *app) settingsState() settings.State {
 	desktop := a.desktopStatus()
 	st.Wayland = desktop.Wayland
 	st.DesktopStatus = desktop.Message
+	st.DesktopCapabilities = capabilityLines(desktop)
 	st.NotifyOnComplete = a.conf.NotifyOnComplete
 	st.MaxChars = a.conf.MaxChars
 	st.IdleUnloadMinutes = a.conf.IdleUnloadMinutes

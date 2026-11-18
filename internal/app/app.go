@@ -1031,7 +1031,9 @@ func (a *app) startHotkeyTranslation(index int, queuedDuringLoad bool) {
 	}
 	if profile.InputMode() == config.InputClipboard {
 		// The text is already on the clipboard: no Ctrl+C, no waiting for a copy,
-		// and never a fresh selection (so no auto-paste).
+		// and never a fresh selection (so no auto-paste). The GTK fallback
+		// clipboard needs the focused control window, like the menu action.
+		a.presentManualControl()
 		source, err := a.cb.Read()
 		if errors.Is(err, platform.ErrClipboardPending) {
 			a.pendingRead = &pendingClipboardRead{profile: profile, win: win, deadline: a.timeNow().Add(8 * time.Second)}

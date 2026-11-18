@@ -36,6 +36,9 @@ func (a *app) tickDesktop() {
 		return
 	}
 	stamp := s.Message + "|" + a.hotkeySummary()
+	for _, c := range s.Capabilities() {
+		stamp += "|" + c.State.String()
+	}
 	if stamp == a.desktopStamp {
 		return
 	}
@@ -59,7 +62,7 @@ func (a *app) tickClipboard() {
 				return
 			}
 			err = errors.New("clipboard read timed out")
-			if a.desktopStatus().Manual {
+			if a.desktopStatus().ManualClipboard {
 				err = errors.New("clipboard read timed out; focus the app control window and try Translate clipboard again")
 			}
 		}
@@ -120,10 +123,46 @@ func (a *app) chromeOSProfile() bool {
 	return s.Crostini && s.PortalCapabilitiesMissing
 }
 
+// The platform decides whether the read needs the focused control window: with
+// only the hotkey missing, the portal clipboard is used and nothing is shown.
 func (a *app) presentManualControl() {
-	if a.desktopStatus().Manual {
+	if s := a.desktopStatus(); s.Manual || s.ManualClipboard {
 		if window, ok := a.cb.(interface{ PresentControl() }); ok {
 			window.PresentControl()
 		}
 	}
+}
+
+// capabilityLines are the per-capability status lines (#133 P1-6) for the menu
+// and the Settings page. Capabilities the backend did not evaluate are left out.
+func capabilityLines(s platform.DesktopStatus) []string {
+	var lines []string
+	for _, c := range s.Capabilities() {
+		name := map[string]string{"hotkey": "Hotkey", "clipboard": "Clipboard", "capture": "Selection capture"}[c.Name]
+		var state string
+		switch c.State {
+		case platform.CapabilityAvailable:
+			state = "ready"
+		case platform.CapabilityPending:
+			state = "waiting for permission"
+		case platform.CapabilityWaiting:
+			state = "reconnecting (unlock the screen if it is locked)"
+		case platform.CapabilityRefused:
+			state = "needs attention (Retry Wayland permissions)"
+		case platform.CapabilityMissing:
+			state = "not provided by this desktop"
+			switch c.Name {
+			case "hotkey":
+				state += "; use Translate clipboard"
+			case "clipboard":
+				state += "; uses the control window"
+			case "capture":
+				state += "; the clipboard text is translated"
+			}
+		default:
+			continue
+		}
+		lines = append(lines, name+": "+state)
+	}
+	return lines
 }

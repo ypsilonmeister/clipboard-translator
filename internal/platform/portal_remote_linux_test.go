@@ -130,7 +130,7 @@ func TestPortalRemoteAuthorizationAndTokenRotation(t *testing.T) {
 }
 func TestPortalRemoteDenialAndRevocationKeepShortcuts(t *testing.T) {
 	// Session.Closed is no longer a revocation (#133 P1-2); see portal_inhibit_linux_test.go.
-	for _, phase := range []string{"select", "clipboard", "start", "missing-keyboard", "timeout"} {
+	for _, phase := range []string{"select", "clipboard", "start", "missing-clipboard", "timeout"} {
 		t.Run(phase, func(t *testing.T) {
 			r, w, now := remoteFixture(t)
 			r.Authorize()
@@ -145,8 +145,10 @@ func TestPortalRemoteDenialAndRevocationKeepShortcuts(t *testing.T) {
 				r.Step()
 			}
 			switch phase {
-			case "missing-keyboard":
-				w.events = append(w.events, portalEvent{kind: "response", token: r.pending, clipboard: true})
+			case "missing-clipboard":
+				// Without the keyboard only capture degrades (#133 P1-6); without
+				// the clipboard the whole remote feature has nothing to offer.
+				w.events = append(w.events, portalEvent{kind: "response", token: r.pending, devices: 1})
 			case "timeout":
 				*now = now.Add(4 * time.Minute)
 			default:

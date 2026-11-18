@@ -96,6 +96,7 @@ type State struct {
 	ActualHotkeys         []string `json:"actual_hotkeys,omitempty"`
 	Wayland               bool     `json:"wayland,omitempty"`
 	DesktopStatus         string   `json:"desktop_status,omitempty"`
+	DesktopCapabilities   []string `json:"desktop_capabilities,omitempty"` // one line per Wayland capability
 	Form
 	Revision       int              `json:"revision"`
 	Languages      []LanguageOption `json:"language_options"`
