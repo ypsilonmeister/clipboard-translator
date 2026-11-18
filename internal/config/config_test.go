@@ -439,3 +439,69 @@ func TestProfileCleanupNewlinesConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileActionConfig(t *testing.T) {
+	// Legacy config without action defaults to translate.
+	c, err := Load(writeConfig(t, `{"hotkey": "Ctrl+Alt+E"}`))
+	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Action != ActionTranslate || c.Profiles[0].ActionMode() != ActionTranslate {
+		t.Fatalf("legacy config action: %+v, %v", c.Profiles, err)
+	}
+
+	// Top-level action: telephone.
+	c, err = Load(writeConfig(t, `{"hotkey": "Ctrl+Alt+E", "action": "telephone"}`))
+	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Action != ActionTelephone || c.Profiles[0].ActionMode() != ActionTelephone {
+		t.Fatalf("top-level telephone action: %+v, %v", c.Profiles, err)
+	}
+
+	// Profile with omitted action defaults to translate.
+	c, err = Load(writeConfig(t, `{"profiles": [{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}]}`))
+	if err != nil || len(c.Profiles) != 1 || c.Profiles[0].Action != ActionTranslate || c.Profiles[0].ActionMode() != ActionTranslate {
+		t.Fatalf("omitted profile action: %+v, %v", c.Profiles, err)
+	}
+
+	// Explicit translate and telephone modes with case and whitespace trimming.
+	c, err = Load(writeConfig(t, `{"profiles": [
+		{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"], "action": " Translate "},
+		{"hotkey": "Ctrl+Alt+T", "languages": ["ja", "en"], "action": "TELEPHONE"}
+	]}`))
+	if err != nil || len(c.Profiles) != 2 {
+		t.Fatalf("explicit action modes: %+v, %v", c.Profiles, err)
+	}
+	if c.Profiles[0].Action != ActionTranslate || c.Profiles[0].ActionMode() != ActionTranslate {
+		t.Errorf("profile 0 action = %q, want %q", c.Profiles[0].Action, ActionTranslate)
+	}
+	if c.Profiles[1].Action != ActionTelephone || c.Profiles[1].ActionMode() != ActionTelephone {
+		t.Errorf("profile 1 action = %q, want %q", c.Profiles[1].Action, ActionTelephone)
+	}
+
+	// Unknown top-level action rejected.
+	err = loadConfig2(t, `{"hotkey": "Ctrl+Alt+E", "action": "summarize"}`)
+	if err == nil {
+		t.Fatal("unknown top-level action must be rejected")
+	}
+	for _, want := range []string{"summarize", "translate", "telephone"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should contain %q", err.Error(), want)
+		}
+	}
+
+	// Unknown profile action value rejected with helpful error.
+	err = loadConfig2(t, `{"profiles": [{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"], "action": "summarize"}]}`)
+	if err == nil {
+		t.Fatal("unknown profile action mode must be rejected")
+	}
+	for _, want := range []string{"profiles[0]", "summarize", "translate", "telephone"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should contain %q", err.Error(), want)
+		}
+	}
+
+	// Target-only profile cannot be used with telephone action.
+	err = loadConfig2(t, `{"profiles": [{"hotkey": "Ctrl+Alt+E", "action": "telephone", "target": "ja"}]}`)
+	if err == nil {
+		t.Fatal("target-only telephone profile must be rejected")
+	}
+	if !strings.Contains(err.Error(), "requires \"languages\"") {
+		t.Errorf("error %q should mention requires languages", err.Error())
+	}
+}

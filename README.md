@@ -638,9 +638,13 @@ Everything else stays in `config.json`.
 - One language pair per hotkey; the two languages must use different scripts (en ↔ de, or Simplified ↔ Traditional Chinese, cannot be told apart from the text; give each its own `target` profile instead). With Japanese and Chinese in one pair, text with only Han characters is read as Chinese; kana makes it Japanese. When a text mixes Latin with the other script, the other language wins, unless the text is clearly Latin with a few quoted words or names (a sentence of at least 5 lowercase Latin words, with 1.5 times as many Latin words as the other script's characters, or words for scripts that put spaces between words): English with one Japanese name stays English. Product names, lists and commands inside the other language do not count as such a sentence, and neither does Japanese with spaces around its particles (`git push origin main する`). Text whose first or last word is in the other script is also read as that language. In doubt, the other language wins. URLs are not translated. When text cannot be translated (empty selection, URL-only, wrong language pair), the tray tooltip shows why; text over the character limit also shows a notification.
 - A GPU backend can fail (too little VRAM, old driver, missing DLLs); the app
   then falls back to the CPU build, shows one tray notification, and lists the
-  engine in use in the tray menu. The CPU build then stays in use until the next
-  app start, or until you choose the GPU engine again (or change the model) in
-  Settings; **Keep using CPU** there makes it permanent. See `server.log` and
+  engine in use in the tray menu. Restart the app or choose the GPU engine
+  again in Settings to retry it immediately. If you switch models while using
+  the fallback, the new model loads on the CPU and the GPU is retried the next
+  time the model loads after an unload. With `idle_unload_minutes` at its default
+  of `0`, the CPU stays in use after the switch until you manually unload the
+  model, restart the app, or choose the GPU engine again. Select **Keep using
+  CPU** in Settings to make the CPU engine permanent. See `server.log` and
   `translator.log`.
 - The exe is not code-signed, so a zip downloaded in a browser may trigger a
   SmartScreen warning (files fetched by the install script do not).
@@ -690,8 +694,9 @@ build" and never claims to be outdated). `setup.ps1` is embedded in the exe.
   GitHub release. It also attaches a Linux amd64 tarball and SHA-256 file, built
   on Ubuntu 24.04, plus ad-hoc signed macOS Apple Silicon/Intel app zips/checksums.
   An existing release receives the build artifacts.
-- `bucket/clipboard-translator.json` is the Scoop manifest; bump it with each
-  release (`scoop checkver -u` can do it).
+- After publishing, the release workflow opens a PR to update the Scoop
+  manifest at `bucket/clipboard-translator.json`. Issue #234 allows the Scoop
+  job to use `contents: write` to push its dedicated bump branch.
 
 Bug reports and feature requests: use the issue forms. They ask for the app
 version, how it was installed and the log excerpt.

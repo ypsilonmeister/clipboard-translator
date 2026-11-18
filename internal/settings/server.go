@@ -622,8 +622,27 @@ func (f Form) ToConfig(base config.Config) (config.Config, error) {
 			if p.Target != "" && len(p.Languages) > 0 {
 				return base, fmt.Errorf("profiles[%d]: use either two languages or one target language, not both", i)
 			}
-			c.Profiles[i] = config.Profile{Hotkey: p.HotkeyString(), Output: p.Output, Input: p.Input, CleanupNewlines: p.CleanupNewlines,
-				Action: p.Action, Rules: append([]string(nil), p.Rules...), PunctStyle: p.PunctStyle}
+			action := p.Action
+			if action == "" {
+				action = config.ActionTranslate
+			}
+			switch action {
+			case config.ActionTranslate, config.ActionTidy, config.ActionTelephone:
+			default:
+				return base, fmt.Errorf("profiles[%d]: action %q is not supported", i, action)
+			}
+			if action == config.ActionTelephone && p.Target != "" {
+				return base, fmt.Errorf("profiles[%d]: action %q requires a two-language pair, not target mode", i, config.ActionTelephone)
+			}
+			c.Profiles[i] = config.Profile{
+				Hotkey:          p.HotkeyString(),
+				Action:          action,
+				Rules:           append([]string(nil), p.Rules...),
+				PunctStyle:      p.PunctStyle,
+				Output:          p.Output,
+				Input:           p.Input,
+				CleanupNewlines: p.CleanupNewlines,
+			}
 			if p.Target != "" {
 				c.Profiles[i].Target = p.Target
 			} else if p.Languages != nil {
