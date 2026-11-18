@@ -169,24 +169,38 @@ jobs:
           version="${TAG#v}"
           asset="Portable-Clipboard-Translator-Windows-x64-${TAG}.zip"
           release=$(gh release view "$TAG" --json isDraft,publishedAt,assets)
-          if ! jq -e '.isDraft == false and (.publishedAt != null and .publishedAt != "")' <<< "$release" >/dev/null; then
+          published=$(jq -er '(.isDraft == false and (.publishedAt != null and .publishedAt != "")) | tostring' <<< "$release")
+          if [[ $published == false ]]; then
             echo "Release $TAG is still unpublished. Skipping the Scoop bump."
             exit 0
           fi
 
-          url=$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset and .state == "uploaded") | .url | select(length > 0)' <<< "$release")
+          if ! url=$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset and .state == "uploaded") | .url | strings | select(length > 0)' <<< "$release"); then
+            echo "Could not extract the URL for uploaded asset $asset from release $TAG." >&2
+            exit 1
+          fi
           download_dir=$(mktemp -d)
           trap 'rm -rf "$download_dir"' EXIT
           gh release download "$TAG" --pattern "$asset" --output "$download_dir/$asset"
+          if ! gh release download "$TAG" --pattern "$asset.sha256" --output "$download_dir/$asset.sha256" ||
+             ! published_checksum=$(cat "$download_dir/$asset.sha256"); then
+            echo "Could not download or read $asset.sha256 from release $TAG." >&2
+            exit 1
+          fi
           hash=$(sha256sum "$download_dir/$asset")
           hash=${hash%% *}
+          # The Windows packaging step writes a sha256sum record with CRLF.
+          if [[ ${published_checksum%$'\r'} != "$hash  $asset" ]]; then
+            echo "SHA-256 verification failed for $asset: $asset.sha256 does not match the downloaded ZIP." >&2
+            exit 1
+          fi
 
           echo "Updating bucket/clipboard-translator.json to version $version..."
-          jq --indent 4 \
+          jq -e --indent 4 \
             --arg v "$version" \
             --arg u "$url" \
             --arg h "$hash" \
-            '.version = $v | .architecture["64bit"].url = $u | .architecture["64bit"].hash = $h' \
+            'select((.architecture["64bit"] | type) == "object") | .version = $v | .architecture["64bit"].url = $u | .architecture["64bit"].hash = $h' \
             bucket/clipboard-translator.json > bucket/clipboard-translator.json.tmp
           mv bucket/clipboard-translator.json.tmp bucket/clipboard-translator.json
 
