@@ -230,6 +230,7 @@ func proseWord(tok string) bool {
 // either end. Tokens that cannot be a word of either language (a flag, a URL,
 // a path; see nonWordToken) are counted but do not move that boundary, so a
 // trailing "--verbose" or link does not turn the command into English (#208).
+// Japanese names with honorifics also leave the boundary alone (#205).
 func latinIsSkeleton(s, other string) bool {
 	byChar := unspaced[languages[other].script]
 	w, prose, u := 0, 0, 0
@@ -252,7 +253,8 @@ func latinIsSkeleton(s, other string) bool {
 				hasLatin = true
 			}
 		}
-		if (n > 0 || hasLatin) && !nonWordToken(tok) {
+		honorificName := n > 0 && other == "ja" && japaneseHonorificName(tok)
+		if (n > 0 || hasLatin) && !honorificName && !nonWordToken(tok) {
 			if first && n > 0 {
 				return false
 			}
@@ -272,6 +274,22 @@ func latinIsSkeleton(s, other string) bool {
 		}
 	}
 	return !endsOther && prose >= minProseWords && w*latinWordsDen >= u*latinWordsNum
+}
+
+// A kanji or katakana name with an honorific can address someone in either
+// language. Require the whole token (apart from surrounding punctuation) so
+// attached particles or other text still contribute to the boundary.
+func japaneseHonorificName(tok string) bool {
+	tok = strings.TrimFunc(tok, unicode.IsPunct)
+	for _, suffix := range [...]string{"さん", "さま", "様", "氏", "殿", "くん", "君", "ちゃん"} {
+		name, found := strings.CutSuffix(tok, suffix)
+		if found && name != "" {
+			return strings.IndexFunc(name, func(r rune) bool {
+				return !unicode.In(r, unicode.Han, unicode.Katakana) && !kanaExtra(r)
+			}) < 0
+		}
+	}
+	return false
 }
 
 // nonWordToken reports whether tok cannot be a word of running text in any
