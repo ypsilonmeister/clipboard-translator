@@ -9,8 +9,13 @@ import (
 
 type fakeDesktopWire struct {
 	fakeRemoteWire
-	probes []string
-	binds  int
+	probes     []string
+	binds      int
+	configures []struct{ session, token string }
+}
+
+func (w *fakeDesktopWire) ConfigureShortcuts(session, token, parent, activation string) {
+	w.configures = append(w.configures, struct{ session, token string }{session, token})
 }
 
 func (w *fakeDesktopWire) Probe(iface string)                                            { w.probes = append(w.probes, iface) }

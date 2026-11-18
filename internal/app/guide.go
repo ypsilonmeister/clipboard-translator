@@ -53,7 +53,7 @@ func (a *app) quickstartGuide() settings.QuickstartGuide {
 	g.Steps = a.guideSteps()
 	if g.Steps == nil {
 		if s := a.desktopStatus(); s.Wayland {
-			g.Intro = s.Message + " Use Retry Wayland permissions in the control window when available."
+			g.Intro = s.Message + desktopActionHint(s)
 			return g
 		}
 		g.Intro = "The hotkey " + a.conf.Hotkey + " is not active (another program may be using it), so translating by hotkey does not work yet. Choose another hotkey under Hotkeys below and click Save."
@@ -78,7 +78,7 @@ func (a *app) guideNotification() (msg string, isError bool) {
 	steps := a.guideSteps()
 	if steps == nil {
 		if s := a.desktopStatus(); s.Wayland {
-			return s.Message + " Use Retry Wayland permissions in the control window when available.", true
+			return s.Message + desktopActionHint(s), true
 		}
 		return fmt.Sprintf("The hotkey %s is not active (another program may be using it). Open Settings... from the tray menu and choose another hotkey.", a.conf.Hotkey), true
 	}
@@ -96,4 +96,15 @@ func (a *app) showQuickstart() {
 		log.Print("quick start guide shown")
 		a.saveConfig(map[string]any{"quickstart_shown": true})
 	}
+}
+
+// desktopActionHint names the menu action that fits the shortcut state.
+func desktopActionHint(s platform.DesktopStatus) string {
+	if s.ChooseKeys {
+		return " Use Choose shortcut keys… in the control window menu."
+	}
+	if s.Binding == "unbound" {
+		return ""
+	}
+	return " Use Retry Wayland permissions in the control window when available."
 }

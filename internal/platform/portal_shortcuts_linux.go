@@ -3,6 +3,7 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -10,9 +11,33 @@ import (
 )
 
 type portalBinding struct{ id, description, trigger string }
+
+// bindingState is one shortcut's lifecycle with the portal.
+//
+//	pending: BindShortcuts is outstanding (the desktop dialog may be open).
+//	bound:   Response 0 (or ShortcutsChanged) with a non-empty trigger.
+//	unbound: Response 0 with an empty trigger (KDE after a closed dialog, or the
+//	         user cleared the key). Re-sending BindShortcuts cannot help; only
+//	         ConfigureShortcuts or the desktop settings can assign a key.
+//	refused: the user cancelled (Response 1) or the request failed (2). Retry
+//	         re-sends BindShortcuts.
+type bindingState string
+
+const (
+	bindingPending bindingState = "pending"
+	bindingBound   bindingState = "bound"
+	bindingUnbound bindingState = "unbound"
+	bindingRefused bindingState = "refused"
+)
+
+const configureTimeout = 2 * time.Minute
+
 type portalShortcutWire interface {
 	portalWire
 	BindShortcuts(session, token string, bindings []portalBinding)
+	// ConfigureShortcuts opens the desktop's own key chooser (GlobalShortcuts v2).
+	// It has no Response; a failed call comes back as a "failed" event carrying token.
+	ConfigureShortcuts(session, token, parentWindow, activationToken string)
 	CloseSession(string)
 	CloseRequest(string)
 }
@@ -29,6 +54,14 @@ type portalHotkeys struct {
 	deadline                    time.Time
 	err                         error
 	retired                     map[string]bool // canceled CreateSession tokens
+	// ConfigureShortcuts bookkeeping. configToken is the wire call's failure token;
+	// configuring is true while the desktop chooser may be open (no signal says it
+	// closed, so it also expires). noConfigure records a frontend without the call.
+	configToken    string
+	configuring    bool
+	configDeadline time.Time
+	noConfigure    bool
+	configureCalls int
 }
 
 type portalHotkey struct {
@@ -36,6 +69,7 @@ type portalHotkey struct {
 	id, preferred, actual       string
 	closed, fired, active, held bool
 	err                         error
+	state                       bindingState
 }
 
 func portalPreferredTrigger(spec string) (string, error) {
@@ -100,7 +134,7 @@ func (r *portalHotkeys) NewHotkey(spec string) (*portalHotkey, error) {
 			break
 		}
 	}
-	h := &portalHotkey{owner: r, id: id, preferred: preferred}
+	h := &portalHotkey{owner: r, id: id, preferred: preferred, state: bindingPending}
 	r.entries = append(r.entries, h)
 	r.dirty = true
 	return h, nil
@@ -144,6 +178,7 @@ func (r *portalHotkeys) clear() {
 		h.held = false
 		h.actual = ""
 		h.err = nil
+		h.state = bindingPending
 		if !h.closed {
 			kept = append(kept, h)
 		}
@@ -168,6 +203,7 @@ func (r *portalHotkeys) fail(message string) {
 	r.pending = ""
 	r.operation = ""
 	r.dirty = false
+	r.configuring = false
 	r.retire()
 }
 
@@ -246,6 +282,14 @@ func (r *portalHotkeys) event(e portalEvent) bool {
 			return true
 		}
 	case "response", "failed":
+		if e.kind == "failed" && r.configToken != "" && e.token == r.configToken {
+			// The frontend has no ConfigureShortcuts (or the call failed): fall back
+			// to naming the desktop settings page.
+			r.configToken = ""
+			r.configuring = false
+			r.noConfigure = true
+			return true
+		}
 		if r.retired[e.token] {
 			delete(r.retired, e.token)
 			closeLateSession(r.wire, e)
@@ -262,7 +306,10 @@ func (r *portalHotkeys) event(e portalEvent) bool {
 			return true
 		}
 		if e.kind == "failed" || e.code != 0 {
-			r.fail("shortcut registration was refused; retry the hotkey settings")
+			r.fail("shortcut registration was refused")
+			for _, h := range r.entries {
+				h.state = bindingRefused
+			}
 			return true
 		}
 		if operation == "create" {
@@ -292,6 +339,7 @@ func (r *portalHotkeys) event(e portalEvent) bool {
 			return true
 		}
 		if e.kind == "shortcuts-changed" {
+			r.configuring = false
 			for _, b := range e.bindings {
 				for _, h := range r.entries {
 					if h.id == b.id {
@@ -300,7 +348,9 @@ func (r *portalHotkeys) event(e portalEvent) bool {
 						h.fired = false
 						h.held = false
 						h.err = nil
+						h.state = bindingBound
 						if !h.active {
+							h.state = bindingUnbound
 							h.err = errors.New("the portal disabled this shortcut")
 						}
 					}
@@ -328,16 +378,88 @@ func (r *portalHotkeys) apply(bindings []portalBinding) {
 	for _, h := range r.entries {
 		h.active = false
 		h.actual = ""
+		h.state = bindingUnbound
 		h.err = errors.New("the portal did not register this hotkey; choose a shortcut in desktop settings")
 		for _, b := range bindings {
 			if b.id == h.id && b.trigger != "" {
 				h.active = true
 				h.actual = b.trigger
+				h.state = bindingBound
 				h.err = nil
 				break
 			}
 		}
 	}
+}
+
+// State reports the aggregate binding state: refused beats pending beats unbound,
+// and bound means every open hotkey has a trigger. It is "" with no hotkeys.
+func (r *portalHotkeys) State() bindingState {
+	state := bindingState("")
+	for _, h := range r.entries {
+		if h.closed {
+			continue
+		}
+		switch {
+		case h.state == bindingRefused:
+			return bindingRefused
+		case h.state == bindingPending || h.state == "":
+			return bindingPending
+		case h.state == bindingUnbound:
+			state = bindingUnbound
+		case state == "":
+			state = bindingBound
+		}
+	}
+	return state
+}
+
+// CanConfigure reports whether the chooser can be opened now: a live session, no
+// request outstanding, no profile change waiting to be bound, and a frontend that
+// has the call.
+func (r *portalHotkeys) CanConfigure() bool {
+	return r.session != "" && r.pending == "" && !r.dirty && !r.noConfigure && r.err == nil && len(r.entries) > 0
+}
+
+// Configuring reports that the desktop chooser was opened and no ShortcutsChanged
+// has arrived yet.
+func (r *portalHotkeys) Configuring() bool {
+	return r.configuring && r.client.now().Before(r.configDeadline)
+}
+
+// ConfigureShortcuts asks the portal to open its own key chooser for this session.
+// The result arrives as ShortcutsChanged, which flips unbound bindings to bound.
+func (r *portalHotkeys) ConfigureShortcuts() error {
+	if r.noConfigure {
+		return errors.New("this desktop portal cannot open its shortcut chooser; " + shortcutSettingsPlace())
+	}
+	if !r.CanConfigure() {
+		return errors.New("the shortcut session is not ready")
+	}
+	token, err := portalToken()
+	if err != nil {
+		return errors.New("could not create a shortcut request identifier")
+	}
+	r.configToken = token
+	r.configuring = true
+	r.configDeadline = r.client.now().Add(configureTimeout)
+	r.configureCalls++
+	// parent_window and activation_token are empty until xdg-foreign handles exist (P2-2).
+	r.wire.ConfigureShortcuts(r.session, token, "", "")
+	return nil
+}
+
+// shortcutSettingsPlace names where the user can assign keys when the portal
+// cannot open its chooser.
+func shortcutSettingsPlace() string {
+	desktop := strings.ToUpper(os.Getenv("XDG_CURRENT_DESKTOP"))
+	switch {
+	case strings.Contains(desktop, "KDE"):
+		return "assign keys in System Settings → Shortcuts → Clipboard Translator"
+	case strings.Contains(desktop, "GNOME"):
+		return "assign keys in Settings → Apps → Clipboard Translator → Global Shortcuts"
+	}
+	return "assign keys in your desktop's keyboard shortcut settings for Clipboard Translator"
 }
 
 // Deactivated describes the shortcut, not physical modifier state. Capture adds

@@ -9,6 +9,7 @@ void ct_portal_probe(CTPortal *, const char *);
 void ct_portal_create_session(CTPortal *, const char *, const char *, const char *);
 typedef struct { const char *id, *description, *trigger; } CTShortcut;
 void ct_portal_bind_shortcuts(CTPortal *, const char *, const char *, CTShortcut *, int);
+void ct_portal_configure_shortcuts(CTPortal *, const char *, const char *, const char *, const char *);
 void ct_portal_close_session(CTPortal *, const char *);
 void ct_portal_close_request(CTPortal *, const char *);
 int ct_portal_binding_count(CTPortalEvent *);

@@ -692,7 +692,7 @@
     const desktop = $('desktop-status');
     if (desktop) {
       desktop.textContent = state.desktop_status || '';
-      if (state.wayland) desktop.textContent += ' Retry Wayland permissions is available in the control window when access needs attention.';
+      if (state.wayland) desktop.textContent += ' Retry Wayland permissions and Choose shortcut keys… are available in the control window menu when access needs attention.';
       desktop.hidden = !state.desktop_status;
     }
     const autoPaste = $('auto-paste');

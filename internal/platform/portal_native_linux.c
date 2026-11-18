@@ -204,6 +204,15 @@ void ct_portal_bind_shortcuts(CTPortal *p, const char *session, const char *toke
     g_variant_builder_add(&opts,"{sv}","handle_token",g_variant_new_string(token));
     call(p,"org.freedesktop.portal.GlobalShortcuts","BindShortcuts",g_variant_new("(oa(sa{sv})sa{sv})",session,&shortcuts,"",&opts),G_VARIANT_TYPE("(o)"),0,token);
 }
+// ConfigureShortcuts (GlobalShortcuts v2) has no Request/Response: the desktop opens
+// its own chooser and later emits ShortcutsChanged. Only a failed call is reported
+// (kind 4 with this token), e.g. UnknownMethod on a version 1 frontend.
+void ct_portal_configure_shortcuts(CTPortal *p, const char *session, const char *token, const char *parent, const char *activation) {
+    if (!g_variant_is_object_path(session) || !g_str_has_prefix(session,p->session_prefix)) { enqueue(p,4,token,NULL,0); return; }
+    GVariantBuilder opts;g_variant_builder_init(&opts,G_VARIANT_TYPE_VARDICT);
+    if (activation && *activation) g_variant_builder_add(&opts,"{sv}","activation_token",g_variant_new_string(activation));
+    call(p,"org.freedesktop.portal.GlobalShortcuts","ConfigureShortcuts",g_variant_new("(osa{sv})",session,parent ? parent : "",&opts),G_VARIANT_TYPE_UNIT,0,token);
+}
 void ct_portal_close_session(CTPortal *p, const char *session) {
     if (!p->closed && g_str_has_prefix(session,p->session_prefix)) g_dbus_connection_call(p->bus,DEST,session,"org.freedesktop.portal.Session","Close",NULL,NULL,0,10000,NULL,NULL,NULL);
 }

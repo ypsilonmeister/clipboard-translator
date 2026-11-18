@@ -154,6 +154,17 @@ func (w *gioPortalWire) BindShortcuts(session, token string, bindings []portalBi
 	}
 	C.ct_portal_bind_shortcuts(w.native, a, b, (*C.CTShortcut)(storage), C.int(len(bindings)))
 }
+func (w *gioPortalWire) ConfigureShortcuts(session, token, parent, activation string) {
+	if w.native == nil {
+		return
+	}
+	a, b, c, d := C.CString(session), C.CString(token), C.CString(parent), C.CString(activation)
+	defer C.free(unsafe.Pointer(a))
+	defer C.free(unsafe.Pointer(b))
+	defer C.free(unsafe.Pointer(c))
+	defer C.free(unsafe.Pointer(d))
+	C.ct_portal_configure_shortcuts(w.native, a, b, c, d)
+}
 func (w *gioPortalWire) CloseSession(session string) {
 	if w.native != nil {
 		p := C.CString(session)
