@@ -340,6 +340,9 @@ func TestReloadSupersededBySecondHotkeyDuringLoad(t *testing.T) {
 	t.Setenv("CT_TEST_FAKE_SERVER_DELAY", "200")
 	a, _, cb, pastes, _ := uxApp(t)
 	a.conf.AutoPaste = true
+	a.conf.ShowCursorHint = true
+	hint := &fakeCursorHint{}
+	a.cursorHint = hint
 	if err := a.startServer(); err != nil {
 		t.Fatal(err)
 	}
@@ -360,11 +363,18 @@ func TestReloadSupersededBySecondHotkeyDuringLoad(t *testing.T) {
 			currentText = "さようなら"
 			hotkeyFired = true
 		}
-		return origUI(label, elapsed)
+		quit := origUI(label, elapsed)
+		if hint.shows != 2 {
+			t.Fatalf("second hotkey was polled during load: hint shown %d times, want 2", hint.shows)
+		}
+		return quit
 	}
 
 	cb.text = "こんにちは"
 	a.startTranslation(0)
+	if !hint.visible || hint.shows != 2 {
+		t.Fatalf("replaying the second hotkey: visible=%v shows=%d, want one show per press", hint.visible, hint.shows)
+	}
 
 	// Only さようなら should be translated.
 	select {
