@@ -65,9 +65,6 @@ func (d *portalDesktop) connect() {
 		switch e.id {
 		case portalShortcuts, portalRemoteDesktop, portalClipboardInterface:
 			d.capabilities[e.id] = true
-			if e.id == portalShortcuts && e.code < 2 && d.hotkeys != nil {
-				d.hotkeys.noConfigure = true // ConfigureShortcuts arrived with GlobalShortcuts v2
-			}
 		default:
 			return true
 		}
@@ -188,7 +185,7 @@ func (d *portalDesktop) RetryDesktop() {
 	}
 	if d.hotkeys.pending == "" {
 		for _, h := range d.hotkeys.entries {
-			if h.err != nil {
+			if h.err != nil && h.state != bindingUnbound {
 				d.hotkeys.dirty = true
 			}
 		}

@@ -163,7 +163,8 @@ func desktopUnbound(t *testing.T, version uint32) (*portalDesktop, *fakeDesktopW
 }
 
 func TestDesktopStatusUnboundOffersChooserNotRetry(t *testing.T) {
-	d, w, _ := desktopUnbound(t, 2)
+	// GNOME 50 exposes ConfigureShortcuts while reporting version 1.
+	d, w, _ := desktopUnbound(t, 1)
 	defer d.Close()
 	s := d.DesktopStatus()
 	if s.Binding != "unbound" || !s.ChooseKeys || s.Retry || s.Ready {
@@ -182,14 +183,50 @@ func TestDesktopStatusUnboundOffersChooserNotRetry(t *testing.T) {
 
 func TestDesktopStatusOldFrontendNamesSettingsPlace(t *testing.T) {
 	t.Setenv("XDG_CURRENT_DESKTOP", "KDE")
-	d, w, _ := desktopUnbound(t, 1) // GlobalShortcuts v1 has no ConfigureShortcuts
+	d, w, _ := desktopUnbound(t, 1)
 	defer d.Close()
+	if err := d.ChooseShortcutKeys(); err != nil || len(w.configures) != 1 {
+		t.Fatalf("expected one chooser call: %v, calls=%d", err, len(w.configures))
+	}
+	// A frontend without ConfigureShortcuts reports UnknownMethod as a failed event.
+	w.events = append(w.events, portalEvent{kind: "failed", token: w.configures[0].token})
+	d.Step()
 	s := d.DesktopStatus()
 	if s.ChooseKeys || s.Retry || !strings.Contains(s.Message, "System Settings → Shortcuts → Clipboard Translator") {
-		t.Fatalf("v1 frontend status wrong: %+v", s)
+		t.Fatalf("unsupported chooser status wrong: %+v", s)
 	}
-	if err := d.ChooseShortcutKeys(); err == nil || len(w.configures) != 0 {
-		t.Fatal("v1 frontend must not receive ConfigureShortcuts")
+	if err := d.ChooseShortcutKeys(); err == nil || len(w.configures) != 1 {
+		t.Fatal("must not call the unsupported chooser again")
+	}
+}
+
+func TestDesktopRetryKeepsUnboundSession(t *testing.T) {
+	d, w, _ := desktopUnbound(t, 2)
+	defer d.Close()
+	session := d.hotkeys.session
+	binds := w.binds
+	d.RetryDesktop()
+	d.Step()
+	if d.hotkeys.session != session || w.binds != binds || d.hotkeys.State() != bindingUnbound {
+		t.Fatalf("retry disturbed the unbound session: session=%q binds=%d state=%q", d.hotkeys.session, w.binds, d.hotkeys.State())
+	}
+}
+
+func TestDirtyRebindClearsConfiguring(t *testing.T) {
+	r, w, _, _ := bindingFixture(t, "")
+	if err := r.ConfigureShortcuts(); err != nil {
+		t.Fatal(err)
+	}
+	h, err := r.NewHotkey("Ctrl+Alt+T")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Step()
+	answerShortcutCreate(t, r, w, "s2")
+	w.events = append(w.events, portalEvent{kind: "response", token: r.pending, bindings: []portalBinding{{id: h.id}}})
+	r.Step()
+	if r.State() != bindingUnbound || r.Configuring() || !r.CanConfigure() {
+		t.Fatalf("replacement session inherited chooser state: state=%q configuring=%v canConfigure=%v", r.State(), r.Configuring(), r.CanConfigure())
 	}
 }
 

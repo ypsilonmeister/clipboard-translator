@@ -171,6 +171,7 @@ func (h *portalHotkey) Close() error {
 }
 
 func (r *portalHotkeys) clear() {
+	r.configuring = false
 	kept := r.entries[:0]
 	for _, h := range r.entries {
 		h.active = false
@@ -203,7 +204,6 @@ func (r *portalHotkeys) fail(message string) {
 	r.pending = ""
 	r.operation = ""
 	r.dirty = false
-	r.configuring = false
 	r.retire()
 }
 
