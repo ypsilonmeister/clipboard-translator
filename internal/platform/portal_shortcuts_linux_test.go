@@ -243,3 +243,21 @@ func TestPortalShortcutEditCancelsObsoleteDialog(t *testing.T) {
 		t.Fatal("late canceled call destroyed the shared portal connection")
 	}
 }
+
+func TestPortalShortcutUsesSuppliedProfileID(t *testing.T) {
+	r, w, _ := shortcutFixture()
+	if _, err := r.NewHotkey("Ctrl+K", "profile_3"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.NewHotkey("Ctrl+E", "profile_1"); err != nil {
+		t.Fatal(err)
+	}
+	r.Step()
+	if len(w.binds) != 1 {
+		t.Fatalf("got %d bind calls, want 1", len(w.binds))
+	}
+	bindings := w.binds[0].bindings
+	if len(bindings) != 2 || bindings[0].id != "profile_3" || bindings[1].id != "profile_1" {
+		t.Fatalf("portal received %+v", bindings)
+	}
+}

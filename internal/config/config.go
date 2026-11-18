@@ -57,7 +57,8 @@ type Config struct {
 	// mirrored in Hotkey and (for a pair profile) Languages for legacy config files.
 	Profiles []Profile `json:"profiles"`
 
-	ExplicitProfiles bool `json:"-"` // config.json has a "profiles" key rather than only legacy hotkey/languages
+	profileIDsNeedMigration bool
+	ExplicitProfiles        bool `json:"-"` // config.json has a "profiles" key rather than only legacy hotkey/languages
 }
 
 const (
@@ -89,6 +90,7 @@ const (
 // Target and an Output mode; tidy uses Rules and PunctStyle. Input selects the
 // selection or the current clipboard for either action.
 type Profile struct {
+	ID              string   `json:"id,omitempty"`
 	Hotkey          string   `json:"hotkey"`
 	Action          string   `json:"action,omitempty"`
 	Rules           []string `json:"rules,omitempty"`
@@ -154,7 +156,7 @@ func (p Profile) CleanupNewlinesMode() string {
 // Hotkey/Languages. It does not validate.
 func (c *Config) NormalizeProfiles() {
 	if len(c.Profiles) == 0 {
-		c.Profiles = []Profile{{Hotkey: c.Hotkey, Action: c.Action, Languages: append([]string(nil), c.Languages...), Output: OutputReplace, Input: InputSelection, CleanupNewlines: CleanupNewlinesOff}}
+		c.Profiles = []Profile{{ID: "profile_1", Hotkey: c.Hotkey, Action: c.Action, Languages: append([]string(nil), c.Languages...), Output: OutputReplace, Input: InputSelection, CleanupNewlines: CleanupNewlinesOff}}
 		if c.Profiles[0].Action == "" {
 			c.Profiles[0].Action = ActionTranslate
 		}
@@ -217,9 +219,16 @@ func (c *Config) ResolveProfiles(explicit bool) error {
 		return errors.New("profiles must not be empty; remove the key to use hotkey and languages")
 	}
 	seen := map[hotkeyspec.Spec]int{}
+	seenIDs := map[string]int{}
 	for i := range c.Profiles {
 		p := &c.Profiles[i]
 		where := fmt.Sprintf("profiles[%d]", i)
+		if p.ID != "" {
+			if j, dup := seenIDs[p.ID]; dup {
+				return fmt.Errorf("%s: id %q is already used by profiles[%d]", where, p.ID, j)
+			}
+			seenIDs[p.ID] = i
+		}
 		switch strings.ToLower(strings.TrimSpace(p.Action)) {
 		case "", ActionTranslate:
 			p.Action = ActionTranslate
@@ -345,7 +354,8 @@ func ValidateMaxChars(n int) error {
 func Load(dir string) (Config, error) {
 	c, err := LoadFile(filepath.Join(dir, "config.json"))
 	if errors.Is(err, os.ErrNotExist) {
-		return Default(), nil
+		c.NormalizeProfiles()
+		return c, nil
 	}
 	return c, err
 }
@@ -393,6 +403,9 @@ func LoadFile(path string) (c Config, err error) {
 	}
 	if err := c.ResolveProfiles(c.Profiles != nil); err != nil {
 		return c, err
+	}
+	if c.ExplicitProfiles {
+		c.assignLegacyProfileIDs()
 	}
 	// main() also listens on port+1 to allow only one instance, so 65535 would overflow.
 	if c.Port < 1024 || c.Port > 65534 {

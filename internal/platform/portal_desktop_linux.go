@@ -79,11 +79,11 @@ func CloseDesktop() {
 
 // A disconnected runtime still supplies local hotkey handles, so retry never
 // requires the application to replace its profile objects.
-func (d *portalDesktop) newHotkey(spec string) (Hotkey, error) {
+func (d *portalDesktop) newHotkey(spec, id string) (Hotkey, error) {
 	if d.hotkeys == nil {
 		// No native connection exists yet; registration is local until a retry.
 		p := &portalClient{phase: "failed", now: d.now, err: errors.New("Wayland desktop connection is unavailable")}
 		d.hotkeys = &portalHotkeys{client: p}
 	}
-	return d.hotkeys.NewHotkey(spec)
+	return d.hotkeys.NewHotkey(spec, id)
 }
