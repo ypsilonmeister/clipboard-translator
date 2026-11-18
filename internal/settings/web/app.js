@@ -281,8 +281,7 @@
       const actionSelect = h('select', { id: actionId, name: actionId,
         onchange: (e) => { p.action = e.target.value; touchField('profiles'); renderHotkeys(); $('action-' + i).focus(); } },
         h('option', { value: 'translate', text: 'Translate' }),
-        h('option', { value: 'tidy', text: 'Tidy text (no model)' }),
-        h('option', { value: 'telephone', text: 'Telephone' }));
+        h('option', { value: 'tidy', text: 'Tidy text (no model)' }));
       actionSelect.value = p.action || 'translate';
       card.append(h('div', { class: 'row' }, h('label', { class: 'label', for: actionId, text: 'Action' }), actionSelect));
     }
