@@ -144,3 +144,81 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: gh release upload $env:TAG (Get-ChildItem macos-dist -File).FullName --clobber
 
+  scoop:
+    needs: release
+    if: ${{ github.event_name == 'push' && !github.event.deleted && startsWith(github.ref, 'refs/tags/v') }}
+    concurrency: scoop-${{ github.ref }}
+    runs-on: ubuntu-24.04
+    # #234 exception to #194: contents: write is used only to push this
+    # release's dedicated Scoop bump branch. PR creation also requires the
+    # repository setting "Allow GitHub Actions to create and approve pull requests".
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+
+      - name: Update Scoop manifest and open PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          asset="Portable-Clipboard-Translator-Windows-x64-${TAG}.zip"
+          release=$(gh release view "$TAG" --json isDraft,publishedAt,assets)
+          if ! jq -e '.isDraft == false and (.publishedAt != null and .publishedAt != "")' <<< "$release" >/dev/null; then
+            echo "Release $TAG is still unpublished. Skipping the Scoop bump."
+            exit 0
+          fi
+
+          url=$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset and .state == "uploaded") | .url | select(length > 0)' <<< "$release")
+          download_dir=$(mktemp -d)
+          trap 'rm -rf "$download_dir"' EXIT
+          gh release download "$TAG" --pattern "$asset" --output "$download_dir/$asset"
+          hash=$(sha256sum "$download_dir/$asset")
+          hash=${hash%% *}
+
+          echo "Updating bucket/clipboard-translator.json to version $version..."
+          jq --indent 4 \
+            --arg v "$version" \
+            --arg u "$url" \
+            --arg h "$hash" \
+            '.version = $v | .architecture["64bit"].url = $u | .architecture["64bit"].hash = $h' \
+            bucket/clipboard-translator.json > bucket/clipboard-translator.json.tmp
+          mv bucket/clipboard-translator.json.tmp bucket/clipboard-translator.json
+
+          if git diff --quiet bucket/clipboard-translator.json; then
+            echo "Scoop manifest is already up to date."
+            exit 0
+          fi
+
+          branch="scoop-$version"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add bucket/clipboard-translator.json
+          git commit -m "chore(scoop): bump to $version"
+          # Reuse an identical branch if a previous run pushed before PR creation.
+          remote_branch=$(git ls-remote --heads origin "refs/heads/$branch")
+          if [[ -n $remote_branch ]]; then
+            git fetch --no-tags origin "refs/heads/$branch"
+            if ! git diff --quiet FETCH_HEAD -- bucket/clipboard-translator.json; then
+              echo "Existing Scoop branch $branch has a different manifest." >&2
+              exit 1
+            fi
+          else
+            git push origin "HEAD:refs/heads/$branch"
+          fi
+
+          if gh pr view "$branch" >/dev/null 2>&1; then
+            echo "PR already exists for branch $branch."
+          else
+            gh pr create \
+              --base main \
+              --head "$branch" \
+              --title "chore(scoop): bump to $version" \
+              --body "Automated Scoop manifest bump for release $TAG."
+          fi

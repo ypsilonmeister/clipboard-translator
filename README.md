@@ -689,8 +689,9 @@ build" and never claims to be outdated). `setup.ps1` is embedded in the exe.
   GitHub release. It also attaches a Linux amd64 tarball and SHA-256 file, built
   on Ubuntu 24.04, plus ad-hoc signed macOS Apple Silicon/Intel app zips/checksums.
   An existing release receives the build artifacts.
-- `bucket/clipboard-translator.json` is the Scoop manifest; bump it with each
-  release (`scoop checkver -u` can do it).
+- After publishing, the release workflow opens a PR to update the Scoop
+  manifest at `bucket/clipboard-translator.json`. Issue #234 allows the Scoop
+  job to use `contents: write` to push its dedicated bump branch.
 
 Bug reports and feature requests: use the issue forms. They ask for the app
 version, how it was installed and the log excerpt.

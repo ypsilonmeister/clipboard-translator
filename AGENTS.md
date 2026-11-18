@@ -220,8 +220,12 @@ release:
    the Linux tarball and the macOS arm64 / amd64 zips with their `.sha256`
    files, and attaches them. If a release already exists, the files are uploaded
    to it.
-3. Afterwards bump `bucket/clipboard-translator.json` (`version`, `url`, `hash`
-   = SHA-256 of that zip) in a follow-up PR.
+3. After the release job succeeds and the release is published, the Scoop job
+   downloads the release's Windows ZIP, computes its SHA-256, and opens a PR
+   updating `bucket/clipboard-translator.json`. Issue #234 grants this job
+   `contents: write` only for pushing the dedicated `scoop-<version>` branch.
+   The job uses `pull-requests: write` and the repository's "Allow GitHub Actions
+   to create and approve pull requests" setting to open the PR.
 4. Not done yet: winget manifests (submitting to `microsoft/winget-pkgs` is a PR
    to someone else's repo, so ask the maintainer first).
 

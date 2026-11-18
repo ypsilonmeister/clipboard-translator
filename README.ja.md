@@ -642,8 +642,10 @@ go run ./tools/mksyso -version 0.5.1     # アイコン + assets/app.manifest + 
   添付します。Ubuntu 24.04 で作成した Linux amd64 用 tarball と SHA-256 ファイルも添付します。
   macOS Apple Silicon／Intel 用の ad-hoc 署名済みアプリ zip と SHA-256 ファイルも添付します。
   そのタグのリリースがすでにあれば、成果物を追加します。
-- `bucket/clipboard-translator.json` は Scoop のマニフェストです。リリースのたびに更新します
-  (`scoop checkver -u` でできます)。
+- リリース公開後、リリースワークフローは Scoop のマニフェスト
+  `bucket/clipboard-translator.json` を更新する PR を作成します。
+  issue #234 に基づき、Scoop ジョブは更新専用ブランチの push に
+  `contents: write` を使用します。
 
 不具合の報告や機能の要望には、Issue フォームを使ってください。アプリのバージョン、インストール方法、
 ログの抜粋を尋ねます。
