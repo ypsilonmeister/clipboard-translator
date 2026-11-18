@@ -482,3 +482,58 @@ func TestPortalCapabilitiesFollowConnection(t *testing.T) {
 		t.Fatalf("status %+v", m)
 	}
 }
+
+// A connection-wide portal failure leaves no authorized clipboard session
+// either, so it falls back to the GTK clipboard like a refused clipboard
+// session. Status, focus and routing must make the same decision: the app
+// presents the control window only when DesktopStatus says Manual or
+// ManualClipboard, and the GTK read needs that focus (re-review #220 of #266).
+func TestPortalConnectionFailureClipboardFallbackFocusesControl(t *testing.T) {
+	cases := []struct {
+		name string
+		fail func(t *testing.T, d *portalDesktop, w *fakeDesktopWire)
+	}{
+		{"lost-after-bind", func(t *testing.T, d *portalDesktop, w *fakeDesktopWire) {
+			grantRemote(t, d, w, 1, true)
+			w.events = append(w.events, portalEvent{kind: "failed"})
+			d.Step()
+		}},
+		{"lost-while-authorizing", func(t *testing.T, d *portalDesktop, w *fakeDesktopWire) {
+			w.events = append(w.events, portalEvent{kind: "failed"})
+			d.Step()
+		}},
+		{"reconnect-open-error", func(t *testing.T, d *portalDesktop, w *fakeDesktopWire) {
+			w.events = append(w.events, portalEvent{kind: "failed"})
+			d.Step()
+			d.open = func() (portalDesktopWire, error) { return nil, errors.New("no session bus") }
+			d.RetryDesktop()
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d, w, _ := boundDesktop(t)
+			defer d.Close()
+			gtk := &manualTestClipboard{text: "gtk text"}
+			d.manualClipboard = gtk
+			shown := 0
+			d.showManual = func() { shown++ }
+			tc.fail(t, d, w)
+			s := d.DesktopStatus()
+			wantCapabilities(t, s, CapabilityRefused, CapabilityRefused, CapabilityRefused)
+			if !s.Retry || s.Ready || !s.ManualClipboard || s.Message == "" {
+				t.Fatalf("a failed connection must report the GTK clipboard fallback and stay retryable: %+v", s)
+			}
+			// What the Translate clipboard action does (app.presentManualControl).
+			if s.Manual || s.ManualClipboard {
+				d.PresentControl()
+			}
+			got, err := d.Read()
+			if err != nil || got != "gtk text" || shown != 1 {
+				t.Fatalf("failed connection read returned %q err=%v; control presentations=%d", got, err, shown)
+			}
+			if err := d.Write("翻訳"); err != nil || gtk.text != "翻訳" {
+				t.Fatalf("write err=%v gtk=%q", err, gtk.text)
+			}
+		})
+	}
+}
