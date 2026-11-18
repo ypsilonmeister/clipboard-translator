@@ -41,6 +41,8 @@ const (
 
 func backendLabel(name string) string {
 	switch name {
+	case "":
+		return "configured"
 	case "cpu":
 		return "CPU"
 	case "cuda":
@@ -93,7 +95,7 @@ func (a *app) buildMenu() []platform.MenuItem {
 		items = append(items, platform.MenuItem{ID: cmdCancel, Label: "Cancel translation"}, platform.MenuItem{Separator: true})
 	}
 	if a.fallbackInUse() {
-		items = append(items, platform.MenuItem{Label: "Engine: CPU - " + backendLabel(config.CurrentBackend(a.conf.ServerFile)) + " did not start", Disabled: true})
+		items = append(items, platform.MenuItem{Label: "Engine: CPU - " + backendLabel(config.CurrentBackend(a.conf.ServerFile)) + " engine did not start", Disabled: true})
 	}
 	items = append(items, platform.MenuItem{ID: cmdUnloadModel, Label: "Unload model", Disabled: !a.canUnloadModel()})
 	var modelSub []platform.MenuItem

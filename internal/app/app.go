@@ -53,10 +53,11 @@ type app struct {
 	// fallbackPinned is set once the preferred engine failed and the CPU build
 	// took over: reloads then start the CPU build directly instead of paying for
 	// the failing engine again. Cleared when the user picks an engine or the
-	// model changes. fallbackNotified is the preferred engine already announced.
+	// model changes. fallbackNotifiedFile is the configured server_file whose
+	// failure was announced.
 	// Both belong to the UI thread.
-	fallbackPinned   bool
-	fallbackNotified string
+	fallbackPinned       bool
+	fallbackNotifiedFile string
 
 	hotkey    platform.Hotkey                            // profile 0
 	newHotkey func(spec string) (platform.Hotkey, error) // newHotkey, replaceable in tests
@@ -277,10 +278,10 @@ func (a *app) startServer() error {
 		return err
 	}
 	a.fallbackPinned = true
-	pref := config.CurrentBackend(a.conf.ServerFile)
-	if a.fallbackNotified != pref {
-		a.fallbackNotified = pref
-		a.tray.Notify("Clipboard Translator", fmt.Sprintf("The %s engine did not start. Using the CPU engine, which is slower. Open Settings to retry it or to keep the CPU engine.", backendLabel(pref)), true)
+	if a.fallbackNotifiedFile != a.conf.ServerFile {
+		a.fallbackNotifiedFile = a.conf.ServerFile
+		label := backendLabel(config.CurrentBackend(a.conf.ServerFile))
+		a.tray.Notify("Clipboard Translator", fmt.Sprintf("The %s engine did not start. Using the CPU engine, which is slower. Open Settings to retry it or to keep the CPU engine.", label), true)
 	}
 	return nil
 }
@@ -289,7 +290,7 @@ func (a *app) startServer() error {
 // (and announced) again at the next start.
 func (a *app) clearFallback() {
 	a.fallbackPinned = false
-	a.fallbackNotified = ""
+	a.fallbackNotifiedFile = ""
 }
 
 // runningBackend is the engine ("cpu", "cuda", ...) of the llama-server that
@@ -452,9 +453,9 @@ func (a *app) restartServer() bool {
 			log.Print("quit requested during restart")
 			return false
 		}
-		announced := a.fallbackNotified
+		announced := a.fallbackNotifiedFile
 		err := a.startServer()
-		fellBack = fellBack || a.fallbackNotified != announced
+		fellBack = fellBack || a.fallbackNotifiedFile != announced
 		if err == nil {
 			break
 		}
@@ -680,7 +681,8 @@ func (a *app) serve(cb platform.Clipboard) {
 		tray.Notify("Clipboard Translator", fmt.Sprintf("Could not register the hotkey %s (another program may be using it). Open Settings... from the tray menu and choose another hotkey there.", a.conf.Hotkey), true)
 	} else {
 		log.Print(readyMessage(a.hotkeySummary()))
-		if !a.conf.QuickstartShown && !a.desktopStatus().Wayland {
+		// A second balloon here could replace the startup fallback notice.
+		if a.fallbackNotifiedFile == "" && !a.conf.QuickstartShown && !a.desktopStatus().Wayland {
 			a.showQuickstart() // first run only; the tray menu shows it again
 		}
 	}
