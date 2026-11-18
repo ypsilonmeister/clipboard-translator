@@ -84,6 +84,8 @@ func (a *app) buildMenu() []platform.MenuItem {
 			label = "Wayland connected (manual paste)"
 		} else if s.Retry {
 			label = "Wayland permissions need attention"
+		} else if waylandPartial(s) {
+			label = "Wayland connected (some features unavailable)"
 		}
 		if s.Manual {
 			label = "Manual mode (hotkey unavailable)"
@@ -456,4 +458,21 @@ func (a *app) startUpdate() {
 			}
 		}
 	}
+}
+
+// waylandPartial reports a settled partial capability set: nothing is pending
+// or waiting, but some capability is permanently missing, so the menu must not
+// claim it is still waiting for permissions.
+func waylandPartial(s platform.DesktopStatus) bool {
+	missing := false
+	for _, c := range s.Capabilities() {
+		switch c.State {
+		case platform.CapabilityMissing:
+			missing = true
+		case platform.CapabilityAvailable:
+		default:
+			return false
+		}
+	}
+	return missing
 }

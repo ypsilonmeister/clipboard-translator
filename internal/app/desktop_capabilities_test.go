@@ -5,11 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 )
 
 // #133 P1-6: the per-capability states reach the menu and the Settings page,
-// and only a missing portal clipboard sends the user to the control window.
+// and only a missing or refused portal clipboard sends the user to the control
+// window.
 
 func partialStatus() platform.DesktopStatus {
 	return platform.DesktopStatus{
@@ -84,5 +86,63 @@ func TestManualActionTimeoutWordingFollowsClipboardCapability(t *testing.T) {
 		if got := strings.Contains(notes[len(notes)-1], "focus the app control window"); got != manualClipboard {
 			t.Fatalf("manualClipboard=%v note=%q", manualClipboard, notes[len(notes)-1])
 		}
+	}
+}
+
+// An `input: "clipboard"` hotkey reads the clipboard directly. When that read
+// goes through the GTK fallback (clipboard missing or refused) it needs the
+// focused control window, like the menu action; with the portal clipboard
+// nothing is shown.
+func TestClipboardInputHotkeyFocusesControlForGTKFallback(t *testing.T) {
+	for _, manualClipboard := range []bool{false, true} {
+		a := apiUnitApp(t)
+		a.conf.Profiles[0].Input = config.InputClipboard
+		state := platform.DesktopStatus{
+			Wayland: true, ManualClipboard: manualClipboard,
+			Hotkey:    platform.CapabilityStatus{State: platform.CapabilityAvailable},
+			Clipboard: platform.CapabilityStatus{State: platform.CapabilityMissing},
+		}
+		if !manualClipboard {
+			state.Clipboard.State = platform.CapabilityAvailable
+		}
+		cb := &manualFocusClipboard{asyncDesktopClipboard: &asyncDesktopClipboard{testClipboard: &testClipboard{}, readPending: true, state: state}}
+		a.cb = cb
+		a.startHotkeyTranslation(0, false)
+		want := 0
+		if manualClipboard {
+			want = 1
+		}
+		if cb.presented != want || a.pendingRead == nil {
+			t.Fatalf("manualClipboard=%v: control window presentations=%d (want %d), pending read=%v", manualClipboard, cb.presented, want, a.pendingRead != nil)
+		}
+	}
+}
+
+// A settled partial set (hotkey works, clipboard portal missing) is not
+// waiting for anything: the menu header must not say so.
+func TestDesktopMenuHeaderForPermanentPartialSet(t *testing.T) {
+	a, _, base, _, _ := uxApp(t)
+	missing := platform.CapabilityStatus{State: platform.CapabilityMissing, Message: "missing"}
+	state := platform.DesktopStatus{
+		Wayland: true, ManualClipboard: true,
+		Hotkey:    platform.CapabilityStatus{State: platform.CapabilityAvailable},
+		Clipboard: missing, Capture: missing,
+	}
+	header := func() string {
+		a.cb = &asyncDesktopClipboard{testClipboard: base, state: state}
+		for _, item := range a.buildMenu() {
+			if strings.HasPrefix(item.Label, "Wayland") {
+				return item.Label
+			}
+		}
+		t.Fatal("no Wayland header")
+		return ""
+	}
+	if got := header(); got != "Wayland connected (some features unavailable)" {
+		t.Fatalf("header %q", got)
+	}
+	state.Hotkey.State = platform.CapabilityPending
+	if got := header(); got != "Wayland: waiting for desktop permissions" {
+		t.Fatalf("a pending capability is still waiting: header %q", got)
 	}
 }

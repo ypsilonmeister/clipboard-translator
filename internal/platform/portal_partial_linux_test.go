@@ -254,13 +254,17 @@ func TestPortalPartialNoClipboardKeepsHotkey(t *testing.T) {
 }
 
 // Hotkey bound, but the user refused (or the portal failed) the clipboard
-// session: clipboard and capture are refused, the hotkey keeps working, and the
-// GTK fallback is not used (the portal exists; Retry asks again).
+// session: clipboard and capture are refused, the hotkey keeps working, and
+// without an authorized session clipboard access falls back to the GTK
+// clipboard through the focused control window (design memo §5.3). Retry asks
+// for the portal session again and moves back to the portal clipboard.
 func TestPortalPartialClipboardRefusedKeepsHotkey(t *testing.T) {
 	d, w, h := boundDesktop(t)
 	defer d.Close()
 	gtk := &manualTestClipboard{text: "gtk text"}
 	d.manualClipboard = gtk
+	shown := 0
+	d.showManual = func() { shown++ }
 	shortcuts := d.hotkeys.session
 	requests := len(w.requests)
 	shield(&w.fakeRemoteWire, false)
@@ -268,20 +272,43 @@ func TestPortalPartialClipboardRefusedKeepsHotkey(t *testing.T) {
 	d.Step()
 	s := d.DesktopStatus()
 	wantCapabilities(t, s, CapabilityAvailable, CapabilityRefused, CapabilityRefused)
-	if !s.Retry || s.Ready || s.Manual || s.ManualClipboard || s.Message != s.Clipboard.Message || s.Capture.Message != "" {
+	if !s.Retry || s.Ready || s.Manual || !s.ManualClipboard || s.Message != s.Clipboard.Message || s.Capture.Message != "" {
 		t.Fatalf("status %+v", s)
 	}
 	assertHotkeyStillWorks(t, d, w, h, shortcuts, requests)
-	if _, err := d.Read(); err == nil || gtk.text != "gtk text" {
-		t.Fatalf("a refused portal clipboard must report its error, not fall back silently: err=%v", err)
+	// The menu action reads the GTK clipboard after focusing the control window.
+	d.PresentControl()
+	if got, err := d.Read(); err != nil || got != "gtk text" || shown != 1 {
+		t.Fatalf("a refused portal clipboard must fall back to GTK: text=%q err=%v shown=%d", got, err, shown)
+	}
+	// The hotkey translates the GTK clipboard and says so; no keys are sent.
+	task := d.beginCapture()
+	if task == nil {
+		t.Fatal("no capture task")
+	}
+	text, fresh, err := runCaptureTask(t, task)
+	if err != nil || text != "gtk text" || fresh || task.Fallback() != FallbackNoCopy {
+		t.Fatalf("capture=%q fresh=%v err=%v fallback=%v", text, fresh, err, task.Fallback())
+	}
+	if shown != 2 || keyCalls(w) != 0 {
+		t.Fatalf("fallback capture must focus the control window and send no keys: shown=%d keys=%d", shown, keyCalls(w))
+	}
+	if err := d.Write("翻訳"); err != nil || gtk.text != "翻訳" {
+		t.Fatalf("write err=%v gtk=%q", err, gtk.text)
 	}
 	d.RetryDesktop()
 	d.Step()
+	if s := d.DesktopStatus(); s.ManualClipboard || s.Clipboard.State != CapabilityPending {
+		t.Fatalf("Retry must hand the clipboard back to the portal: %+v", s)
+	}
 	grantRemote(t, d, w, 1, true)
 	s = d.DesktopStatus()
 	wantCapabilities(t, s, CapabilityAvailable, CapabilityAvailable, CapabilityAvailable)
-	if !s.Ready || s.Retry || w.binds != 1 || d.hotkeys.session != shortcuts {
+	if !s.Ready || s.Retry || s.ManualClipboard || w.binds != 1 || d.hotkeys.session != shortcuts {
 		t.Fatalf("Retry must repair only the clipboard: %+v binds=%d", s, w.binds)
+	}
+	if got := desktopPortalRead(t, d, w, "portal text"); got != "portal text" || gtk.text != "翻訳" {
+		t.Fatalf("read %q after Retry; gtk=%q", got, gtk.text)
 	}
 }
 
@@ -392,6 +419,38 @@ func TestPortalPartialHotkeyRefusedKeepsClipboard(t *testing.T) {
 	d.Step()
 	if d.hotkeys.pending == "" || d.remote.session != remote || d.remote.phase != "ready" {
 		t.Fatalf("Retry must rebind shortcuts only: shortcuts pending=%q remote=%q phase=%s", d.hotkeys.pending, d.remote.session, d.remote.phase)
+	}
+}
+
+// BindShortcuts succeeded but returned an empty trigger (KDE for a returning
+// id): only that hotkey is refused. Its per-hotkey error must not hold back the
+// clipboard session, so the portal clipboard and keyboard capture still work.
+func TestPortalPartialHotkeyUnboundKeepsClipboard(t *testing.T) {
+	d, w := desktopFixture(t)
+	defer d.Close()
+	h, err := d.hotkeys.NewHotkey("Ctrl+Alt+E")
+	if err != nil {
+		t.Fatal(err)
+	}
+	desktopCapabilities(d, w)
+	desktopSessions(d, w)
+	w.events = append(w.events, portalEvent{kind: "response", token: d.hotkeys.pending, bindings: []portalBinding{{id: h.id, trigger: ""}}})
+	d.Step()
+	if h.active || h.err == nil || d.hotkeys.err != nil {
+		t.Fatalf("an empty trigger is a per-hotkey refusal: active=%v err=%v session err=%v", h.active, h.err, d.hotkeys.err)
+	}
+	shield(&w.fakeRemoteWire, false)
+	grantRemote(t, d, w, 1, true)
+	s := d.DesktopStatus()
+	wantCapabilities(t, s, CapabilityRefused, CapabilityAvailable, CapabilityAvailable)
+	if !s.Retry || s.Ready || s.Manual || s.ManualClipboard {
+		t.Fatalf("status %+v", s)
+	}
+	if got := desktopPortalRead(t, d, w, "portal text"); got != "portal text" {
+		t.Fatalf("read %q", got)
+	}
+	if _, ok := d.beginCapture().(*portalCapture); !ok {
+		t.Fatal("selection capture must use the portal keyboard while only the hotkey is unbound")
 	}
 }
 

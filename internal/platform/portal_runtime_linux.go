@@ -236,7 +236,9 @@ func (d *portalDesktop) DesktopStatus() DesktopStatus {
 	s.Clipboard = d.clipboardStatus()
 	s.Capture = d.captureStatus(s.Clipboard)
 	s.Manual = s.Hotkey.State == CapabilityMissing
-	s.ManualClipboard = s.Clipboard.State == CapabilityMissing
+	// Missing and refused both leave no authorized portal session, so clipboard
+	// access goes through the focused control window (design memo §5.3).
+	s.ManualClipboard = clipboardFallbackState(s.Clipboard.State)
 	s.Ready = s.Hotkey.State == CapabilityAvailable && s.Clipboard.State == CapabilityAvailable && s.Capture.State == CapabilityAvailable
 	var missing []string
 	for _, c := range s.Capabilities() {
@@ -372,12 +374,31 @@ func (d *portalDesktop) CancelPendingRead() {
 	}
 }
 
-// useManualClipboard routes clipboard access through the focused control
-// window only when the portal clipboard is missing; while the portal clipboard
-// exists (even if pending, waiting or refused) the portal path and its errors
-// stay in charge, so the manual action uses the portal when it can.
+// clipboardFallbackState reports whether a clipboard capability state leaves
+// no authorized portal session, so the focused GTK clipboard must be used.
+func clipboardFallbackState(state CapabilityState) bool {
+	return state == CapabilityMissing || state == CapabilityRefused
+}
+
+// clipboardFallback reports whether clipboard access must go through the
+// focused control window: the portal clipboard is missing, or its session was
+// refused (design memo §5.3: the capability needs an authorized session). While
+// it is pending or waiting the portal path stays in charge (lazy
+// authorization), so the manual action uses the portal when it can.
+func (d *portalDesktop) clipboardFallback() bool {
+	switch {
+	case d.closed:
+		return false
+	case d.manual || d.clipboardMissing:
+		return true
+	case d.client == nil || d.remote == nil:
+		return false
+	}
+	return clipboardFallbackState(d.DesktopStatus().Clipboard.State)
+}
+
 func (d *portalDesktop) useManualClipboard() bool {
-	return !d.closed && d.manualClipboard != nil && (d.manual || d.clipboardMissing)
+	return d.manualClipboard != nil && d.clipboardFallback()
 }
 
 // beginCapture picks the selection capture for the current capabilities. With
@@ -387,7 +408,7 @@ func (d *portalDesktop) beginCapture() CaptureTask {
 	if d.remote == nil {
 		return nil
 	}
-	if d.useManualClipboard() || (!d.clipboardMissing && d.remote.phase == "ready" && !d.remote.keyboard) {
+	if d.useManualClipboard() || (!d.clipboardFallback() && d.remote.phase == "ready" && !d.remote.keyboard) {
 		return &portalClipboardCapture{cb: d, present: d.PresentControl, now: d.now}
 	}
 	return beginPortalCapture(d.remote, d.hotkeys.AllReleased)
@@ -395,7 +416,7 @@ func (d *portalDesktop) beginCapture() CaptureTask {
 
 // PresentControl runs on the UI thread before manual clipboard reads.
 func (d *portalDesktop) PresentControl() {
-	if (d.manual || d.clipboardMissing) && d.showManual != nil {
+	if d.showManual != nil && d.clipboardFallback() {
 		d.showManual()
 	}
 }

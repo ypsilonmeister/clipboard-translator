@@ -60,8 +60,8 @@ type DesktopStatus struct {
 	// Translate clipboard action.
 	Manual bool
 	// ManualClipboard means clipboard access goes through the focused control
-	// window (GTK) because the portal clipboard is missing. With Manual alone the
-	// menu action still uses the portal clipboard.
+	// window (GTK) because the portal clipboard is missing or its session was
+	// refused. With Manual alone the menu action still uses the portal clipboard.
 	ManualClipboard bool
 	Ready           bool
 	Retry           bool
