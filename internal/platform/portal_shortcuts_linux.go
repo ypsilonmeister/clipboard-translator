@@ -74,7 +74,7 @@ func newPortalHotkeys(p *portalClient, w portalShortcutWire) *portalHotkeys {
 	return r
 }
 
-func (r *portalHotkeys) NewHotkey(spec string) (*portalHotkey, error) {
+func (r *portalHotkeys) NewHotkey(spec string, ids ...string) (*portalHotkey, error) {
 	preferred, err := portalPreferredTrigger(spec)
 	if err != nil {
 		return nil, err
@@ -91,13 +91,20 @@ func (r *portalHotkeys) NewHotkey(spec string) (*portalHotkey, error) {
 	if len(used) >= maxHotkeys {
 		return nil, fmt.Errorf("at most %d hotkeys can be registered", maxHotkeys)
 	}
-	id := ""
-	for i := 1; i <= maxHotkeys; i++ {
-		candidate := fmt.Sprintf("profile_%d", i)
-		if !used[candidate] {
-			id = candidate
-			break
+	var id string
+	if len(ids) > 0 {
+		id = ids[0]
+	}
+	if id == "" {
+		for i := 1; i <= maxHotkeys; i++ {
+			candidate := fmt.Sprintf("profile_%d", i)
+			if !used[candidate] {
+				id = candidate
+				break
+			}
 		}
+	} else if used[id] {
+		return nil, fmt.Errorf("shortcut id %q is already configured", id)
 	}
 	h := &portalHotkey{owner: r, id: id, preferred: preferred}
 	r.entries = append(r.entries, h)
