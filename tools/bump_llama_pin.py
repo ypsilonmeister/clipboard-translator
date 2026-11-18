@@ -367,12 +367,15 @@ def get_pin_details(root_dir, target):
         raise ValueError('Could not extract pin from setup.sh')
     tag = pin['tag']
 
-    norm = target.lower().replace('_', '-')
-    key = None
+    norm = target.lower().replace('_', '-').replace('/', '-')
     if norm in ('linux-cpu', 'cpu'):
         key = 'cpu'
     elif norm in ('linux-vulkan', 'vulkan'):
         key = 'vulkan'
+    elif norm in ('linux-cpu-arm64', 'cpu-arm64'):
+        key = 'cpu_arm64'
+    elif norm in ('linux-vulkan-arm64', 'vulkan-arm64'):
+        key = 'vulkan_arm64'
     else:
         raise ValueError(f'Unknown target: {target}')
 
@@ -407,7 +410,7 @@ def show_pin(root_dir, target):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true', help='Verify scripts match the release digests without rewriting')
-    parser.add_argument('--show', metavar='ASSET', help='Print pinned URL and SHA-256 (or tag) from setup.sh (e.g. linux-cpu, tag)')
+    parser.add_argument('--show', metavar='ASSET', help='Print pinned URL and SHA-256 (or tag) from setup.sh (e.g. linux-cpu, linux-cpu-arm64, tag)')
     parser.add_argument('--github-output', nargs='?', const='linux-cpu', metavar='ASSET',
                         help='Emit KEY=value lines for $GITHUB_OUTPUT (default: linux-cpu)')
     parser.add_argument('tag', nargs='?', help='llama.cpp release tag (e.g. b12032)')

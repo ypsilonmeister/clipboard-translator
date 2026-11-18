@@ -226,6 +226,21 @@ class BumpLlamaPinTests(unittest.TestCase):
             self.assertEqual(details['tag'], FIXTURE_TAG)
             self.assertEqual(details['sha256'], 'e' * 64)
 
+            for target, suffix, digest_char in (
+                ('linux/cpu/arm64', 'ubuntu-arm64', '5'),
+                ('linux/vulkan/arm64', 'ubuntu-vulkan-arm64', '6'),
+            ):
+                for alias in (target, target.replace('/', '-'), target.replace('/', '_').upper(),
+                              target.split('/', 1)[1].replace('/', '-')):
+                    with self.subTest(target=alias):
+                        filename = f'llama-{FIXTURE_TAG}-bin-{suffix}.tar.gz'
+                        url = f'{bump.LLAMA_URL_PREFIX}{FIXTURE_TAG}/{filename}'
+                        digest = digest_char * 64
+                        self.assertEqual(bump.get_pin_details(root, alias), {
+                            'tag': FIXTURE_TAG, 'file': filename, 'url': url, 'sha256': digest,
+                        })
+                        self.assertEqual(bump.show_pin(root, alias), f'{url} {digest}')
+
             with self.assertRaises(ValueError):
                 bump.show_pin(root, 'unknown-asset')
 
