@@ -36,6 +36,14 @@ func TestDirectionForPairs(t *testing.T) {
 		{[]string{"en", "ja"}, "people say お疲れ様 to each other every day after work", "en", "quoted hiragana-led kanji word", "ja", true},
 		{[]string{"en", "ja"}, "people say ありがとう to each other every day after work", "en", "quoted thanks", "ja", true},
 		{[]string{"en", "ja"}, "Please address 田中 さん with the same respect as everyone else", "en", "spaced honorific", "ja", true},
+		// #205: a name with an honorific leaves the boundary to the prose.
+		{[]string{"ja", "en"}, "田中さん、please review this document by Friday", "en", "opening name before CJK comma", "ja", true},
+		{[]string{"ja", "en"}, "田中さん, could you review the attached proposal by Friday?", "en", "opening name before comma-space", "ja", true},
+		{[]string{"ja", "en"}, "Please forward the attached file to 田中さん", "en", "closing name", "ja", true},
+		{[]string{"ja", "en"}, "スミス様, please review the attached proposal before our meeting", "en", "opening katakana name with sama", "ja", true},
+		{[]string{"ja", "en"}, "could you send a copy of the report to 鈴木氏", "en", "closing name with shi", "ja", true},
+		{[]string{"ja", "en"}, "please send a copy of the report to (田中殿).", "en", "closing name with dono in parentheses", "ja", true},
+		{[]string{"ja", "en"}, "please ask them to call ナカムラ様", "ja", "honorific name still counts toward script ratio", "en", true},
 		{[]string{"en", "ja"}, "We quote 侘寂、and use simple words", "en", "CJK comma separates words", "ja", true},
 		{[]string{"en", "ja"}, "We quote 侘寂。and use simple words", "en", "CJK period separates words", "ja", true},
 		{[]string{"en", "ko"}, "people often write 안녕하세요 세계 to greet each other", "en", "Korean words rather than characters", "ko", true},
@@ -46,6 +54,15 @@ func TestDirectionForPairs(t *testing.T) {
 		{[]string{"en", "ja"}, "we use Docker Composeを使う every day at work", "ja", "attached grammar with prose", "en", true},
 		{[]string{"en", "ja"}, "git push origin main する before we start the next task", "ja", "suru between Latin words", "en", true},
 		{[]string{"en", "ja"}, "all code review comments の比較 is what we do every day", "ja", "particle-led kanji after Latin", "en", true},
+		// A name with an honorific is also common in Japanese prose and instructions.
+		{[]string{"ja", "en"}, "田中さん、Docker Composeを使ってください", "ja", "honorific before attached grammar", "en", true},
+		{[]string{"ja", "en"}, "田中さん、明日の会議の件です", "ja", "honorific before Japanese prose", "en", true},
+		{[]string{"ja", "en"}, "この pull request は鈴木様に確認していただきます", "ja", "honorific inside Japanese prose", "en", true},
+		{[]string{"ja", "en"}, "レビューをお願いします、サトーさん。", "ja", "katakana name after Japanese prose", "en", true},
+		{[]string{"ja", "en"}, "田中氏、実行: npm run build and then npm run test", "ja", "Japanese boundary after opening name", "en", true},
+		{[]string{"ja", "en"}, "npm run build and then npm run test 実行。田中殿", "ja", "Japanese boundary before closing name", "en", true},
+		{[]string{"ja", "en"}, "npm run build and then npm run test 田中さんへ", "ja", "particle attached to closing name", "en", true},
+		{[]string{"ja", "en"}, "お疲れ様、npm run build and then npm run test", "ja", "Japanese greeting ending in an honorific character", "en", true},
 		// #205 deliberately retained ambiguities: boundary and prose guards.
 		{[]string{"en", "ja"}, "I hope you are well, 田中さん.", "ja", "short mail ending with name", "en", true},
 		{[]string{"en", "ja"}, "Hello everyone, please review the attached document before our meeting.\n田中太郎", "ja", "mail with Japanese signature", "en", true},
@@ -238,18 +255,9 @@ func TestDirectionForKnownWrong(t *testing.T) {
 		source, label string // label is only for failure messages
 		target        string
 		knownWrong    string // issue that fixes the expected direction
-	}{
-		// Measured with the real model on 2026-11-18 (#205 row 3, SEVERE).
-		// Wrong because the text opens with a Japanese token (the first
-		// token after the 、 split): latinIsSkeleton keeps the old result
-		// (ja) for text that opens in the other script, whatever the counts.
-		{[]string{"ja", "en"}, "田中さん、please review this document by Friday", "en", "opens in japanese; the opening-token rule keeps ja", "ja", "#205"},
-		// NOT among the 11 rows measured with the real model: marked by
-		// analogy with #205 row 3 above (same shape, comma-space instead of
-		// 、, same opening-token rule), so condition (ii) holds by analogy.
-		{[]string{"ja", "en"}, "田中さん, could you review the attached proposal by Friday?", "en", "opens with a name", "ja", "#205"},
-		// Measured with the real model (#205 row 4).
-		{[]string{"ja", "en"}, "Please forward the attached file to 田中さん", "en", "ends with a name", "ja", "#205"},
+	}{}
+	if len(cases) == 0 {
+		t.Skip("no known-wrong direction cases")
 	}
 	for _, tc := range cases {
 		got, ok := DirectionFor(tc.pair, tc.input)
