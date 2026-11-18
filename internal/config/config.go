@@ -44,6 +44,9 @@ type Config struct {
 	// NotifyOnComplete shows a tray notification when a translation finishes
 	// without auto-pasting. Off by default.
 	NotifyOnComplete bool `json:"notify_on_complete"`
+	// ShowCursorHint shows a busy icon near the pointer after a translation
+	// hotkey on Windows. Off by default. Other desktops ignore this setting.
+	ShowCursorHint bool `json:"show_cursor_hint"`
 	// QuickstartShown is set once the first-run guide has been shown, so later
 	// launches stay quiet. The guide stays available in the tray and Settings.
 	QuickstartShown bool `json:"quickstart_shown"`

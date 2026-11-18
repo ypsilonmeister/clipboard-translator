@@ -32,6 +32,22 @@ func TestLoadConfigPortRange(t *testing.T) {
 	}
 }
 
+func TestLoadShowCursorHint(t *testing.T) {
+	for _, tc := range []struct {
+		json string
+		want bool
+	}{
+		{`{}`, false},
+		{`{"show_cursor_hint":false}`, false},
+		{`{"show_cursor_hint":true}`, true},
+	} {
+		c, err := Load(writeConfig(t, tc.json))
+		if err != nil || c.ShowCursorHint != tc.want {
+			t.Errorf("config %s: show_cursor_hint=%v, err=%v, want %v", tc.json, c.ShowCursorHint, err, tc.want)
+		}
+	}
+}
+
 func TestLoadTranslateAPIExtensionID(t *testing.T) {
 	for _, id := range []string{"", "abcdefghijklmnopabcdefghijklmnop", strings.Repeat("p", 32)} {
 		c, err := Load(writeConfig(t, `{"translate_api_extension_id":"`+id+`"}`))

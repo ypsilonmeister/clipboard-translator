@@ -29,14 +29,15 @@ import (
 // together. Everything here runs on the one OS thread that owns the tray window
 // and the hotkey; goroutines only talk to it through channels.
 type app struct {
-	dir      string
-	conf     config.Config
-	endpoint string
-	paths    config.Paths
-	tray     platform.Tray
-	sup      *llamaserver.Supervisor
-	limiter  llamaserver.RestartLimiter
-	readyTip string
+	dir        string
+	conf       config.Config
+	endpoint   string
+	paths      config.Paths
+	tray       platform.Tray
+	cursorHint platform.CursorHint
+	sup        *llamaserver.Supervisor
+	limiter    llamaserver.RestartLimiter
+	readyTip   string
 
 	modelUnloaded   bool // intentional stop; hotkeys load it again
 	serverWork      int  // nested start/switch/recovery calls on the UI thread
@@ -166,6 +167,7 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 		endpoint:            fmt.Sprintf("http://127.0.0.1:%d", conf.Port),
 		paths:               paths,
 		tray:                tray,
+		cursorHint:          platform.NewCursorHint(conf.ShowCursorHint),
 		limiter:             llamaserver.RestartLimiter{Max: 3, Window: 10 * time.Minute},
 		readyTip:            "Clipboard Translator - ready (" + conf.Hotkey + ")",
 
@@ -195,6 +197,9 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 		if a.pendingDuringLoad != nil {
 			if pressed, profile, err := a.pollHotkeys(); err == nil && pressed {
 				*a.pendingDuringLoad = profile
+				if a.conf.ShowCursorHint {
+					a.cursorHint.Show()
+				}
 			}
 		}
 		// noHotkey does not pump messages, so always service the UI here.
@@ -490,6 +495,7 @@ func (a *app) recoverServer() bool {
 func (a *app) run() {
 	a.cancelTransientStatus()
 	defer a.sup.Stop()
+	defer a.cursorHint.Close()
 	if err := a.startProfileEngine(); err != nil {
 		if errors.Is(err, llamaserver.ErrQuit) {
 			log.Print("quit requested during startup")
@@ -931,6 +937,11 @@ func (a *app) shouldNotifySkip(reason config.SkipReason) bool {
 // abortTranslation cancels the request in flight and makes sure its result,
 // should it still arrive, is ignored.
 func (a *app) abortTranslation() {
+	a.cursorHint.Hide()
+	a.resetTranslation()
+}
+
+func (a *app) resetTranslation() {
 	a.finishAPI("", context.Canceled)
 	if c, ok := a.cb.(interface{ CancelPendingRead() }); ok {
 		c.CancelPendingRead()
@@ -1003,12 +1014,19 @@ func (a *app) tickTranslationStatus() {
 // selection (or the clipboard) and translates it in the background. A new
 // request cancels the older one and invalidates its result.
 func (a *app) startTranslation(index int) {
+	a.startHotkeyTranslation(index, false)
+}
+
+func (a *app) startHotkeyTranslation(index int, queuedDuringLoad bool) {
 	a.resetIdleTimer()
 	profile := a.conf.Profiles[index]
 	win := a.foreground()
-	a.abortTranslation()
+	a.resetTranslation()
 	a.trayStateResetAt = time.Time{}
 	a.setTrayState(platform.TrayBusy)
+	if a.conf.ShowCursorHint && !queuedDuringLoad {
+		a.cursorHint.Show()
+	}
 	if profile.InputMode() == config.InputClipboard {
 		// The text is already on the clipboard: no Ctrl+C, no waiting for a copy,
 		// and never a fresh selection (so no auto-paste).
@@ -1066,6 +1084,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		a.noteElevatedWindow()
 	}
 	if err != nil {
+		a.cursorHint.Hide()
 		if profile.InputMode() == config.InputClipboard {
 			log.Printf("cannot read the clipboard: %v", err)
 		} else {
@@ -1090,6 +1109,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 	}
 	reason, direction := profile.Check(source, a.conf.MaxChars)
 	if reason != config.SkipNone {
+		a.cursorHint.Hide()
 		count := utf8.RuneCountInString(source)
 		msg := config.SkipMessage(reason, count, a.conf.MaxChars, profile.Label())
 		log.Printf("skipped (%s): %s", reason, msg)
@@ -1118,6 +1138,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		err := a.startServer()
 		a.pendingDuringLoad = nil
 		if err != nil {
+			a.cursorHint.Hide()
 			a.translating = false
 			a.modelUnloaded = true
 			a.updateReadyTip()
@@ -1156,6 +1177,8 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		if a.quitRequested() {
 			if a.translating {
 				a.abortTranslation()
+			} else {
+				a.cursorHint.Hide()
 			}
 			return
 		}
@@ -1170,8 +1193,8 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		if pendingProfile >= 0 {
 			// A hotkey pressed during the load is the newest request, also
 			// after a cancel (abortTranslation resets pendingProfile).
-			a.abortTranslation()
-			a.startTranslation(pendingProfile)
+			// Its hint is already anchored at the position of that press.
+			a.startHotkeyTranslation(pendingProfile, true)
 			return
 		}
 		if !a.translating || loadGen != initialGen {
@@ -1272,6 +1295,7 @@ func (a *app) handleResult(res result) {
 		return
 	}
 	if res.err != nil {
+		a.cursorHint.Hide()
 		if !errors.Is(res.err, context.Canceled) {
 			log.Printf("translation failed: %v", res.err)
 			msg := translationFailureMessage(res.err)
@@ -1283,6 +1307,7 @@ func (a *app) handleResult(res result) {
 		return
 	}
 	if res.action != config.ActionTelephone && res.translated == res.original {
+		a.cursorHint.Hide()
 		log.Print(noun + " unchanged; clipboard left intact")
 		a.setTransientStatus("Clipboard Translator - " + noun + " is the same as the source; the clipboard still holds the source")
 		if res.action == config.ActionTidy {
@@ -1305,6 +1330,7 @@ func (a *app) handleResult(res result) {
 			a.pendingResultDeadline = a.timeNow().Add(8 * time.Second)
 		}
 		if !a.timeNow().Before(a.pendingResultDeadline) {
+			a.cursorHint.Hide()
 			a.pendingResult = nil
 			a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
 			a.tray.SetStatus(a.readyTip)
@@ -1317,6 +1343,7 @@ func (a *app) handleResult(res result) {
 		a.setTrayState(platform.TrayBusy)
 		return
 	}
+	a.cursorHint.Hide()
 	a.pendingResult = nil
 	if err != nil {
 		a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
