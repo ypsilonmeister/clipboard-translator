@@ -89,6 +89,9 @@ func (a *app) buildMenu() []platform.MenuItem {
 			label = "Manual mode (hotkey unavailable)"
 		}
 		items = append(items, platform.MenuItem{Label: label, Disabled: true})
+		for _, line := range capabilityLines(s) {
+			items = append(items, platform.MenuItem{Label: line, Disabled: true})
+		}
 		items = append(items, platform.MenuItem{ID: cmdRetryDesktop, Label: "Retry Wayland permissions", Disabled: !s.Retry})
 	}
 	if a.translating || a.capturing != nil || a.pendingRead != nil || a.pendingResult != nil {

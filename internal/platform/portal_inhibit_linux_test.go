@@ -322,7 +322,7 @@ func TestPortalRemoteFlappingSessionKeepsBackingOff(t *testing.T) {
 // The token is replaced only after a successful Start. Every interrupted
 // attempt leaves the previous token on disk for the next one.
 func TestPortalRemoteTokenReplacedOnlyAfterStart(t *testing.T) {
-	for _, stage := range []string{"select-refused", "start-refused", "start-no-keyboard", "timeout", "closed-mid-flow", "inhibited-mid-flow", "success"} {
+	for _, stage := range []string{"select-refused", "start-refused", "start-no-clipboard", "timeout", "closed-mid-flow", "inhibited-mid-flow", "success"} {
 		t.Run(stage, func(t *testing.T) {
 			r, w, now := remoteFixture(t)
 			if err := r.client.tokens.Save("kept-token"); err != nil {
@@ -352,8 +352,10 @@ func TestPortalRemoteTokenReplacedOnlyAfterStart(t *testing.T) {
 				switch stage {
 				case "start-refused":
 					w.events = append(w.events, portalEvent{kind: "response", token: r.pending, code: 2, restore: "must-not-save"})
-				case "start-no-keyboard":
-					w.events = append(w.events, portalEvent{kind: "response", token: r.pending, clipboard: true, restore: "must-not-save"})
+				case "start-no-clipboard":
+					// A grant without the keyboard is a usable clipboard (#133 P1-6);
+					// one without the clipboard is not, and keeps the old token.
+					w.events = append(w.events, portalEvent{kind: "response", token: r.pending, devices: 1, restore: "must-not-save"})
 				case "success":
 					w.events = append(w.events, portalEvent{kind: "response", token: r.pending, devices: 1, clipboard: true, restore: "replacement"})
 				}

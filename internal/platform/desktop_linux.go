@@ -164,7 +164,7 @@ func primarySelectedIn(win uintptr) bool {
 // already done (nothing waits). It is nil on Wayland without a portal session.
 func BeginSelectionCapture(cb Clipboard, win uintptr) CaptureTask {
 	if d, ok := cb.(*portalDesktop); ok && d.remote != nil {
-		return beginPortalCapture(d.remote, d.hotkeys.AllReleased)
+		return d.beginCapture()
 	}
 	if linuxWayland {
 		return nil

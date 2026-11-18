@@ -104,3 +104,36 @@ func (j *portalCapture) Step() (bool, string, bool, error) {
 	}
 	return false, "", false, nil
 }
+
+// portalClipboardCapture is the hotkey path while selection capture is
+// unavailable (no portal clipboard, or no keyboard granted): it sends no keys
+// and translates the text already on the clipboard, reporting FallbackNoCopy
+// so the app says the selection was not copied. For the manual GTK clipboard
+// it first presents the control window, which must have focus to read.
+type portalClipboardCapture struct {
+	cb       Clipboard
+	present  func()
+	now      func() time.Time
+	started  bool
+	deadline time.Time
+}
+
+func (j *portalClipboardCapture) Fallback() CaptureFallback { return FallbackNoCopy }
+func (j *portalClipboardCapture) Wait() time.Duration       { return capturePollStep }
+func (j *portalClipboardCapture) Step() (bool, string, bool, error) {
+	if !j.started {
+		j.started = true
+		if j.present != nil {
+			j.present()
+		}
+		j.deadline = j.now().Add(8 * time.Second)
+	}
+	text, err := j.cb.Read()
+	if errors.Is(err, ErrClipboardPending) {
+		if j.now().Before(j.deadline) {
+			return false, "", false, nil
+		}
+		return true, "", false, errors.New("clipboard read timed out")
+	}
+	return true, text, false, err
+}

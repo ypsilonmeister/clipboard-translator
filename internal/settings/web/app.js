@@ -693,6 +693,11 @@
     if (desktop) {
       desktop.textContent = state.desktop_status || '';
       if (state.wayland) desktop.textContent += ' Retry Wayland permissions is available in the control window when access needs attention.';
+      for (const line of state.desktop_capabilities || []) {
+        const item = document.createElement('div');
+        item.textContent = line;
+        desktop.appendChild(item);
+      }
       desktop.hidden = !state.desktop_status;
     }
     const autoPaste = $('auto-paste');

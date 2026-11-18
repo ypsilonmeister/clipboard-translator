@@ -563,7 +563,7 @@ func (c *manualFocusClipboard) PresentControl() { c.presented++ }
 
 func TestManualClipboardFocusAndTimeout(t *testing.T) {
 	a := apiUnitApp(t)
-	c := &manualFocusClipboard{asyncDesktopClipboard: &asyncDesktopClipboard{testClipboard: &testClipboard{}, readPending: true, state: platform.DesktopStatus{Wayland: true, Manual: true}}}
+	c := &manualFocusClipboard{asyncDesktopClipboard: &asyncDesktopClipboard{testClipboard: &testClipboard{}, readPending: true, state: platform.DesktopStatus{Wayland: true, Manual: true, ManualClipboard: true}}}
 	a.cb = c
 	a.handleCommand(cmdTranslateClipboard)
 	if c.presented != 1 || a.pendingRead == nil {

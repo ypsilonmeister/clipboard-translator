@@ -67,7 +67,12 @@ func TestPortalDesktopMissingCapabilityAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.events = append(w.events, portalEvent{kind: "capability", id: portalRemoteDesktop, code: 1})
+	// No GlobalShortcuts and no RemoteDesktop keyboard: nothing is usable, so
+	// the backend is in full manual mode (partial sets: portal_partial_linux_test.go).
+	w.events = append(w.events,
+		portalEvent{kind: "capability", id: portalShortcuts, code: 0},
+		portalEvent{kind: "capability", id: portalRemoteDesktop, code: 1},
+		portalEvent{kind: "capability", id: portalClipboardInterface, code: 1})
 	d.Step()
 	if s := d.DesktopStatus(); !s.Retry || s.Ready || !strings.Contains(s.Message, "GNOME 48+") {
 		t.Fatal("missing keyboard must be actionable")
@@ -116,8 +121,10 @@ func TestPortalDesktopConnectionFailureIsRecoverable(t *testing.T) {
 	d.RetryDesktop()
 }
 
+// Full manual mode: no hotkey and no portal clipboard. A single missing
+// capability degrades on its own instead (portal_partial_linux_test.go).
 func TestPortalMissingCapabilitiesEnableManualClipboardOnly(t *testing.T) {
-	for _, iface := range []string{portalShortcuts, portalRemoteDesktop, portalClipboardInterface} {
+	for _, iface := range []string{portalRemoteDesktop, portalClipboardInterface} {
 		t.Run(iface, func(t *testing.T) {
 			d, w := desktopFixture(t)
 			defer d.Close()
@@ -125,7 +132,14 @@ func TestPortalMissingCapabilitiesEnableManualClipboardOnly(t *testing.T) {
 			d.showManual = func() { shown = true }
 			clipboard := &manualTestClipboard{text: "Hello"}
 			d.manualClipboard = clipboard
-			w.events = append(w.events, portalEvent{kind: "capability", id: iface, code: 0})
+			w.events = append(w.events, portalEvent{kind: "capability", id: portalShortcuts, code: 0})
+			for _, other := range []string{portalRemoteDesktop, portalClipboardInterface} {
+				code := uint32(1)
+				if other == iface {
+					code = 0
+				}
+				w.events = append(w.events, portalEvent{kind: "capability", id: other, code: code, devices: 1})
+			}
 			d.Step()
 			s := d.DesktopStatus()
 			if !s.PortalCapabilitiesMissing || !d.manual || !shown || s.Ready || !strings.Contains(s.Message, "Manual mode") {
