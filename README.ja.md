@@ -207,6 +207,52 @@ CI は Apple Silicon／Intel の両方で、AppKit、クリップボード、Car
 
 ### インストール手順
 
+Linux x86_64 では、次のコマンドで最新リリースをインストールできます。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh | sh
+```
+
+リリースの SHA-256 を検証し、`${XDG_DATA_HOME:-$HOME/.local/share}/clipboard-translator`
+へ配置します。同梱の `setup.sh` でモデルとランタイムを取得し、アプリメニューの
+ランチャーを登録して起動します。依存関係を確認し、未対応のセッションには警告します。
+sudo や apt は実行しません。不足パッケージは下記の Ubuntu 用コマンドで導入してください
+（ほかのディストリビューションでは同等のパッケージが必要です）。X11、または下記の
+portal を備える Wayland デスクトップを使います。
+
+更新は同じコマンドを再実行します。可能なら先にアプリを終了してください。
+`config.json`、モデル、ランタイムは保持します。オプションはパイプの **sh 側** に指定します。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh | CT_VERSION=1.0.0 CT_SKIP_SETUP=1 CT_NO_LAUNCH=1 sh
+```
+
+`CT_VERSION` は `v` の有無を問わずバージョンを指定でき、省略時は最新版です。
+`CT_INSTALL_DIR` で専用フォルダーを変更できます。空でないフォルダーは、このインストーラーの
+管理マーカーがある場合だけ使用できます。手動導入済みの場合は新しいフォルダーを指定してください。
+`CT_SKIP_SETUP=1` はモデル／ランタイムのセットアップを、`CT_NO_LAUNCH=1` は起動を省略します。
+真偽値は `1` で有効、`0` で無効です。
+内容の確認やアンインストールには、スクリプトを保存して使います。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh -o install.sh
+sh install.sh --help
+sh install.sh --uninstall                 # /dev/tty で確認
+# 専用フォルダーの指定: --install-dir /absolute/path/to/app
+# 確認なしの削除: --uninstall --yes（または CT_UNINSTALL=1 CT_YES=1）
+```
+
+保存したスクリプトでは `--version`、`--install-dir`、`--skip-setup`、`--no-launch`、
+`--uninstall`、`--yes` が使えます。削除対象はアプリのファイル、設定、取得済みの
+カタログ内の既知のモデル／テンプレート（部分ダウンロードを含む）、`runtime/cpu` と
+`runtime/vulkan` のツリー全体、Wayland の許可トークン、この実行ファイルを指す登録です。
+その他のファイルは残し、フォルダー自体は空の場合だけ削除します。削除には管理マーカーが必要で、
+独自のモデルパスは残します。
+表示用ランチャーはデータホームの `applications/clipboard-translator.desktop` に配置し、
+アプリ自身の非表示の Wayland 登録とは分けています。
+
+手動でインストールする場合:
+
 1. `echo "$XDG_SESSION_TYPE"` でセッションを確認します。X11（Xorg）、または下の
    「Wayland での操作」に記載した portal を備える Wayland デスクトップを使います。
 2. 依存パッケージ(下記の Ubuntu 24.04 の例)を入れたあと、Releases から
@@ -325,8 +371,9 @@ Windows のように他アプリとの競合を完全には防げません。
 （`XDG_CONFIG_HOME` があればその下）。セッションを切り替えても両形式の自身の登録を認識し、オフにするときは
 この実行ファイルに一致する登録だけを削除します。移動後は一度オフにしてからオンにし直してください。
 メニューの Quit、SIGTERM、実行ファイル隣の `STOP` ファイルで終了できます。
-Linux の更新は、終了して実行ファイルとセットアップスクリプトを置き換え、`config.json`、`models`、
-`runtime` を残す方法です。PowerShell インストーラーと Scoop は Windows 専用です。
+Linux の更新は `install.sh` を再実行するか、終了して実行ファイルとセットアップスクリプトを
+手動で置き換え、`config.json`、`models`、`runtime` を残します。PowerShell インストーラーと
+Scoop は Windows 専用です。
 
 Ubuntu 24.04 上でソースからビルドする場合（Go 1.21 以降と C コンパイラーが必要）:
 
