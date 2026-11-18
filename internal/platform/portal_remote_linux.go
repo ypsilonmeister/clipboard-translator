@@ -132,6 +132,14 @@ func (r *portalRemote) reconnecting() bool {
 	return r.phase == "waiting" || (r.phase == "create" && !r.retryAt.IsZero())
 }
 
+// reconnectNow skips the remaining backoff of a waiting session. An attempt
+// already in flight is left alone.
+func (r *portalRemote) reconnectNow() {
+	if r.phase == "waiting" {
+		r.wanted = true
+	}
+}
+
 // WaitMessage is the user-facing status during reconnect.
 func (r *portalRemote) WaitMessage() string {
 	if r.shield == shieldActive {

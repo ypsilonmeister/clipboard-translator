@@ -18,8 +18,24 @@ type portalCapture struct {
 	fallback                         CaptureFallback
 }
 
+// portalCaptureReconnectWait bounds how long a capture waits for a reconnecting
+// RemoteDesktop session (design memo §2, P1-7).
+const portalCaptureReconnectWait = 2 * time.Second
+
+// beginPortalCapture starts a capture. If the session is down and reconnecting
+// (screen shield, Closed, backoff), it starts the reconnect at once and parks the
+// job in the "reconnect" phase for at most portalCaptureReconnectWait. When the
+// session returns in time the capture proceeds normally; otherwise it fails with
+// errPortalNotAuthorized. The job is polled, so nothing is left running.
 func beginPortalCapture(r *portalRemote, released func() bool) CaptureTask {
-	return &portalCapture{remote: r, released: released, session: r.session, phase: "modifiers", deadline: r.client.now().Add(time.Second)}
+	now := r.client.now()
+	j := &portalCapture{remote: r, released: released, session: r.session, phase: "modifiers", deadline: now.Add(time.Second)}
+	if r.reconnecting() {
+		j.phase = "reconnect"
+		j.deadline = now.Add(portalCaptureReconnectWait)
+		r.reconnectNow()
+	}
+	return j
 }
 func (j *portalCapture) Fallback() CaptureFallback { return j.fallback }
 func (j *portalCapture) Wait() time.Duration       { return capturePollStep }
@@ -27,6 +43,25 @@ func (j *portalCapture) Step() (bool, string, bool, error) {
 	r := j.remote
 	r.Step()
 	now := r.client.now()
+	if j.phase == "failed" {
+		return true, "", false, errPortalNotAuthorized
+	}
+	if j.phase == "reconnect" {
+		switch {
+		case r.phase == "ready" && r.session != "":
+			j.session = r.session
+			j.phase = "modifiers"
+			j.deadline = now.Add(time.Second)
+			return false, "", false, nil
+		case !r.reconnecting():
+			j.phase = "failed"
+			return true, "", false, errPortalNotAuthorized // reconnect failed outright
+		case !now.Before(j.deadline):
+			j.phase = "failed"
+			return true, "", false, errPortalNotAuthorized // bound expired; reconnect continues in the background
+		}
+		return false, "", false, nil
+	}
 	if r.phase != "ready" || r.session != j.session {
 		return true, "", false, errPortalNotAuthorized
 	}
