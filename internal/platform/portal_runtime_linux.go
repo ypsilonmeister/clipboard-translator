@@ -221,11 +221,15 @@ func (d *portalDesktop) DesktopStatus() DesktopStatus {
 		s.Message = d.err.Error()
 		s.Retry = true
 		all(CapabilityStatus{CapabilityRefused, s.Message})
+		// A failed connection leaves no authorized portal session: the
+		// clipboard falls back to GTK exactly like a refused session.
+		s.ManualClipboard = clipboardFallbackState(s.Clipboard.State)
 		return s
 	case d.client.err != nil:
 		s.Message = d.client.err.Error()
 		s.Retry = true
 		all(CapabilityStatus{CapabilityRefused, s.Message})
+		s.ManualClipboard = clipboardFallbackState(s.Clipboard.State)
 		return s
 	case d.client.phase != "ready":
 		s.Message = portalConnectingMessage
@@ -381,20 +385,18 @@ func clipboardFallbackState(state CapabilityState) bool {
 }
 
 // clipboardFallback reports whether clipboard access must go through the
-// focused control window: the portal clipboard is missing, or its session was
-// refused (design memo §5.3: the capability needs an authorized session). While
-// it is pending or waiting the portal path stays in charge (lazy
-// authorization), so the manual action uses the portal when it can.
+// focused control window: the portal clipboard is missing, its session was
+// refused, or the whole portal connection failed (design memo §5.3: the
+// capability needs an authorized session). While it is pending or waiting the
+// portal path stays in charge (lazy authorization), so the manual action uses
+// the portal when it can. It is exactly DesktopStatus().ManualClipboard, the
+// flag the app uses to focus the control window, so routing, focus and status
+// cannot disagree.
 func (d *portalDesktop) clipboardFallback() bool {
-	switch {
-	case d.closed:
-		return false
-	case d.manual || d.clipboardMissing:
-		return true
-	case d.client == nil || d.remote == nil:
-		return false
+	if d.closed || (d.client == nil && d.err == nil && !d.manual) {
+		return false // not connected yet: DesktopStatus needs a client
 	}
-	return clipboardFallbackState(d.DesktopStatus().Clipboard.State)
+	return d.DesktopStatus().ManualClipboard
 }
 
 func (d *portalDesktop) useManualClipboard() bool {
