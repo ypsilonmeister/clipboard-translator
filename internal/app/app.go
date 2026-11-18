@@ -488,9 +488,8 @@ func (a *app) recoverServer() bool {
 // run starts the server and then serves hotkey presses until the user quits.
 func (a *app) run() {
 	a.cancelTransientStatus()
-	a.tray.SetStatus("Clipboard Translator - loading model...")
 	defer a.sup.Stop()
-	if err := a.startServer(); err != nil {
+	if err := a.startProfileEngine(); err != nil {
 		if errors.Is(err, llamaserver.ErrQuit) {
 			log.Print("quit requested during startup")
 			return
@@ -524,6 +523,15 @@ func (a *app) run() {
 		}
 	}()
 	a.serve(cb)
+}
+
+func (a *app) startProfileEngine() error {
+	if !a.conf.NeedsTranslation() {
+		a.modelUnloaded = true
+		return nil
+	}
+	a.tray.SetStatus("Clipboard Translator - loading model...")
+	return a.startServer()
 }
 
 // registerExtraHotkeys registers the hotkeys of profiles 1.. after profile 0. A
@@ -637,7 +645,7 @@ func (a *app) updateReadyTip() {
 		}
 		return
 	}
-	if a.modelUnloaded {
+	if a.modelUnloaded && a.conf.NeedsTranslation() {
 		a.readyTip = "Clipboard Translator - idle (model unloaded); next hotkey loads the model"
 		return
 	}
@@ -1090,6 +1098,14 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
+	if profile.ActionMode() == config.ActionTidy {
+		a.cancelTransientStatus()
+		a.translating = true
+		a.handleResult(result{original: source, translated: textstruct.Tidy(source, profile.Rules, profile.PunctStyle),
+			generation: a.generation, window: win, fromSelection: fromSelection,
+			fallback: fallback, capturedAt: capturedAt, action: config.ActionTidy})
+		return
+	}
 	if a.modelUnloaded {
 		a.tray.SetStatus("Clipboard Translator - loading model...")
 		a.translating = true
@@ -1229,6 +1245,10 @@ func (a *app) handleResult(res result) {
 	if res.generation != a.generation {
 		return
 	}
+	noun, verb, ongoing, activity := "translation", "translated", "translating", "translation"
+	if res.action == config.ActionTidy {
+		noun, verb, ongoing, activity = "tidied text", "tidied", "tidying", "tidying"
+	}
 	a.translating = false
 	a.chunkIndex = 0
 	a.chunkTotal = 0
@@ -1261,9 +1281,13 @@ func (a *app) handleResult(res result) {
 		return
 	}
 	if res.action != config.ActionTelephone && res.translated == res.original {
-		log.Print("translation unchanged; clipboard left intact")
-		a.setTransientStatus("Clipboard Translator - translation is the same as the source; the clipboard still holds the source")
-		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
+		log.Print(noun + " unchanged; clipboard left intact")
+		a.setTransientStatus("Clipboard Translator - " + noun + " is the same as the source; the clipboard still holds the source")
+		if res.action == config.ActionTidy {
+			a.setTrayState(platform.TrayIdle)
+		} else {
+			a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
+		}
 		return
 	}
 	// A sequence number is not a reliable test for a text change:
@@ -1282,12 +1306,12 @@ func (a *app) handleResult(res result) {
 			a.pendingResult = nil
 			a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
 			a.tray.SetStatus(a.readyTip)
-			a.tray.Notify("Clipboard Translator", "Clipboard transfer timed out. The translation is available in Recent translations.", true)
+			a.tray.Notify("Clipboard Translator", "Clipboard transfer timed out. The "+noun+" is available in Recent translations.", true)
 			a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 			return
 		}
 		a.pendingResult = &res
-		a.tray.SetStatus("Clipboard Translator - writing the translation to the clipboard...")
+		a.tray.SetStatus("Clipboard Translator - writing the " + noun + " to the clipboard...")
 		a.setTrayState(platform.TrayBusy)
 		return
 	}
@@ -1296,13 +1320,13 @@ func (a *app) handleResult(res result) {
 		a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
 		log.Printf("clipboard check/write failed: %v", err)
 		a.tray.SetStatus(a.readyTip)
-		a.tray.Notify("Clipboard Translator", "The translation is kept in Recent translations in the tray menu. Could not write translation to the clipboard: "+err.Error(), true)
+		a.tray.Notify("Clipboard Translator", "The "+noun+" is kept in Recent translations in the tray menu. Could not write "+noun+" to the clipboard: "+err.Error(), true)
 		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
 	if !applied {
 		a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
-		log.Print("clipboard text changed during translation; result kept in history (new clipboard preserved)")
+		log.Print("clipboard text changed during " + activity + "; result kept in history (new clipboard preserved)")
 		current, readErr := a.cb.Read()
 		if readErr != nil {
 			log.Printf("clipboard change diagnostics: could not read current clipboard: %v", readErr)
@@ -1314,12 +1338,18 @@ func (a *app) handleResult(res result) {
 			log.Printf("clipboard change diagnostics: %s", platform.ClassifyClipboardDiff(res.original, current, elapsed))
 		}
 		a.tray.SetStatus(a.readyTip)
-		a.tray.Notify("Clipboard Translator", "The clipboard changed while translating. Your new clipboard text was kept; copy the translation from Recent translations in the tray menu.", false)
+		a.tray.Notify("Clipboard Translator", "The clipboard changed while "+ongoing+". Your new clipboard text was kept; copy the "+noun+" from Recent translations in the tray menu.", false)
 		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
 	a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
 	readyStatus := a.readyStatus(res.fallback)
+	if res.action == config.ActionTidy {
+		readyStatus = "Clipboard Translator - tidied text ready (" + platform.PasteShortcut() + ")"
+		if res.fallback != platform.FallbackNone {
+			readyStatus = "Clipboard Translator - tidied the clipboard text (" + platform.PasteShortcut() + ")"
+		}
+	}
 	a.setTrayStateWithTimeout(platform.TrayDone, trayDoneDuration)
 	action := decidePaste(a.conf.AutoPaste && !a.desktopStatus().Wayland, res.fromSelection, res.window, a.foreground())
 	switch action {
@@ -1329,26 +1359,29 @@ func (a *app) handleResult(res result) {
 		if err := a.paste(res.window); err != nil {
 			log.Printf("auto-paste failed: %v", err)
 			a.tray.SetStatus(readyStatus)
-			a.tray.Notify("Clipboard Translator", "Translation ready, but it could not be pasted ("+err.Error()+"). Press "+platform.PasteShortcut()+".", true)
+			a.tray.Notify("Clipboard Translator", strings.ToUpper(noun[:1])+noun[1:]+" ready, but it could not be pasted ("+err.Error()+"). Press "+platform.PasteShortcut()+".", true)
 			return
 		}
-		log.Print("translation pasted")
-		a.tray.SetStatus("Clipboard Translator - translation pasted")
+		log.Print(noun + " pasted")
+		a.tray.SetStatus("Clipboard Translator - " + noun + " pasted")
 	case pasteWindowChanged:
-		log.Print("translation ready; the active window changed, so it was not pasted")
-		a.tray.Notify("Clipboard Translator", "Translation ready in the clipboard. The active window changed, so it was not pasted. Press "+platform.PasteShortcut()+".", false)
+		log.Print(noun + " ready; the active window changed, so it was not pasted")
+		a.tray.Notify("Clipboard Translator", strings.ToUpper(noun[:1])+noun[1:]+" ready in the clipboard. The active window changed, so it was not pasted. Press "+platform.PasteShortcut()+".", false)
 		a.tray.SetStatus(readyStatus)
 	default:
-		log.Print("translation ready in clipboard (", platform.PasteShortcut(), " to paste)")
+		log.Print(noun+" ready in clipboard (", platform.PasteShortcut(), " to paste)")
 		a.tray.SetStatus(readyStatus)
 	}
 	// The fallback notice replaces the completion notice for this result: a
 	// second balloon would take the place of the first on Windows.
-	if res.fallback == platform.FallbackNoCopy && a.noteNoCopy() {
+	if res.action != config.ActionTidy && res.fallback == platform.FallbackNoCopy && a.noteNoCopy() {
 		return
 	}
 	if a.conf.NotifyOnComplete && action == pasteNone {
 		title, msg := platform.CompletionNotification()
+		if res.action == config.ActionTidy {
+			title, msg = "Text tidy", "Text "+verb+" and ready on the clipboard. Press "+platform.PasteShortcut()+"."
+		}
 		a.tray.Notify(title, msg, false)
 	}
 }

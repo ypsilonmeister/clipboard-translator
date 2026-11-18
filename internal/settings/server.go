@@ -41,12 +41,14 @@ const (
 // and the key as a string (A-Z, 0-9, or F1-F12), so the page does not need to
 // know the hotkey syntax.
 type ProfileForm struct {
+	Action          string   `json:"action,omitempty"`
+	Rules           []string `json:"rules,omitempty"`
+	PunctStyle      string   `json:"punct_style,omitempty"`
 	Ctrl            bool     `json:"ctrl"`
 	Alt             bool     `json:"alt"`
 	Shift           bool     `json:"shift"`
 	Win             bool     `json:"win"`
 	Key             string   `json:"key"`
-	Action          string   `json:"action,omitempty"`
 	Languages       []string `json:"languages,omitempty"`
 	Target          string   `json:"target,omitempty"`
 	Output          string   `json:"output,omitempty"`
@@ -577,7 +579,7 @@ func FormFromProfile(p config.Profile, goos string) (ProfileForm, error) {
 		return ProfileForm{}, err
 	}
 	return ProfileForm{Ctrl: spec.Ctrl, Alt: spec.Alt, Shift: spec.Shift, Win: spec.Win, Key: spec.Key,
-		Action:    p.Action,
+		Action: p.ActionMode(), Rules: append([]string(nil), p.Rules...), PunctStyle: p.PunctStyleMode(),
 		Languages: append([]string(nil), p.Languages...), Target: p.Target, Output: p.OutputMode(), Input: p.InputMode(),
 		CleanupNewlines: p.CleanupNewlinesMode()}, nil
 }
@@ -625,17 +627,25 @@ func (f Form) ToConfig(base config.Config) (config.Config, error) {
 				action = config.ActionTranslate
 			}
 			switch action {
-			case config.ActionTranslate, config.ActionTelephone:
+			case config.ActionTranslate, config.ActionTidy, config.ActionTelephone:
 			default:
 				return base, fmt.Errorf("profiles[%d]: action %q is not supported", i, action)
 			}
 			if action == config.ActionTelephone && p.Target != "" {
 				return base, fmt.Errorf("profiles[%d]: action %q requires a two-language pair, not target mode", i, config.ActionTelephone)
 			}
-			c.Profiles[i] = config.Profile{Hotkey: p.HotkeyString(), Action: action, Output: p.Output, Input: p.Input, CleanupNewlines: p.CleanupNewlines}
+			c.Profiles[i] = config.Profile{
+				Hotkey:          p.HotkeyString(),
+				Action:          action,
+				Rules:           append([]string(nil), p.Rules...),
+				PunctStyle:      p.PunctStyle,
+				Output:          p.Output,
+				Input:           p.Input,
+				CleanupNewlines: p.CleanupNewlines,
+			}
 			if p.Target != "" {
 				c.Profiles[i].Target = p.Target
-			} else {
+			} else if p.Languages != nil {
 				c.Profiles[i].Languages = append([]string{}, p.Languages...)
 			}
 		}

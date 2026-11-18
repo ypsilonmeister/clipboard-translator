@@ -147,9 +147,11 @@ func Run(opts Options) {
 	// (macOS only; Windows and Linux stop it with the app).
 	platform.StopLeftoverServer(platform.ChildRecordPath(dir, conf.Port))
 
-	conf, ok = ensureInstalled(dir, conf)
-	if !ok {
-		return
+	if conf.NeedsTranslation() {
+		conf, ok = ensureInstalled(dir, conf)
+		if !ok {
+			return
+		}
 	}
 	paths, err := config.ResolvePaths(dir, conf)
 	if err != nil {
