@@ -33,15 +33,16 @@ func desktopCapabilities(d *portalDesktop, w *fakeDesktopWire) {
 	}
 	d.Step()
 }
+
+// desktopSessions registers the app and answers the GlobalShortcuts
+// CreateSession that portalHotkeys issues for itself.
 func desktopSessions(d *portalDesktop, w *fakeDesktopWire) {
 	w.events = append(w.events, portalEvent{kind: "registered"})
 	d.Step()
-	for token, iface := range d.client.pending {
-		suffix := "remote"
-		if iface == portalShortcuts {
-			suffix = "shortcuts"
+	for _, q := range w.requests {
+		if q.token == d.hotkeys.pending && q.iface == portalShortcuts {
+			w.events = append(w.events, portalEvent{kind: "response", token: q.token, session: "/org/freedesktop/portal/desktop/session/test/shortcuts"})
 		}
-		w.events = append(w.events, portalEvent{kind: "response", token: token, session: "/org/freedesktop/portal/desktop/session/test/" + suffix})
 	}
 	d.Step()
 }
@@ -87,8 +88,8 @@ func TestPortalDesktopMissingCapabilityAndRetry(t *testing.T) {
 	}
 	next.events = append(next.events, portalEvent{kind: "response", token: d.hotkeys.pending, bindings: []portalBinding{{id: h.id, trigger: "Ctrl+Shift+F9"}}})
 	d.Step()
-	if d.remote.phase != "select" {
-		t.Fatal("remote authorization must follow shortcut response")
+	if d.remote.phase != "create" || d.remote.session != "" {
+		t.Fatal("remote authorization must follow shortcut response and create its own session")
 	}
 	next.events = append(next.events, portalEvent{kind: "response", token: d.remote.pending, code: 1})
 	d.Step()

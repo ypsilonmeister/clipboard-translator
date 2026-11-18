@@ -18,14 +18,14 @@ type portalShortcutWire interface {
 }
 
 // Registration is local until Step, so all profile hotkeys enter one BindShortcuts call.
-// A settings save closes/recreates only the shortcuts session: RemoteDesktop stays alive.
+// portalHotkeys creates and owns its GlobalShortcuts session: a refusal or close
+// fails only the shortcuts, and a settings save closes/recreates only this session.
 type portalHotkeys struct {
 	client                      *portalClient
 	wire                        portalShortcutWire
 	entries                     []*portalHotkey
 	dirty                       bool
 	session, pending, operation string
-	usedSession                 bool
 	deadline                    time.Time
 	err                         error
 }
@@ -151,7 +151,6 @@ func (r *portalHotkeys) clear() {
 }
 func (r *portalHotkeys) retire() {
 	if r.session != "" {
-		delete(r.client.sessions, portalShortcuts)
 		r.wire.CloseSession(r.session)
 		r.session = ""
 	}
@@ -202,12 +201,6 @@ func (r *portalHotkeys) Step() {
 		r.retire()
 		return
 	}
-	if !r.usedSession {
-		r.session = r.client.sessions[portalShortcuts]
-		r.usedSession = true
-		r.bind()
-		return
-	}
 	r.retire()
 	request, err := portalToken()
 	if err != nil {
@@ -243,8 +236,7 @@ func (r *portalHotkeys) bind() {
 func (r *portalHotkeys) event(e portalEvent) bool {
 	switch e.kind {
 	case "closed":
-		if e.session == r.session {
-			delete(r.client.sessions, portalShortcuts)
+		if e.session == r.session && r.session != "" {
 			r.session = ""
 			r.fail("the shortcut session was closed; retry the hotkey settings")
 			return true
@@ -266,7 +258,6 @@ func (r *portalHotkeys) event(e portalEvent) bool {
 				return true
 			}
 			r.session = e.session
-			r.client.sessions[portalShortcuts] = e.session
 			// If settings changed while creating, bind the current complete profile set.
 			r.clear()
 			r.dirty = false

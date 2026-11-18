@@ -28,9 +28,24 @@ func shortcutFixture() (*portalHotkeys, *fakeShortcutWire, *time.Time) {
 	w := &fakeShortcutWire{}
 	p := startPortalClient(w, waylandAppID, func() time.Time { return now })
 	p.phase = "ready"
-	p.sessions[portalShortcuts] = "/org/freedesktop/portal/desktop/session/test/initial"
-	p.sessions[portalRemoteDesktop] = "/org/freedesktop/portal/desktop/session/test/remote"
 	return newPortalHotkeys(p, w), w, &now
+}
+
+// answerShortcutCreate completes the GlobalShortcuts CreateSession that
+// portalHotkeys itself issued and steps it into BindShortcuts.
+func answerShortcutCreate(t *testing.T, r *portalHotkeys, w *fakeShortcutWire, suffix string) string {
+	t.Helper()
+	if r.operation != "create" || len(w.requests) == 0 {
+		t.Fatalf("shortcuts must create their own session: operation=%q requests=%d", r.operation, len(w.requests))
+	}
+	q := w.requests[len(w.requests)-1]
+	if q.iface != portalShortcuts || q.token != r.pending {
+		t.Fatalf("unexpected session request %+v", q)
+	}
+	session := "/org/freedesktop/portal/desktop/session/test/" + suffix
+	w.events = append(w.events, portalEvent{kind: "response", token: q.token, session: session})
+	r.Step()
+	return session
 }
 func finishShortcutBind(r *portalHotkeys, w *fakeShortcutWire) {
 	call := w.binds[len(w.binds)-1]
@@ -80,6 +95,10 @@ func TestPortalShortcutBatchAndActivation(t *testing.T) {
 		t.Fatal("registration must be coalesced")
 	}
 	r.Step()
+	if len(w.binds) != 0 || len(w.requests) != 1 {
+		t.Fatal("the shortcut session must be created before binding")
+	}
+	answerShortcutCreate(t, r, w, "initial")
 	if len(w.binds) != 1 || len(w.binds[0].bindings) != 2 {
 		t.Fatal("profiles must be bound in one call")
 	}
@@ -108,21 +127,21 @@ func TestPortalShortcutBatchAndActivation(t *testing.T) {
 		t.Fatal("partial change erased another binding")
 	}
 }
-func TestPortalShortcutRebindRetainsRemoteSession(t *testing.T) {
+func TestPortalShortcutRebindRetainsConnection(t *testing.T) {
 	r, w, _ := shortcutFixture()
 	a, _ := r.NewHotkey("Ctrl+E")
 	r.Step()
+	answerShortcutCreate(t, r, w, "initial")
 	finishShortcutBind(r, w)
 	old := r.session
-	remote := r.client.sessions[portalRemoteDesktop]
 	a.Close()
 	b, _ := r.NewHotkey("Ctrl+K")
 	w.events = append(w.events, portalEvent{kind: "activated", session: old, id: b.id})
 	r.Step()
-	if len(w.closedSessions) != 1 || len(w.requests) != 1 || b.fired {
+	if len(w.closedSessions) != 1 || len(w.requests) != 2 || b.fired {
 		t.Fatal("old binding was not invalidated before reuse")
 	}
-	q := w.requests[0]
+	q := w.requests[1]
 	fresh := "/org/freedesktop/portal/desktop/session/test/new"
 	w.events = append(w.events, portalEvent{kind: "closed", session: old}, portalEvent{kind: "response", token: q.token, session: fresh})
 	r.Step()
@@ -134,8 +153,8 @@ func TestPortalShortcutRebindRetainsRemoteSession(t *testing.T) {
 	if fired, _ := b.Pressed(); fired {
 		t.Fatal("stale session fired")
 	}
-	if r.client.sessions[portalRemoteDesktop] != remote || r.client.phase != "ready" || w.closes != 0 {
-		t.Fatal("shortcut rebind interrupted remote session")
+	if r.client.phase != "ready" || w.closes != 0 {
+		t.Fatal("shortcut rebind interrupted the shared portal connection")
 	}
 	b.Close()
 	r.Step()
@@ -149,6 +168,7 @@ func TestPortalShortcutRefusalTimeoutAndClose(t *testing.T) {
 			r, w, now := shortcutFixture()
 			h, _ := r.NewHotkey("Ctrl+E")
 			r.Step()
+			answerShortcutCreate(t, r, w, "initial")
 			switch kind {
 			case "denied":
 				w.events = append(w.events, portalEvent{kind: "response", token: r.pending, code: 1})
@@ -173,6 +193,7 @@ func TestPortalShortcutSubsetAndMidBindEdit(t *testing.T) {
 	a, _ := r.NewHotkey("Ctrl+E")
 	b, _ := r.NewHotkey("Ctrl+K")
 	r.Step()
+	answerShortcutCreate(t, r, w, "initial")
 	w.events = append(w.events, portalEvent{kind: "response", token: r.pending, bindings: []portalBinding{{id: a.id, trigger: "Chosen key"}}})
 	r.Step()
 	if _, err := a.Pressed(); err != nil {
@@ -191,7 +212,7 @@ func TestPortalShortcutSubsetAndMidBindEdit(t *testing.T) {
 	c, _ := r.NewHotkey("Ctrl+Q")
 	w.events = append(w.events, portalEvent{kind: "response", token: pending, bindings: []portalBinding{{id: c.id, trigger: "Obsolete"}}})
 	r.Step()
-	if c.actual != "" || c.active || len(w.requests) != 2 {
+	if c.actual != "" || c.active || len(w.requests) != 3 {
 		t.Fatal("obsolete dialog response activated a changed profile")
 	}
 }
@@ -200,6 +221,7 @@ func TestPortalShortcutEditCancelsObsoleteDialog(t *testing.T) {
 	r, w, _ := shortcutFixture()
 	a, _ := r.NewHotkey("Ctrl+E")
 	r.Step()
+	answerShortcutCreate(t, r, w, "initial")
 	obsolete := r.pending
 	a.Close()
 	_, err := r.NewHotkey("Ctrl+K")
@@ -207,7 +229,7 @@ func TestPortalShortcutEditCancelsObsoleteDialog(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Step()
-	if len(w.closedRequests) != 1 || w.closedRequests[0] != obsolete || len(w.requests) != 1 {
+	if len(w.closedRequests) != 1 || w.closedRequests[0] != obsolete || len(w.requests) != 2 {
 		t.Fatal("obsolete consent dialog was not canceled promptly")
 	}
 	w.events = append(w.events, portalEvent{kind: "failed", token: obsolete})

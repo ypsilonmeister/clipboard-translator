@@ -45,7 +45,7 @@ func (d *portalDesktop) connect() {
 	d.retryRemote = false
 	d.wire = w
 	d.capabilities = make(map[string]bool)
-	p := &portalClient{wire: w, phase: "probing", now: d.now, sessions: make(map[string]string), pending: make(map[string]string), tokens: d.tokens, deadline: d.now().Add(15 * time.Second)}
+	p := &portalClient{wire: w, phase: "probing", now: d.now, tokens: d.tokens, deadline: d.now().Add(15 * time.Second)}
 	p.onEvent = func(e portalEvent) bool {
 		if e.kind != "capability" {
 			return false

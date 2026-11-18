@@ -4,8 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"strings"
 	"time"
 )
 
@@ -35,12 +33,15 @@ type portalEvent struct {
 	data             []byte
 }
 
+// portalClient owns only the private D-Bus peer and Registry.Register. Each
+// feature (portalHotkeys, portalRemote) creates and owns its own portal session,
+// so a refused or inhibited RemoteDesktop session cannot take the shortcuts down.
+// Only connection-level failures (lost peer, failed Register, timeout before
+// registration) fail the client and therefore every feature.
 type portalClient struct {
 	tokens   portalTokenStore // used by the RemoteDesktop authorization stage (W3)
 	wire     portalWire
-	phase    string            // registering, creating, ready, failed, closed
-	sessions map[string]string // interface -> session object path (not yet authorized for input)
-	pending  map[string]string // request token -> interface
+	phase    string // probing, registering, ready, failed, closed
 	deadline time.Time
 	now      func() time.Time
 	err      error
@@ -48,7 +49,7 @@ type portalClient struct {
 }
 
 func startPortalClient(w portalWire, appID string, now func() time.Time) *portalClient {
-	p := &portalClient{wire: w, phase: "registering", now: now, sessions: make(map[string]string), pending: make(map[string]string)}
+	p := &portalClient{wire: w, phase: "registering", now: now}
 	p.deadline = now().Add(15 * time.Second)
 	w.Register(appID)
 	return p
@@ -65,12 +66,12 @@ func portalToken() (string, error) {
 func (p *portalClient) fail(message string) {
 	p.err = errors.New(message)
 	p.phase = "failed"
-	p.sessions = make(map[string]string)
-	p.pending = make(map[string]string)
 	p.wire.Close() // Losing the private D-Bus peer also closes pending requests and sessions.
 }
 
 // Step is called while pumping the GTK main context. Bound the work per tick.
+// Feature handlers (onEvent) see every event first; whatever they do not claim
+// is either connection-level or stale.
 func (p *portalClient) Step() {
 	if p.phase == "closed" || p.phase == "failed" {
 		return
@@ -85,58 +86,19 @@ func (p *portalClient) Step() {
 		}
 		switch e.kind {
 		case "registered":
-			if p.phase != "registering" {
-				continue
-			}
-			p.phase = "creating"
-			p.deadline = p.now().Add(15 * time.Second)
-			for _, iface := range []string{portalShortcuts, portalRemoteDesktop} {
-				request, err := portalToken()
-				if err != nil {
-					p.fail("could not create a portal request identifier")
-					return
-				}
-				session, err := portalToken()
-				if err != nil {
-					p.fail("could not create a portal session identifier")
-					return
-				}
-				p.pending[request] = iface
-				p.wire.CreateSession(iface, request, session)
-			}
-		case "response":
-			iface, ok := p.pending[e.token]
-			if !ok {
-				continue
-			}
-			delete(p.pending, e.token)
-			if e.code != 0 || !strings.HasPrefix(e.session, "/org/freedesktop/portal/desktop/session/") {
-				p.fail(fmt.Sprintf("could not create %s session (response %d); check desktop portal permissions and try again", iface, e.code))
-				return
-			}
-			p.sessions[iface] = e.session
-			if len(p.pending) == 0 {
+			if p.phase == "registering" {
 				p.phase = "ready"
 			}
-		case "closed":
-			relevant := p.phase == "creating"
-			for _, session := range p.sessions {
-				relevant = relevant || session == e.session
-			}
-			if relevant {
-				p.fail("a Wayland portal session was closed; reconnect to use translation shortcuts")
-				return
-			}
 		case "failed":
-			// A retired extension request may complete after it was canceled.
+			// A token names a feature request. Unclaimed, it is a retired or
+			// canceled request completing late, never a connection failure.
 			if e.token != "" {
-				if _, ok := p.pending[e.token]; !ok {
-					continue
-				}
+				continue
 			}
 			p.fail("the Wayland portal connection failed; check that the desktop portal service is running and try again")
 			return
 		}
+		// Responses and Session.Closed for sessions no feature owns are stale.
 	}
 	if p.phase != "ready" && !p.now().Before(p.deadline) {
 		p.fail("the Wayland portal did not respond in time; try connecting again")
@@ -148,6 +110,4 @@ func (p *portalClient) Close() {
 		p.wire.Close()
 	}
 	p.phase = "closed"
-	p.sessions = make(map[string]string)
-	p.pending = make(map[string]string)
 }

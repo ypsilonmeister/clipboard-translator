@@ -76,7 +76,6 @@ func (r *portalRemote) stop(message string, clearToken bool) {
 	}
 	if r.session != "" {
 		r.wire.CloseSession(r.session)
-		delete(r.client.sessions, portalRemoteDesktop)
 		r.session = ""
 	}
 	if clearToken && r.client.tokens.dir != "" {
@@ -108,7 +107,8 @@ func (r *portalRemote) Step() {
 		return
 	}
 	r.wanted = false
-	r.session = r.client.sessions[portalRemoteDesktop]
+	// portalRemote creates and owns its RemoteDesktop session; a refusal here
+	// stops only the remote feature and leaves the shortcuts session alone.
 	if r.session == "" {
 		r.request("create")
 		return
@@ -184,7 +184,6 @@ func (r *portalRemote) event(e portalEvent) bool {
 				return true
 			}
 			r.session = e.session
-			r.client.sessions[portalRemoteDesktop] = e.session
 			r.selectDevices()
 		case "select":
 			r.request("clipboard")
