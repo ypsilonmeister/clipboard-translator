@@ -14,6 +14,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/hotkeyspec"
 	"github.com/ypsilonmeister/clipboard-translator/internal/languages"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
+	"github.com/ypsilonmeister/clipboard-translator/internal/textstruct"
 )
 
 type Config struct {
@@ -58,6 +59,11 @@ type Config struct {
 }
 
 const (
+	ActionTranslate = "translate"
+	ActionTidy      = "tidy"
+	PunctJapanese   = "japanese"
+	PunctFullwidth  = "fullwidth"
+
 	OutputReplace   = "replace"
 	OutputBilingual = "bilingual"
 )
@@ -76,16 +82,47 @@ const (
 	CleanupNewlinesAuto = "auto"
 )
 
-// Profile is one hotkey and what it translates: either a Languages pair (both
-// directions) or a Target (always into that language, the model detects the source),
-// an Output mode ("replace" or "bilingual") and an Input ("selection" or "clipboard").
+// Profile is one hotkey and its action. Translation uses a Languages pair or
+// Target and an Output mode; tidy uses Rules and PunctStyle. Input selects the
+// selection or the current clipboard for either action.
 type Profile struct {
 	Hotkey          string   `json:"hotkey"`
+	Action          string   `json:"action,omitempty"`
+	Rules           []string `json:"rules,omitempty"`
+	PunctStyle      string   `json:"punct_style,omitempty"`
 	Languages       []string `json:"languages,omitempty"`
 	Target          string   `json:"target,omitempty"`
 	Output          string   `json:"output,omitempty"`
 	Input           string   `json:"input,omitempty"`
 	CleanupNewlines string   `json:"cleanup_newlines,omitempty"`
+}
+
+func (p Profile) ActionMode() string {
+	if p.Action == "" {
+		return ActionTranslate
+	}
+	return p.Action
+}
+
+func (p Profile) PunctStyleMode() string {
+	if p.PunctStyle == "" {
+		return PunctJapanese
+	}
+	return p.PunctStyle
+}
+
+// NeedsTranslation keeps tidy-only configurations independent of model setup
+// and startup. An implicit legacy profile still translates.
+func (c Config) NeedsTranslation() bool {
+	if len(c.Profiles) == 0 {
+		return true
+	}
+	for _, p := range c.Profiles {
+		if p.ActionMode() == ActionTranslate {
+			return true
+		}
+	}
+	return false
 }
 
 func (p Profile) InputMode() string {
@@ -167,6 +204,27 @@ func (c *Config) ResolveProfiles(explicit bool) error {
 			return fmt.Errorf("%s: hotkey %q is the same key combination as profiles[%d] (%q)", where, p.Hotkey, j, c.Profiles[j].Hotkey)
 		}
 		seen[spec] = i
+		switch strings.ToLower(strings.TrimSpace(p.Action)) {
+		case "", ActionTranslate:
+			p.Action = ActionTranslate
+		case ActionTidy:
+			p.Action = ActionTidy
+		default:
+			return fmt.Errorf("%s: action %q is not supported; valid values: %q, %q", where, p.Action, ActionTranslate, ActionTidy)
+		}
+		for j, rule := range p.Rules {
+			if !textstruct.ValidTidyRule(rule) {
+				return fmt.Errorf("%s: rules[%d] %q is not supported; valid rules: newlines, width, punct, spaces, quotes, bullets", where, j, rule)
+			}
+		}
+		switch strings.ToLower(strings.TrimSpace(p.PunctStyle)) {
+		case "", PunctJapanese:
+			p.PunctStyle = PunctJapanese
+		case PunctFullwidth:
+			p.PunctStyle = PunctFullwidth
+		default:
+			return fmt.Errorf("%s: punct_style %q is not supported; valid values: %q, %q", where, p.PunctStyle, PunctJapanese, PunctFullwidth)
+		}
 		switch {
 		case p.Languages != nil && p.Target != "":
 			return fmt.Errorf("%s: use either \"languages\" or \"target\", not both", where)
@@ -178,6 +236,9 @@ func (c *Config) ResolveProfiles(explicit bool) error {
 			p.Target = t
 		default:
 			if p.Languages == nil {
+				if p.Action == ActionTidy {
+					break // deterministic tidy does not need translation languages
+				}
 				return fmt.Errorf("%s: set \"languages\" (a pair) or \"target\"", where)
 			}
 			langs, err := languages.Validate(p.Languages)

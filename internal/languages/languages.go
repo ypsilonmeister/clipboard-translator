@@ -367,8 +367,11 @@ var dottedSuffixes = map[string]bool{
 }
 
 // dotted reports whether tok is a domain or a file name. The labels around
-// the dots must be letters or digits. Then either there are three or more
-// labels and the last has two or more characters ("en.wikipedia.org",
+// the dots must be letters or digits. Non-final labels may also contain '-'
+// and '_' when the last label is a recognised suffix ("docker-compose.yml",
+// "test_utils.py"); each label must still contain a letter or digit. Then
+// either there are three or more labels and the last has two or more
+// characters ("en.wikipedia.org",
 // "a.b.cd"), or there are two and the last is in dottedSuffixes
 // ("example.com", "x.com", "main.go", "a.go"). A one-letter suffix only
 // counts after a label of two or more characters ("main.c", not "e.g").
@@ -379,16 +382,21 @@ func dotted(tok string) bool {
 	if len(labels) < 2 {
 		return false
 	}
-	for _, l := range labels {
+	last := labels[len(labels)-1]
+	knownSuffix := dottedSuffixes[strings.ToLower(last)]
+	for i, l := range labels {
+		if i < len(labels)-1 && knownSuffix {
+			l = strings.ReplaceAll(l, "-", "")
+			l = strings.ReplaceAll(l, "_", "")
+		}
 		if l == "" || strings.IndexFunc(l, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) >= 0 {
 			return false
 		}
 	}
-	last := labels[len(labels)-1]
 	if len(labels) >= 3 {
 		return len(last) >= 2
 	}
-	return dottedSuffixes[strings.ToLower(last)] && (len(last) >= 2 || len(labels[0]) >= 2)
+	return knownSuffix && (len(last) >= 2 || len(labels[0]) >= 2)
 }
 
 // numberSuffixes are the letters that may follow a number in prose: ordinals

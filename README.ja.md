@@ -207,6 +207,52 @@ CI は Apple Silicon／Intel の両方で、AppKit、クリップボード、Car
 
 ### インストール手順
 
+Linux x86_64 では、次のコマンドで最新リリースをインストールできます。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh | sh
+```
+
+リリースの SHA-256 を検証し、`${XDG_DATA_HOME:-$HOME/.local/share}/clipboard-translator`
+へ配置します。同梱の `setup.sh` でモデルとランタイムを取得し、アプリメニューの
+ランチャーを登録して起動します。依存関係を確認し、未対応のセッションには警告します。
+sudo や apt は実行しません。不足パッケージは下記の Ubuntu 用コマンドで導入してください
+（ほかのディストリビューションでは同等のパッケージが必要です）。X11、または下記の
+portal を備える Wayland デスクトップを使います。
+
+更新は同じコマンドを再実行します。可能なら先にアプリを終了してください。
+`config.json`、モデル、ランタイムは保持します。オプションはパイプの **sh 側** に指定します。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh | CT_VERSION=1.0.0 CT_SKIP_SETUP=1 CT_NO_LAUNCH=1 sh
+```
+
+`CT_VERSION` は `v` の有無を問わずバージョンを指定でき、省略時は最新版です。
+`CT_INSTALL_DIR` で専用フォルダーを変更できます。空でないフォルダーは、このインストーラーの
+管理マーカーがある場合だけ使用できます。手動導入済みの場合は新しいフォルダーを指定してください。
+`CT_SKIP_SETUP=1` はモデル／ランタイムのセットアップを、`CT_NO_LAUNCH=1` は起動を省略します。
+真偽値は `1` で有効、`0` で無効です。
+内容の確認やアンインストールには、スクリプトを保存して使います。
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh -o install.sh
+sh install.sh --help
+sh install.sh --uninstall                 # /dev/tty で確認
+# 専用フォルダーの指定: --install-dir /absolute/path/to/app
+# 確認なしの削除: --uninstall --yes（または CT_UNINSTALL=1 CT_YES=1）
+```
+
+保存したスクリプトでは `--version`、`--install-dir`、`--skip-setup`、`--no-launch`、
+`--uninstall`、`--yes` が使えます。削除対象はアプリのファイル、設定、取得済みの
+カタログ内の既知のモデル／テンプレート（部分ダウンロードを含む）、`runtime/cpu` と
+`runtime/vulkan` のツリー全体、Wayland の許可トークン、この実行ファイルを指す登録です。
+その他のファイルは残し、フォルダー自体は空の場合だけ削除します。削除には管理マーカーが必要で、
+独自のモデルパスは残します。
+表示用ランチャーはデータホームの `applications/clipboard-translator.desktop` に配置し、
+アプリ自身の非表示の Wayland 登録とは分けています。
+
+手動でインストールする場合:
+
 1. `echo "$XDG_SESSION_TYPE"` でセッションを確認します。X11（Xorg）、または下の
    「Wayland での操作」に記載した portal を備える Wayland デスクトップを使います。
 2. 依存パッケージ(下記の Ubuntu 24.04 の例)を入れたあと、Releases から
@@ -325,8 +371,9 @@ Windows のように他アプリとの競合を完全には防げません。
 （`XDG_CONFIG_HOME` があればその下）。セッションを切り替えても両形式の自身の登録を認識し、オフにするときは
 この実行ファイルに一致する登録だけを削除します。移動後は一度オフにしてからオンにし直してください。
 メニューの Quit、SIGTERM、実行ファイル隣の `STOP` ファイルで終了できます。
-Linux の更新は、終了して実行ファイルとセットアップスクリプトを置き換え、`config.json`、`models`、
-`runtime` を残す方法です。PowerShell インストーラーと Scoop は Windows 専用です。
+Linux の更新は `install.sh` を再実行するか、終了して実行ファイルとセットアップスクリプトを
+手動で置き換え、`config.json`、`models`、`runtime` を残します。PowerShell インストーラーと
+Scoop は Windows 専用です。
 
 Ubuntu 24.04 上でソースからビルドする場合（Go 1.21 以降と C コンパイラーが必要）:
 
@@ -457,6 +504,7 @@ Options の **Apply connection info** が成功すると、貼り付けた JSON 
 | `auto_paste` | 対応デスクトップでは `true` で翻訳後に Ctrl+V を自動入力（初期値は `false`。Wayland では常に無効） |
 | `quickstart_shown` | 初回のクイックスタートを表示済みなら `true`(アプリが設定します。`false` に戻すと吹き出しがもう一度出ます。初期値は `false`) |
 | `notify_on_complete` | `true` で自動貼り付けしない翻訳の完了時に、テキストは表示せずクリップボードに準備できたことをトレイ通知(初期値は `false`) |
+| `show_cursor_hint` | `true` でホットキーによる処理中にマウスポインター付近にアイコンを表示(Windows のみ、初期値は `false`) |
 | `languages` | 双方向に翻訳する 2 つの言語コード。例: `["ja", "en"]`(初期値)、`["en", "ko"]`、`["ja", "zh-hans"]`。コードはモデルのものです: `ja en ko zh-hans zh-hant ru th ar de fr es ...`(全 53 言語。[モデルカード](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)を見てください)。翻訳の向きはテキストの文字種から決めるため、2 つの言語は別の文字を使うものにしてください(en ↔ de は今のところ拒否されます)。主な用途は日本語 ↔ 英語で、ほかの言語はベストエフォートです。 |
 | `profiles` | ホットキーごとに言語を割り当てます。例: `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "bilingual"}]`。各プロファイルには `languages`(ペア。双方向)か `target`(常にその言語へ翻訳。原文の言語はモデルが判定するので、どの言語でも使えます。`en` と `de` のように文字が同じペアは、`target` のプロファイルを1つずつ作ってください)のどちらか一方を書きます。また、出力形式として `output` を指定できます: `"replace"`(デフォルト。省略時もこれ)は翻訳文のみをクリップボードに入れます。`"bilingual"` は原文、改行、翻訳文の順でクリップボードに入れます(`<source>\n<translated>`。原文末尾の改行文字 CR/LF は取り除いてから 1 つの改行 `\n` を付加します)。翻訳履歴には原文と翻訳文が個別に保持され、「Recent translations」メニューから原文・訳文・両方を選んでコピーできます。`input` で、テキストをどこから取るかを選べます: `"selection"`(デフォルト)は、まず選択範囲をコピー(Ctrl+C)します(Windows では、反応の遅いページのために最大 2 秒待ちます)。`"clipboard"` は、すでにクリップボードにあるテキストを翻訳します。Ctrl+C を送らず、選択コピーの待ち時間を省き、自動貼り付けもしないため、コピーが遅いページ向けです（Wayland のクリップボード転送は非同期です）(自分でコピーしてからホットキーを押します)。`hotkey` と `languages` の代わりになり、Settings では各プロファイルを編集できます。Windows と Linux では最大 8 個。macOS では今のところ最初の 1 個だけ登録し、有効にならなかったものは通知で知らせます。他のプログラムが使っているホットキーは、そのプロファイルだけが無効になります。 |
 | `port` | ローカルの llama-server のポート(1024〜65534。アプリは `port + 1` も多重起動の防止に使います) |
@@ -472,6 +520,49 @@ Options の **Apply connection info** が成功すると、貼り付けた JSON 
 > 通常の再実行や更新(Scoop のように `-Backend auto`)では、使用中のエンジンと `gpu_layers` はそのまま残ります。
 > 不足している、または不完全なバックエンドだけをダウンロードし、すべてのダウンロードを SHA-256 で検証します
 > (モデルファイルは特定のリビジョンに固定しています)。
+
+### テキスト整形プロファイル（翻訳なし）
+
+プロファイルの `action` は省略時に `"translate"` です。`"action": "tidy"`
+にすると、選択テキストをルールに従って整形します。翻訳やモデルの利用はなく、
+整形の実行によって llama-server を起動することもありません。操作は同じく
+「選択 → ホットキー → 貼り付け」です。整形専用の設定ではモデルのセットアップと
+起動も省略します。翻訳プロファイルを含む設定では、従来どおり翻訳エンジンを起動します。
+
+```json
+{
+  "profiles": [
+    {"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]},
+    {"hotkey": "Ctrl+Alt+T", "action": "tidy", "rules": ["newlines", "width", "punct"], "punct_style": "japanese"}
+  ]
+}
+```
+
+ルールはすべて明示的に有効にする方式で、`rules` の記載順に適用します。
+省略または空のリストでは何もしません。不明な action・ルール名・句読点スタイルは、
+設定ファイルでも Settings からの保存でもエラーになります。
+
+| ルール | 動作 |
+| --- | --- |
+| `newlines` | 既存の保守的な改行除去を再利用し、PDF・端末の折り返しを接続します。段落・リスト・コード・短い住所の境界を保持し、文字種に応じて接続時の空白を決めます。 |
+| `width` | 全角英数字を半角に、半角カタカナを全角にします。有効な濁点・半濁点の組は合成します。その他の記号や句読点は変更しません。 |
+| `punct` | `、。`・`，．`・半角の `､｡` を統一します。`punct_style: "japanese"`（既定）は `、。`、`"fullwidth"` は `，．` を使います。ASCII の句読点、全角数字間の区切り、ラテン文字間のドットは保持します。 |
+| `spaces` | 通常の文章内の連続する半角空白をまとめ、行末の空白・タブ・全角空白を削除します。字下げ、リスト・引用の内容、タブや縦棒による表は保持します。有効にすると、文章の行末空白による Markdown の強制改行も削除します。 |
+| `quotes` | 曲がった一重・二重引用符を ASCII の引用符にします。曲がったアポストロフィも対象です。プライム、バッククォート、日本語のかぎ括弧は保持します。 |
+| `bullets` | 行頭の `・`・`•`・`*`・`-` に空白が続く場合、記号を `-` に統一します。字下げと空白は保持します。番号付きリスト、タスクのチェックボックス、区切り線、文中の記号、負数は変更しません。 |
+
+すべてのルールで、フェンスや字下げによるコード、バッククォートを含む行、
+コード・代入と判断できる行、URL、メールアドレスを含む行を保守的に保持します。
+判断がつかなければそのまま残します。整形プロファイルに `languages` や `target` は不要です。
+翻訳用の `output` と `cleanup_newlines` は整形には適用しません。`input`、文字数上限、
+クリップボードと自動貼り付けの安全確認は引き続き適用します。結果は既存の比較・置換処理だけで
+書き込み、原文と整形結果を **Recent translations** に記録します。
+何も変わらなければクリップボードにも履歴にも書き込みません。
+
+Settings でホットキーの **Action → Tidy text (no model)** を選び、必要なルールの
+チェックボックスと句読点スタイルを設定してください。ChromeOS の Settings でも、
+クリップボードや拡張機能のリクエストが使う最初のプロファイルの action を設定できます。拡張機能から届く選択テキストには
+現在改行がないため、`newlines` や `bullets` で元の構造を復元することはできません（issue #171）。
 
 ## 設定ページ
 

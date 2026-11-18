@@ -223,6 +223,78 @@ func TestDirectionForPairs(t *testing.T) {
 	}
 }
 
+func TestDirectionForDottedFilenames(t *testing.T) {
+	cases := []struct {
+		token string
+		code  bool
+	}{
+		{"docker-compose.yml", true},
+		{"test_utils.py", true},
+		{"my-script.py", true},
+		{"run-tests.sh", true},
+		{"foo-bar.com", true},
+		{"my-notes.md", true},
+		{"app_config.json", true},
+		{"docker_compose.yaml", true},
+		{"build-config.toml", true},
+		{"my_module.go", true},
+		{"my-file.c", true},
+		{"my_header.h", true},
+		{"my-app.mjs", true},
+		{"my_app.ts", true},
+		{"test_utils.PY", true},
+		{"my-app.test.py", true},
+		{"(docker-compose.yml)", true},
+		{"\"test_utils.py\",", true},
+		{"state-of-the-art", false},
+		{"test_utils", false},
+		{"client-side/server-side", false},
+		{"front-end/back-end", false},
+		{"my-notes.unknown", false},
+		{"my_notes.unknown", false},
+		{"my-notes.op.cit", false},
+		{"my_notes.op.cit", false},
+		{"my-notes.p-y", false},
+		{"my_notes.p_y", false},
+		{"e.g.", false},
+		{"a.c", false},
+		{"op.cit.", false},
+		{"a.k.a.", false},
+		{"node.js", false},
+		{"app.js", false},
+		{"index.js", false},
+		{"my-app.js", false},
+		{"my_app.js", false},
+		{"30s", false},
+		{"60s", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.token, func(t *testing.T) {
+			if got := nonWordToken(tc.token); got != tc.code {
+				t.Errorf("nonWordToken(%q) = %v; want %v", tc.token, got, tc.code)
+			}
+			inputs := []string{
+				"you learned how to write тоска " + tc.token,
+				tc.token + " тоска is what you learned how to write",
+			}
+			source, target := "en", "ru"
+			if tc.code {
+				inputs = []string{
+					"npm run build and then npm run test не работает " + tc.token,
+					tc.token + " Запусти npm run build and then npm run test",
+				}
+				source, target = "ru", "en"
+			}
+			for _, input := range inputs {
+				got, ok := DirectionFor([]string{"en", "ru"}, input)
+				if !ok || got.Source != source || got.Target != target {
+					t.Errorf("%q: got %+v, %v; want %s->%s", input, got, ok, source, target)
+				}
+			}
+		})
+	}
+}
+
 func TestValidateLanguages(t *testing.T) {
 	good := [][]string{{"ja", "en"}, {"EN", " ko "}, {"zh-hant", "ja"}, {"en", "ru"}}
 	for _, g := range good {

@@ -47,6 +47,9 @@ func (p Profile) Check(s string, maxChars int) (SkipReason, languages.Direction)
 	if utf8.RuneCountInString(s) > maxChars {
 		return SkipTooLong, languages.Direction{}
 	}
+	if p.ActionMode() == ActionTidy {
+		return SkipNone, languages.Direction{}
+	}
 	if languages.IsURL(strings.TrimSpace(s)) {
 		return SkipURL, languages.Direction{}
 	}
@@ -116,6 +119,9 @@ func SkipStatus(reason SkipReason, label string) string {
 
 // label says what the profile does, for the tooltip and notifications.
 func (p Profile) Label() string {
+	if p.ActionMode() == ActionTidy {
+		return "tidy"
+	}
 	if p.Target != "" {
 		return "to " + languages.Name(p.Target)
 	}

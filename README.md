@@ -218,6 +218,53 @@ manual testing. Cross-compilation with `CGO_ENABLED=0` only verifies portable lo
 
 ### Install steps
 
+For Linux x86_64, install the latest release with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh | sh
+```
+
+The installer verifies the release SHA-256, installs to
+`${XDG_DATA_HOME:-$HOME/.local/share}/clipboard-translator`, runs the bundled
+`setup.sh` (model/runtime downloads), adds an application-menu launcher, and starts
+the app. It checks dependencies and warns about unsupported sessions; it never
+runs sudo or apt. Install missing packages using the Ubuntu command below (other
+distributions need equivalent packages). Use X11 or a Wayland desktop with the
+portals described below.
+
+Run the same command to update; quit the app first if possible. Your `config.json`,
+models and runtime are retained. Options go on the **sh side** of the pipe:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh | CT_VERSION=1.0.0 CT_SKIP_SETUP=1 CT_NO_LAUNCH=1 sh
+```
+
+`CT_VERSION` accepts a release version with or without `v`; omit it for latest.
+`CT_INSTALL_DIR` overrides the dedicated install directory. Non-empty directories
+are accepted only when marked by this installer; use a new directory for a manual
+installation. `CT_SKIP_SETUP=1` skips model/runtime setup; `CT_NO_LAUNCH=1` skips
+starting the app. Boolean options are
+on with `1`, off with `0`. To inspect the script or uninstall, save it first:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ypsilonmeister/clipboard-translator/main/install.sh -o install.sh
+sh install.sh --help
+sh install.sh --uninstall                 # confirms through /dev/tty
+# Custom directory: add --install-dir /absolute/path/to/app
+# Unattended removal: --uninstall --yes (or CT_UNINSTALL=1 CT_YES=1)
+```
+
+Saved-script flags are `--version`, `--install-dir`, `--skip-setup`, `--no-launch`,
+`--uninstall` and `--yes`. Uninstall removes the app's files, configuration,
+known catalog model/template files (including partial downloads), the entire
+`runtime/cpu` and `runtime/vulkan` trees, private Wayland token and registrations
+pointing to this executable. Other files remain, and the directory is removed only
+if empty. Uninstall requires the installer marker; custom model paths are retained.
+The visible launcher is `applications/clipboard-translator.desktop` under the data
+home, separate from the app's hidden Wayland registration.
+
+Manual fallback:
+
 1. Check your session with `echo "$XDG_SESSION_TYPE"`: use X11 (Xorg), or a Wayland
    desktop with the portals described under *Wayland workflow* below.
 2. Install the dependencies (Ubuntu 24.04, below), then download
@@ -346,9 +393,9 @@ or `~/.config/autostart/io.github.ypsilonmeister.ClipboardTranslator.desktop` on
 changes and removes only entries matching this executable when disabled.
 Move the app before enabling it,
 or toggle the setting after moving it. Quit from the menu or send SIGTERM; a `STOP`
-file beside the executable also stops the app. Updating a Linux build currently means
-quitting and replacing the executable/setup script; retain `config.json`, `models`, and
-`runtime`. The Windows PowerShell installer and Scoop are Windows-only.
+file beside the executable also stops the app. Update by rerunning `install.sh`, or
+manually quit and replace the executable/setup script while retaining `config.json`,
+`models`, and `runtime`. The PowerShell installer and Scoop are Windows-only.
 
 To build from source on Ubuntu 24.04 (Go 1.21+ and a C compiler required):
 
@@ -427,7 +474,7 @@ Right-click the tray icon:
 | Place | Actions and settings |
 | --- | --- |
 | Tray | Settings, cancel translation, unload model, translation model (when two or more are installed, to quickly switch between a fast and an accurate model), recent translations, updates, open config.json, start at login, license, quit (plus logs and version information) |
-| Settings | Hotkeys, languages, and output format (replace / bilingual) and text source (selection / clipboard) per profile; auto-paste, notifications, model and engine selection, text limits, idle unload |
+| Settings | Hotkeys, action (translate / tidy), tidy rules, languages, and output format (replace / bilingual) and text source (selection / clipboard) per profile; auto-paste, notifications, model and engine selection, text limits, idle unload |
 
 Auto-paste is off by default. On supported desktops, when enabled, it pastes only for a fresh selection while the same window is still in front; otherwise the translation waits in the clipboard. It is always disabled on Wayland.
 If hotkey registration fails, open **Settings...**, the first tray entry, choose another hotkey and click **Save**.
@@ -488,8 +535,9 @@ can save your corrections and start it again.
 | `auto_paste` | `true` types Ctrl+V after translating on supported desktops (default `false`; always disabled on Wayland) |
 | `quickstart_shown` | `true` once the first-run quick start has been shown (set by the app; set it to `false` to see the balloon again; default `false`) |
 | `notify_on_complete` | `true` shows a tray notification that the translation is ready in the clipboard (without showing text) when not auto-pasted (default `false`) |
+| `show_cursor_hint` | `true` shows a busy icon near the mouse pointer while a hotkey request is in progress (Windows only, default `false`) |
 | `languages` | Two language codes translated in both directions, e.g. `["ja", "en"]` (default), `["en", "ko"]`, `["ja", "zh-hans"]`. Codes are the model's: `ja en ko zh-hans zh-hant ru th ar de fr es ...` (53 in all, see the [model card](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)). The direction is read from the script of the text, so the two languages must use different scripts (en ↔ de is refused for now). Japanese ↔ English is the main use; other languages are best effort. |
-| `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "bilingual"}]`. A profile has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each), and an optional `output` format: `"replace"` (default; key absent = replace) puts only the translation on the clipboard; `"bilingual"` puts the original text, a newline, and then the translation (`<source>\n<translated>`, with trailing CR/LF characters trimmed from the source before adding the newline). Translation history keeps Source and Translated separately; "Recent translations" lets you copy the original, the translation, or both. An optional `input` says where the text comes from: `"selection"` (default) copies the current selection first (Ctrl+C, waiting up to 2 s on Windows for a slow page); `"clipboard"` translates what is already on the clipboard, sends no Ctrl+C, skips the selection-copy wait and never auto-pastes (Wayland clipboard transfer is still asynchronous), which suits a page that copies slowly (copy yourself, then press the hotkey). Takes the place of `hotkey` and `languages`; Settings edits each profile. Up to 8 hotkeys on Windows and Linux; on macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
+| `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "bilingual"}]`. A translation profile (`action: "translate"`, the default) has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each), and an optional `output` format: `"replace"` (default; key absent = replace) puts only the translation on the clipboard; `"bilingual"` puts the original text, a newline, and then the translation (`<source>\n<translated>`, with trailing CR/LF characters trimmed from the source before adding the newline). Translation history keeps Source and Translated separately; "Recent translations" lets you copy the original, the translation, or both. An optional `input` says where the text comes from: `"selection"` (default) copies the current selection first (Ctrl+C, waiting up to 2 s on Windows for a slow page); `"clipboard"` translates what is already on the clipboard, sends no Ctrl+C, skips the selection-copy wait and never auto-pastes (Wayland clipboard transfer is still asynchronous), which suits a page that copies slowly (copy yourself, then press the hotkey). Takes the place of `hotkey` and `languages`; Settings edits each profile. Up to 8 hotkeys on Windows and Linux; on macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
 | `port` | Local llama-server port, 1024-65534 (the app also uses `port + 1` as an instance lock) |
 | `max_chars` | Longer text is skipped |
 | `translation_timeout_seconds` | How long one request to the local model may take, 10-1800 (default `180`). Text above about 1,200 characters is translated in several chunks (paragraphs are kept together where they fit; the chunks are smaller for Tamil, Malayalam, Khmer and Burmese, whose translations need many more tokens, and a chunk whose translation is cut off at `max_tokens` is split and translated again), and the limit applies to each chunk, not to the whole translation. If a translation times out, raise this or select less text. |
@@ -504,6 +552,51 @@ can save your corrections and start it again.
 > (`-Backend auto`, as Scoop does) keeps the engine and `gpu_layers` you already
 > use. It only downloads a backend that is missing or incomplete, and verifies
 > every download against a SHA-256 (the model files are pinned to one revision).
+
+### Text tidy profiles (no translation)
+
+A profile's `action` is `"translate"` by default. Set `"action": "tidy"`
+to clean selected text deterministically, without using a model or starting
+llama-server for the tidy run. The select → hotkey → paste workflow is the same.
+A configuration containing only tidy profiles also skips model setup and startup;
+mixed configurations keep the usual translation engine startup.
+
+```json
+{
+  "profiles": [
+    {"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]},
+    {"hotkey": "Ctrl+Alt+T", "action": "tidy", "rules": ["newlines", "width", "punct"], "punct_style": "japanese"}
+  ]
+}
+```
+
+All rules are opt-in and run in the order listed in `rules`. An absent or empty
+list does nothing. Unknown actions, rule names and punctuation styles are
+configuration errors, including when saved from Settings.
+
+| Rule | Behaviour |
+| --- | --- |
+| `newlines` | Reuses the conservative PDF/terminal soft-wrap cleanup. Keeps paragraph, list, code and short address boundaries; chooses joining spaces from the text's script. |
+| `width` | Full-width A–Z, a–z and 0–9 become ASCII; half-width katakana become full-width, composing valid voiced/semi-voiced pairs. Other symbols and punctuation remain unchanged. |
+| `punct` | Unifies `、。`, `，．` and half-width `､｡`. `punct_style: "japanese"` (default) chooses `、。`; `"fullwidth"` chooses `，．`. ASCII punctuation, full-width numeric separators and dotted Latin names are preserved. |
+| `spaces` | Collapses internal ASCII space runs and trims trailing spaces, tabs and full-width spaces in ordinary prose, keeping indentation. List/blockquote contents and column-aligned text with tabs or pipes are preserved. Opting in removes Markdown's trailing-space hard breaks in prose. |
+| `quotes` | Curly single/double quotes become ASCII quotes, including curly apostrophes. Primes, backticks and Japanese quotation marks remain unchanged. |
+| `bullets` | Line-leading `・`, `•`, `*` and `-` followed by whitespace use `-`, keeping indentation and spacing. Numbered lists, task checkboxes, dividers, inline markers and negative numbers are preserved. |
+
+All rules preserve fenced/indented code, lines containing inline backticks,
+recognizable code/assignments, URLs and email-address lines conservatively.
+When in doubt, text is left as it is. Tidy profiles need no `languages` or
+`target`; `output` and `cleanup_newlines` are translation options and do not
+affect tidy. `input`, the character limit and clipboard/auto-paste safety still
+apply. The result is written only through the existing compare-and-replace
+operation, and is kept in **Recent translations** as source and result. If no
+rule changes the text, the clipboard is untouched and no history entry is added.
+
+In Settings, choose **Action → Tidy text (no model)** on a hotkey, check the
+wanted rules and choose the punctuation style. On ChromeOS, the action settings apply to the first profile used by clipboard
+and extension requests.
+The extension's selection currently has no line breaks, so `newlines` and
+`bullets` cannot recover its original structure (issue #171).
 
 ## Settings page
 
