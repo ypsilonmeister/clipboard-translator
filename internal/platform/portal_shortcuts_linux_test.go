@@ -13,6 +13,11 @@ type fakeShortcutWire struct {
 		bindings       []portalBinding
 	}
 	closedSessions, closedRequests []string
+	configures                     []struct{ session, token, parent, activation string }
+}
+
+func (w *fakeShortcutWire) ConfigureShortcuts(session, token, parent, activation string) {
+	w.configures = append(w.configures, struct{ session, token, parent, activation string }{session, token, parent, activation})
 }
 
 func (w *fakeShortcutWire) BindShortcuts(session, token string, bindings []portalBinding) {

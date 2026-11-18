@@ -11,10 +11,20 @@ type DesktopStatus struct {
 	Manual                    bool
 	Ready                     bool
 	Retry                     bool
-	Message                   string
+	// ChooseKeys offers "Choose shortcut keys…" (ConfigureShortcuts). Binding is the
+	// shortcut state: "", "pending", "bound", "unbound" or "refused".
+	ChooseKeys bool
+	Binding    string
+	Message    string
 }
 
 type DesktopSession interface {
 	DesktopStatus() DesktopStatus
 	RetryDesktop()
+}
+
+// ShortcutChooser is implemented by sessions whose portal can open its own
+// shortcut chooser (GlobalShortcuts.ConfigureShortcuts).
+type ShortcutChooser interface {
+	ChooseShortcutKeys() error
 }
