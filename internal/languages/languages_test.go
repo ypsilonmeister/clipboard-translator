@@ -80,7 +80,6 @@ func TestDirectionForPairs(t *testing.T) {
 		{[]string{"ja", "en"}, "all code review comments を resolve した", "ja", "lowercase terms", "en", true},
 		{[]string{"ja", "en"}, "今日は\u3000meeting\u3000が\u3000three\u3000times\u3000ある\u3000and\u3000it\u3000is\u3000tiring", "ja", "ideographic spaces", "en", true},
 		{[]string{"ja", "en"}, "ｺﾝﾋﾟｭｰﾀ を restart して log file を確認", "ja", "half-width kana", "en", true},
-		{[]string{"ja", "en"}, "田中さん、please review this document by Friday", "ja", "too few prose words", "en", true},
 		{[]string{"en", "ko"}, "React Native, Expo, TypeScript, Next.js 사용", "ko", "hangul product list", "en", true},
 		{[]string{"en", "zh-hans"}, "支持 Windows 11, macOS Sonoma, Ubuntu 24.04 LTS 和 Red Hat Enterprise Linux", "zh-hans", "han product list", "en", true},
 		{[]string{"en", "zh-hans"}, "运行 npm install lodash express", "zh-hans", "han verb and command", "en", true},
@@ -96,8 +95,6 @@ func TestDirectionForPairs(t *testing.T) {
 		{[]string{"en", "zh-hant"}, "執行 docker compose up and then check the logs", "zh-hant", "han verb and long command", "en", true},
 		{[]string{"ja", "en"}, "実行: npm run build and then npm run test", "ja", "kanji label and command", "en", true},
 		{[]string{"ja", "en"}, "以下を翻訳: The quick brown fox jumps over the lazy dog", "ja", "opens in japanese", "en", true},
-		{[]string{"ja", "en"}, "田中さん, could you review the attached proposal by Friday?", "ja", "opens with a name", "en", true},
-		{[]string{"ja", "en"}, "Please forward the attached file to 田中さん", "ja", "ends with a name", "en", true},
 		{[]string{"en", "ko"}, "먼저 npm run build and then npm run test", "ko", "hangul lead and command", "en", true},
 		{[]string{"en", "ko"}, "npm run build 후에 npm run test 실행", "ko", "command, ends in hangul", "en", true},
 		{[]string{"en", "th"}, "รัน npm run build and then npm run test", "th", "thai verb and command", "en", true},
@@ -219,6 +216,37 @@ func TestDirectionForPairs(t *testing.T) {
 		got, ok := DirectionFor(tc.pair, tc.input)
 		if ok != tc.ok || got.Source != tc.source || got.Target != tc.target {
 			t.Errorf("%s %v %q: got %+v, %v; want %s->%s, %v", tc.label, tc.pair, tc.input, got, ok, tc.source, tc.target, tc.ok)
+		}
+	}
+}
+
+// knownWrong is a ratchet for texts whose correct direction is fixed by an
+// issue but which DirectionFor still gets wrong. The want fields hold the
+// CORRECT direction. While the result differs the entry passes (a known
+// wrong); once it matches, the entry FAILS until the knownWrong mark is
+// removed and the entry moved into TestDirectionForPairs, so a real fix is
+// locked in as an ordinary expectation. Unmarked entries must always match.
+//
+// A mark may be added only when (i) an issue fixes the expected direction and
+// (ii) a real-model measurement shows the wrong-direction output is harmful.
+// Otherwise freeze the current result in TestDirectionForPairs, unmarked.
+// First use: #205 (real-model measurement of 2026-11-18, see the issue).
+func TestDirectionForKnownWrong(t *testing.T) {
+	cases := []struct {
+		pair          []string
+		input         string
+		source, label string // label is only for failure messages
+		target        string
+		knownWrong    string // issue that fixes the expected direction
+	}{
+		{[]string{"ja", "en"}, "田中さん、please review this document by Friday", "en", "opens in japanese; 、 does not split the token", "ja", "#205"},
+		{[]string{"ja", "en"}, "田中さん, could you review the attached proposal by Friday?", "en", "opens with a name", "ja", "#205"},
+		{[]string{"ja", "en"}, "Please forward the attached file to 田中さん", "en", "ends with a name", "ja", "#205"},
+	}
+	for _, tc := range cases {
+		got, ok := DirectionFor(tc.pair, tc.input)
+		if ok && got.Source == tc.source && got.Target == tc.target {
+			t.Errorf("%s %v %q: now %s->%s as wanted but still marked knownWrong %s; remove the mark and move the entry to TestDirectionForPairs to lock the fix in", tc.label, tc.pair, tc.input, tc.source, tc.target, tc.knownWrong)
 		}
 	}
 }
