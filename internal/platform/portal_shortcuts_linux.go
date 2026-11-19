@@ -50,6 +50,7 @@ type portalHotkeys struct {
 	wire                        portalShortcutWire
 	entries                     []*portalHotkey
 	dirty                       bool
+	missing                     bool // no GlobalShortcuts portal: keep handles local, never bind
 	session, pending, operation string
 	deadline                    time.Time
 	err                         error
@@ -295,6 +296,12 @@ func (r *portalHotkeys) Step() {
 	r.client.Step()
 	if r.client.phase == "failed" || r.client.phase == "closed" {
 		r.clear()
+		return
+	}
+	if r.missing {
+		// The handles stay local so a later reconnect can bind them; the menu
+		// action is the trigger meanwhile.
+		r.dirty = false
 		return
 	}
 	if r.pending != "" && !r.client.now().Before(r.deadline) {

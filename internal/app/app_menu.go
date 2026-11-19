@@ -87,11 +87,16 @@ func (a *app) buildMenu() []platform.MenuItem {
 			label = "Wayland: shortcut keys not chosen"
 		} else if s.Retry {
 			label = "Wayland permissions need attention"
+		} else if waylandPartial(s) {
+			label = "Wayland connected (some features unavailable)"
 		}
 		if s.Manual {
 			label = "Manual mode (hotkey unavailable)"
 		}
 		items = append(items, platform.MenuItem{Label: label, Disabled: true})
+		for _, line := range capabilityLines(s) {
+			items = append(items, platform.MenuItem{Label: line, Disabled: true})
+		}
 		items = append(items, platform.MenuItem{ID: cmdRetryDesktop, Label: "Retry Wayland permissions", Disabled: !s.Retry})
 		if _, ok := a.cb.(platform.ShortcutChooser); ok && !s.Manual {
 			items = append(items, platform.MenuItem{ID: cmdChooseShortcuts, Label: "Choose shortcut keys…", Disabled: !s.ChooseKeys})
@@ -461,4 +466,21 @@ func (a *app) startUpdate() {
 			}
 		}
 	}
+}
+
+// waylandPartial reports a settled partial capability set: nothing is pending
+// or waiting, but some capability is permanently missing, so the menu must not
+// claim it is still waiting for permissions.
+func waylandPartial(s platform.DesktopStatus) bool {
+	missing := false
+	for _, c := range s.Capabilities() {
+		switch c.State {
+		case platform.CapabilityMissing:
+			missing = true
+		case platform.CapabilityAvailable:
+		default:
+			return false
+		}
+	}
+	return missing
 }

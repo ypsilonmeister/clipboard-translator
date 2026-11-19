@@ -6,6 +6,8 @@ char *ct_manual_read(int *complete);
 void ct_manual_cancel_read(void);
 void ct_manual_write(const char *text);
 void ct_show_control(void);
+void ct_control_configure(int close_minimizes);
+void ct_control_capabilities(const char *text);
 // X11 initialization; never call from a Wayland backend.
 int ct_init(void);
 void ct_pump(void);

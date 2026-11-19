@@ -51,6 +51,7 @@ type portalRemote struct {
 	wire                               portalRemoteWire
 	phase, session, pending, operation string // phase: idle, create, select, clipboard, start, ready, waiting, failed, closed
 	wanted                             bool
+	keyboard                           bool // Start granted the keyboard device (needed for capture only)
 	deadline                           time.Time
 	shield                             int
 	createSawShield, createRejected    bool      // shield history and deferred Response 2 for the current create
@@ -98,6 +99,7 @@ func (r *portalRemote) teardown(err error) {
 	r.operation = ""
 	r.createRejected = false
 	r.wanted = false
+	r.keyboard = false
 	r.clip.reset()
 	for token, k := range r.keys {
 		k.done = true
@@ -299,10 +301,13 @@ func (r *portalRemote) event(e portalEvent) bool {
 		case "clipboard":
 			r.request("start")
 		case "start":
-			if e.devices&1 == 0 || !e.clipboard {
-				r.stop("Wayland keyboard and clipboard access was not granted")
+			// Clipboard is the capability; the keyboard only adds selection
+			// capture, so a grant without it still makes the clipboard usable.
+			if !e.clipboard {
+				r.stop("Wayland clipboard access was not granted")
 				return true
 			}
+			r.keyboard = e.devices&1 != 0
 			if e.restore != "" && r.client.tokens.dir != "" {
 				if err := r.client.tokens.Save(e.restore); err != nil {
 					r.warning = errors.New("Wayland access works, but its permission token could not be saved")
@@ -378,7 +383,7 @@ type portalKeys struct {
 
 func (r *portalRemote) beginKeys(key int) *portalKeys {
 	k := &portalKeys{}
-	if r.phase != "ready" {
+	if r.phase != "ready" || !r.keyboard {
 		k.done = true
 		k.err = errPortalNotAuthorized
 		return k

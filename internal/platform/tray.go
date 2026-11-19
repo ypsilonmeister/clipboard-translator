@@ -65,6 +65,12 @@ type Tray interface {
 	Close()
 }
 
+// CapabilityTray is implemented by trays whose control window can show one
+// line per desktop capability (Linux). Others never see the call.
+type CapabilityTray interface {
+	SetCapabilities(lines []string)
+}
+
 type noopTray struct{}
 
 func (noopTray) QuitRequested() bool         { return false }
