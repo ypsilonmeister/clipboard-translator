@@ -423,7 +423,7 @@ func TestPortalPartialHotkeyRefusedKeepsClipboard(t *testing.T) {
 }
 
 // BindShortcuts succeeded but returned an empty trigger (KDE for a returning
-// id): only that hotkey is refused. Its per-hotkey error must not hold back the
+// id): only that hotkey is unbound. Its per-hotkey error must not hold back the
 // clipboard session, so the portal clipboard and keyboard capture still work.
 func TestPortalPartialHotkeyUnboundKeepsClipboard(t *testing.T) {
 	d, w := desktopFixture(t)
@@ -442,8 +442,10 @@ func TestPortalPartialHotkeyUnboundKeepsClipboard(t *testing.T) {
 	shield(&w.fakeRemoteWire, false)
 	grantRemote(t, d, w, 1, true)
 	s := d.DesktopStatus()
-	wantCapabilities(t, s, CapabilityRefused, CapabilityAvailable, CapabilityAvailable)
-	if !s.Retry || s.Ready || s.Manual || s.ManualClipboard {
+	// P1-3: an unbound hotkey is not retryable (BindShortcuts would return the
+	// same empty trigger); the user picks keys with Choose shortcut keys….
+	wantCapabilities(t, s, CapabilityPending, CapabilityAvailable, CapabilityAvailable)
+	if s.Retry || !s.ChooseKeys || s.Binding != "unbound" || s.Ready || s.Manual || s.ManualClipboard {
 		t.Fatalf("status %+v", s)
 	}
 	if got := desktopPortalRead(t, d, w, "portal text"); got != "portal text" {

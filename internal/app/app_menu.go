@@ -33,6 +33,7 @@ const (
 	cmdCopyConnectionInfo   = platform.FirstAppCommand + 15
 	cmdRegenerateToken      = platform.FirstAppCommand + 16
 	cmdRetryDesktop         = platform.FirstAppCommand + 12
+	cmdChooseShortcuts      = platform.FirstAppCommand + 13
 	cmdModelBase            = platform.FirstAppCommand + 100 // + index into models.Catalog
 	cmdHistoryBase          = platform.FirstAppCommand + 300 // translation; + index into history (newest first)
 	cmdHistorySourceBase    = cmdHistoryBase + historySize
@@ -82,6 +83,8 @@ func (a *app) buildMenu() []platform.MenuItem {
 		label := "Wayland: waiting for desktop permissions"
 		if s.Ready {
 			label = "Wayland connected (manual paste)"
+		} else if s.ChooseKeys || s.Binding == "unbound" {
+			label = "Wayland: shortcut keys not chosen"
 		} else if s.Retry {
 			label = "Wayland permissions need attention"
 		} else if waylandPartial(s) {
@@ -95,6 +98,9 @@ func (a *app) buildMenu() []platform.MenuItem {
 			items = append(items, platform.MenuItem{Label: line, Disabled: true})
 		}
 		items = append(items, platform.MenuItem{ID: cmdRetryDesktop, Label: "Retry Wayland permissions", Disabled: !s.Retry})
+		if _, ok := a.cb.(platform.ShortcutChooser); ok && !s.Manual {
+			items = append(items, platform.MenuItem{ID: cmdChooseShortcuts, Label: "Choose shortcut keys…", Disabled: !s.ChooseKeys})
+		}
 	}
 	if a.translating || a.capturing != nil || a.pendingRead != nil || a.pendingResult != nil {
 		items = append(items, platform.MenuItem{ID: cmdCancel, Label: "Cancel translation"}, platform.MenuItem{Separator: true})
@@ -177,6 +183,8 @@ func (a *app) handleCommand(id int) {
 		a.startClipboardTranslation()
 	case id == cmdRetryDesktop:
 		a.retryDesktop()
+	case id == cmdChooseShortcuts:
+		a.chooseShortcuts()
 	case id >= cmdHistoryBilingualBase && id < cmdHistoryBilingualBase+historySize:
 		a.copyHistoryText(id-cmdHistoryBilingualBase, "bilingual")
 	case id >= cmdHistorySourceBase && id < cmdHistorySourceBase+historySize:

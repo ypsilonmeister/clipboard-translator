@@ -30,6 +30,19 @@ func (a *app) retryDesktop() {
 	}
 }
 
+// chooseShortcuts opens the desktop's own shortcut chooser. The binding flips to
+// bound when the desktop reports ShortcutsChanged; tickDesktop then refreshes.
+func (a *app) chooseShortcuts() {
+	c, ok := a.cb.(platform.ShortcutChooser)
+	if !ok {
+		return
+	}
+	if err := c.ChooseShortcutKeys(); err != nil {
+		a.tray.Notify("Clipboard Translator", "Could not open the shortcut chooser: "+err.Error(), true)
+	}
+	a.tickDesktop()
+}
+
 func (a *app) tickDesktop() {
 	s := a.desktopStatus()
 	if !s.Wayland {

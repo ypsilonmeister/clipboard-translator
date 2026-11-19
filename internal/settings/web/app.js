@@ -110,6 +110,7 @@
       max_chars: st.max_chars || 4000,
       idle_unload_minutes: st.idle_unload_minutes || 0,
       profiles: (st.profiles || []).map((p) => ({
+        id: p.id || '',
         ctrl: !!p.ctrl, alt: !!p.alt, shift: !!p.shift, win: !!p.win, key: p.key || 'E',
         mode: p.target ? 'target' : 'pair',
         a: (p.languages && p.languages[0]) || 'ja',
@@ -144,6 +145,7 @@
       idle_unload_minutes: m.idle_unload_minutes,
       profiles: m.profiles.map((p) => {
         const out = { ctrl: p.ctrl, alt: p.alt, shift: p.shift, win: p.win, key: p.key, output: p.output || 'replace', input: p.input || 'selection', cleanup_newlines: p.cleanup_newlines || 'off' };
+        out.id = p.id || '';
         out.action = p.action || 'translate';
         out.rules = [...(p.rules || [])];
         out.punct_style = p.punct_style || 'japanese';
@@ -692,7 +694,7 @@
     const desktop = $('desktop-status');
     if (desktop) {
       desktop.textContent = state.desktop_status || '';
-      if (state.wayland) desktop.textContent += ' Retry Wayland permissions is available in the control window when access needs attention.';
+      if (state.wayland) desktop.textContent += ' Retry Wayland permissions and Choose shortcut keys… are available in the control window menu when access needs attention.';
       for (const line of state.desktop_capabilities || []) {
         const item = document.createElement('div');
         item.textContent = line;

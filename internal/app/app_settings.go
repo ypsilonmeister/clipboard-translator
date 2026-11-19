@@ -256,7 +256,7 @@ func sameProfiles(a, b []config.Profile) bool {
 		if a[i].ActionMode() != b[i].ActionMode() || !slices.Equal(a[i].Rules, b[i].Rules) || a[i].PunctStyleMode() != b[i].PunctStyleMode() {
 			return false
 		}
-		if a[i].Hotkey != b[i].Hotkey || a[i].Target != b[i].Target || a[i].OutputMode() != b[i].OutputMode() || a[i].InputMode() != b[i].InputMode() || a[i].CleanupNewlinesMode() != b[i].CleanupNewlinesMode() || len(a[i].Languages) != len(b[i].Languages) {
+		if a[i].ID != b[i].ID || a[i].Hotkey != b[i].Hotkey || a[i].Target != b[i].Target || a[i].OutputMode() != b[i].OutputMode() || a[i].InputMode() != b[i].InputMode() || a[i].CleanupNewlinesMode() != b[i].CleanupNewlinesMode() || len(a[i].Languages) != len(b[i].Languages) {
 			return false
 		}
 		for j := range a[i].Languages {

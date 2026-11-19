@@ -130,8 +130,25 @@ func (r *portalRemote) wait() {
 	r.attempt++
 }
 
+// reconnecting reports a session that is coming back after a loss: backoff
+// (waiting) or any step of the re-establish sequence. retryAt is set only by
+// wait() and cleared by Authorize, so the first authorization is not a reconnect.
 func (r *portalRemote) reconnecting() bool {
-	return r.phase == "waiting" || (r.phase == "create" && !r.retryAt.IsZero())
+	switch r.phase {
+	case "waiting":
+		return true
+	case "create", "select", "clipboard", "start":
+		return !r.retryAt.IsZero()
+	}
+	return false
+}
+
+// reconnectNow skips the remaining backoff of a waiting session. An attempt
+// already in flight is left alone.
+func (r *portalRemote) reconnectNow() {
+	if r.phase == "waiting" {
+		r.wanted = true
+	}
 }
 
 // WaitMessage is the user-facing status during reconnect.

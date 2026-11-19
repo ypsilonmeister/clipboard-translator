@@ -41,6 +41,7 @@ const (
 // and the key as a string (A-Z, 0-9, or F1-F12), so the page does not need to
 // know the hotkey syntax.
 type ProfileForm struct {
+	ID              *string  `json:"id,omitempty"`
 	Action          string   `json:"action,omitempty"`
 	Rules           []string `json:"rules,omitempty"`
 	PunctStyle      string   `json:"punct_style,omitempty"`
@@ -580,7 +581,7 @@ func FormFromProfile(p config.Profile, goos string) (ProfileForm, error) {
 	if err != nil {
 		return ProfileForm{}, err
 	}
-	return ProfileForm{Ctrl: spec.Ctrl, Alt: spec.Alt, Shift: spec.Shift, Win: spec.Win, Key: spec.Key,
+	return ProfileForm{ID: &p.ID, Ctrl: spec.Ctrl, Alt: spec.Alt, Shift: spec.Shift, Win: spec.Win, Key: spec.Key,
 		Action: p.ActionMode(), Rules: append([]string(nil), p.Rules...), PunctStyle: p.PunctStyleMode(),
 		Languages: append([]string(nil), p.Languages...), Target: p.Target, Output: p.OutputMode(), Input: p.InputMode(),
 		CleanupNewlines: p.CleanupNewlinesMode()}, nil
@@ -620,6 +621,11 @@ func (f Form) ToConfig(base config.Config) (config.Config, error) {
 			return base, errors.New("There must be at least one hotkey.")
 		}
 		c.Profiles = make([]config.Profile, len(f.Profiles))
+		// Older clients omit id. An explicit empty id marks a newly added row.
+		previousIDs := make(map[string]string, len(base.Profiles))
+		for _, p := range base.Profiles {
+			previousIDs[p.Hotkey] = p.ID
+		}
 		for i, p := range f.Profiles {
 			if p.Target != "" && len(p.Languages) > 0 {
 				return base, fmt.Errorf("profiles[%d]: use either two languages or one target language, not both", i)
@@ -636,8 +642,21 @@ func (f Form) ToConfig(base config.Config) (config.Config, error) {
 			if action == config.ActionTelephone && p.Target != "" {
 				return base, fmt.Errorf("profiles[%d]: action %q requires a two-language pair, not target mode", i, config.ActionTelephone)
 			}
+			hotkey := p.HotkeyString()
+			id := previousIDs[hotkey]
+			if p.ID != nil {
+				id = *p.ID
+			}
+			if id == "" {
+				var err error
+				id, err = config.NewProfileID()
+				if err != nil {
+					return base, err
+				}
+			}
 			c.Profiles[i] = config.Profile{
-				Hotkey:          p.HotkeyString(),
+				ID:              id,
+				Hotkey:          hotkey,
 				Action:          action,
 				Rules:           append([]string(nil), p.Rules...),
 				PunctStyle:      p.PunctStyle,

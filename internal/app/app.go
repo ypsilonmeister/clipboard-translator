@@ -173,7 +173,6 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 		limiter:             llamaserver.RestartLimiter{Max: 3, Window: 10 * time.Minute},
 		readyTip:            "Clipboard Translator - ready (" + conf.Hotkey + ")",
 
-		newHotkey:    platform.NewHotkey,
 		showErr:      platform.ShowError,
 		updates:      make(chan updateResult, 1),
 		pings:        make(chan struct{}, 1),
@@ -515,6 +514,11 @@ func (a *app) run() {
 	}
 	defer cb.Close()
 	a.cb = cb
+	if a.desktopStatus().Wayland {
+		if err := a.conf.PersistProfileIDs(a.dir); err != nil {
+			log.Printf("could not save migrated shortcut ids: %v", err)
+		}
+	}
 	a.registerStartupHotkey()
 	defer a.closeSettings()
 	if err := a.startTranslateAPI(); err != nil {
@@ -543,6 +547,13 @@ func (a *app) startProfileEngine() error {
 	return a.startServer()
 }
 
+func (a *app) registerProfileHotkey(p config.Profile) (platform.Hotkey, error) {
+	if a.newHotkey != nil {
+		return a.newHotkey(p.Hotkey)
+	}
+	return platform.NewProfileHotkey(p.Hotkey, p.ID)
+}
+
 // registerExtraHotkeys registers the hotkeys of profiles 1.. after profile 0. A
 // hotkey another program owns, or one this OS build cannot hold, only disables
 // its own profile: the others and the tray keep working.
@@ -555,7 +566,7 @@ func (a *app) registerExtraHotkeys() {
 		case i >= a.hotkeyLimit:
 			e.why = fmt.Sprintf("this build registers %d hotkey(s) at most", a.hotkeyLimit)
 		default:
-			hk, err := a.newHotkey(spec)
+			hk, err := a.registerProfileHotkey(a.conf.Profiles[i])
 			if err != nil {
 				e.why = err.Error()
 			} else {
@@ -630,7 +641,7 @@ func (a *app) extraFailures() string {
 // owns it, the app still starts (without a hotkey) so the user can pick a free
 // one in Settings instead of having to edit config.json.
 func (a *app) registerStartupHotkey() {
-	hk, err := a.newHotkey(a.conf.Hotkey)
+	hk, err := a.registerProfileHotkey(a.conf.Profiles[0])
 	if err != nil {
 		log.Printf("hotkey %s: %v", a.conf.Hotkey, err)
 		a.hotkey = noHotkey{}

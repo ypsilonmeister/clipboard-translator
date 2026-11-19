@@ -43,7 +43,9 @@ const (
 	portalCaptureNoClipboard = "Selected text cannot be copied automatically without the clipboard portal; the hotkey translates the text already on the clipboard."
 	portalCaptureNoKeyboard  = "Wayland keyboard access was not granted, so the hotkey translates the text already on the clipboard; use Retry Wayland permissions to allow it."
 	portalHotkeyPending      = "Allow translation shortcuts in the desktop permission dialog..."
-	portalHotkeyInactive     = "A translation shortcut is inactive; choose it in the desktop dialog with Retry Wayland permissions"
+	portalHotkeyRefused      = "Translation shortcuts were refused in the desktop dialog. Choose Retry Wayland permissions to ask again."
+	portalHotkeyConfiguring  = "Choose the keys in the desktop shortcut dialog. This updates when you confirm there."
+	portalHotkeyUnbound      = "No keys are assigned to the translation shortcuts yet. Choose Choose shortcut keys… to pick them in the desktop dialog."
 	portalClipboardPending   = "Allow keyboard and clipboard access in the desktop permission dialog..."
 	portalConnectingMessage  = "Connecting to Wayland desktop portals..."
 	portalReadyMessage       = "Wayland: release the hotkey modifiers after pressing; paste translations manually with Ctrl+V. Automatic paste is disabled."
@@ -155,17 +157,33 @@ func (d *portalDesktop) hotkeyStatus() CapabilityStatus {
 	switch {
 	case d.hotkeyMissing:
 		return CapabilityStatus{CapabilityMissing, portalHotkeyMissing}
+	case h.State() == bindingRefused && h.err != nil:
+		return CapabilityStatus{CapabilityRefused, portalHotkeyRefused}
 	case h.err != nil:
 		return CapabilityStatus{CapabilityRefused, h.err.Error()}
 	case h.dirty || h.pending != "":
 		return CapabilityStatus{CapabilityPending, portalHotkeyPending}
-	}
-	for _, e := range h.entries {
-		if !e.closed && !e.active {
-			return CapabilityStatus{CapabilityRefused, portalHotkeyInactive}
+	case h.State() == bindingUnbound:
+		// Re-sending BindShortcuts cannot assign a key (it replies at once with
+		// the stored empty trigger), so this is not Refused: Retry is not offered.
+		// The user picks keys with Choose shortcut keys… (see hotkeyUnbound).
+		switch {
+		case h.Configuring():
+			return CapabilityStatus{CapabilityPending, portalHotkeyConfiguring}
+		case h.noConfigure:
+			return CapabilityStatus{CapabilityPending, "No keys are assigned to the translation shortcuts yet: " + shortcutSettingsPlace() + "."}
 		}
+		return CapabilityStatus{CapabilityPending, portalHotkeyUnbound}
 	}
 	return CapabilityStatus{State: CapabilityAvailable}
+}
+
+// hotkeyUnbound reports that hotkeyStatus took its unbound branch, where the
+// desktop chooser (ChooseKeys) is offered. Independent of RemoteDesktop (P1-1):
+// the chooser is usable while the clipboard is still waiting.
+func (d *portalDesktop) hotkeyUnbound() bool {
+	h := d.hotkeys
+	return !d.hotkeyMissing && h.err == nil && !h.dirty && h.pending == "" && h.State() == bindingUnbound
 }
 
 func (d *portalDesktop) clipboardStatus() CapabilityStatus {
@@ -237,6 +255,7 @@ func (d *portalDesktop) DesktopStatus() DesktopStatus {
 		return s
 	}
 	s.Hotkey = d.hotkeyStatus()
+	s.ChooseKeys = d.hotkeyUnbound() && d.hotkeys.CanConfigure()
 	s.Clipboard = d.clipboardStatus()
 	s.Capture = d.captureStatus(s.Clipboard)
 	s.Manual = s.Hotkey.State == CapabilityMissing
@@ -271,7 +290,19 @@ func (d *portalDesktop) DesktopStatus() DesktopStatus {
 		// Only permanent gaps remain: the rest works in its degraded mode.
 		s.Message = strings.Join(append(missing, portalPartialReadySuffix), " ")
 	}
+	if !d.closed && !d.manual && d.err == nil && d.client != nil && d.client.err == nil && d.client.phase == "ready" && d.hotkeys != nil {
+		s.Binding = string(d.hotkeys.State())
+	}
 	return s
+}
+
+// ChooseShortcutKeys opens the desktop's own shortcut chooser (ConfigureShortcuts).
+// The binding flips to bound when the desktop reports ShortcutsChanged.
+func (d *portalDesktop) ChooseShortcutKeys() error {
+	if d.closed || d.client == nil || d.hotkeys == nil {
+		return errors.New("Wayland is disconnected; use Retry Wayland permissions")
+	}
+	return d.hotkeys.ConfigureShortcuts()
 }
 func (d *portalDesktop) RetryDesktop() {
 	if d.closed {
@@ -286,7 +317,7 @@ func (d *portalDesktop) RetryDesktop() {
 	}
 	if d.hotkeys.pending == "" && !d.hotkeyMissing {
 		for _, h := range d.hotkeys.entries {
-			if h.err != nil {
+			if h.err != nil && h.state != bindingUnbound {
 				d.hotkeys.dirty = true
 			}
 		}
