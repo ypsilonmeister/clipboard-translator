@@ -5,8 +5,12 @@
 #include <gtk/gtk.h>
 
 static GtkStatusIcon *status_icon;
-static GtkWidget *current_menu, *control_window, *status_label;
-static char *last_status, *last_title;
+static GtkWidget *current_menu, *control_window, *status_label, *caps_label;
+static char *last_status, *last_title, *last_caps;
+// Wayland only: the close button minimizes the control window (it is the only UI
+// there) instead of quitting; Quit stays in the menu. control_minimized records
+// that the user hid it, so only an explicit manual action presents it again.
+static int control_close_minimizes, control_minimized;
 static GdkEvent *control_menu_event;
 static int menu_requested, menu_from_control, force_control;
 static GQueue commands = G_QUEUE_INIT;
@@ -18,6 +22,11 @@ static void request_menu(GtkStatusIcon *icon, guint button, guint time, gpointer
 static void activate_icon(GtkStatusIcon *icon, gpointer data) { menu_from_control = 0; menu_requested = 1; }
 static void control_clicked(GtkButton *button, gpointer data) { if (control_menu_event) gdk_event_free(control_menu_event); control_menu_event = gtk_get_current_event(); menu_from_control = 1; menu_requested = 1; }
 static gboolean close_control(GtkWidget *w, GdkEvent *event, gpointer data) {
+    if (control_close_minimizes) {
+        control_minimized = 1;
+        gtk_window_iconify(GTK_WINDOW(w));
+        return TRUE;
+    }
     g_queue_push_tail(&commands, GINT_TO_POINTER(2));
     return TRUE;
 }
@@ -27,12 +36,24 @@ static gboolean check_tray(gpointer data) {
         control_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
         gtk_window_set_title(GTK_WINDOW(control_window), last_title ? last_title : "Clipboard Translator");
         gtk_container_set_border_width(GTK_CONTAINER(control_window), 16);
+        // Small, fixed size: the window only carries a status line, the
+        // capability lines and one button.
+        gtk_window_set_default_size(GTK_WINDOW(control_window), 360, -1);
+        gtk_window_set_resizable(GTK_WINDOW(control_window), FALSE);
         GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
         status_label = gtk_label_new(last_status ? last_status : "Clipboard Translator");
         gtk_label_set_line_wrap(GTK_LABEL(status_label),TRUE);
         gtk_label_set_max_width_chars(GTK_LABEL(status_label),70);
+        gtk_label_set_xalign(GTK_LABEL(status_label), 0);
+        caps_label = gtk_label_new(last_caps);
+        gtk_label_set_line_wrap(GTK_LABEL(caps_label),TRUE);
+        gtk_label_set_max_width_chars(GTK_LABEL(caps_label),70);
+        gtk_label_set_xalign(GTK_LABEL(caps_label), 0);
+        gtk_widget_set_no_show_all(caps_label, TRUE);
+        if (last_caps && last_caps[0]) gtk_widget_show(caps_label);
         GtkWidget *button = gtk_button_new_with_label("Open menu");
         gtk_box_pack_start(GTK_BOX(box), status_label, TRUE, TRUE, 0);
+        gtk_box_pack_start(GTK_BOX(box), caps_label, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(box), button, FALSE, FALSE, 0);
         gtk_container_add(GTK_CONTAINER(control_window), box);
         g_signal_connect(button, "clicked", G_CALLBACK(control_clicked), NULL);
@@ -65,11 +86,13 @@ void ct_tray_set_title(const char *title) {
 void ct_tray_close(void) {
     if (tray_check) { GSource *s = g_main_context_find_source_by_id(NULL, tray_check); if (s) g_source_destroy(s); tray_check = 0; }
     if (current_menu) { gtk_widget_destroy(current_menu); current_menu = NULL; }
-    if (control_window) { gtk_widget_destroy(control_window); control_window = status_label = NULL; }
+    if (control_window) { gtk_widget_destroy(control_window); control_window = status_label = caps_label = NULL; }
     if (status_icon) { g_object_unref(status_icon); status_icon = NULL; }
     if (control_menu_event) { gdk_event_free(control_menu_event); control_menu_event = NULL; }
     g_queue_clear(&commands);
     menu_requested = menu_from_control = force_control = 0;
+    control_close_minimizes = control_minimized = 0;
+    g_clear_pointer(&last_caps,g_free);
     g_clear_pointer(&last_status,g_free);
     g_clear_pointer(&last_title,g_free);
     ct_manual_cancel_read();
@@ -78,6 +101,16 @@ void ct_status(const char *text) {
     g_free(last_status);last_status=g_strdup(text);
     if (status_icon) gtk_status_icon_set_tooltip_text(status_icon, text);
     if (status_label) gtk_label_set_text(GTK_LABEL(status_label), text);
+}
+// ct_control_configure must run before the window exists (ct_tray_create).
+void ct_control_configure(int close_minimizes) { control_close_minimizes = close_minimizes; }
+// ct_control_capabilities sets the per-capability lines (newline separated).
+void ct_control_capabilities(const char *text) {
+    g_free(last_caps);
+    last_caps = (text && text[0]) ? g_strdup(text) : NULL;
+    if (!caps_label) return;
+    gtk_label_set_text(GTK_LABEL(caps_label), last_caps ? last_caps : "");
+    if (last_caps) gtk_widget_show(caps_label); else gtk_widget_hide(caps_label);
 }
 void ct_pump(void) { while (gtk_events_pending()) gtk_main_iteration_do(FALSE); }
 int ct_wants_menu(void) { int r = menu_requested; menu_requested = 0; return r; }
@@ -144,6 +177,7 @@ void ct_manual_write(const char *text) {
 void ct_show_control(void) {
     force_control = 1;
     if (!control_window) check_tray(NULL);
+    control_minimized = 0;
     if (control_window) gtk_window_present(GTK_WINDOW(control_window));
 }
 
