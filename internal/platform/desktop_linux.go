@@ -223,6 +223,9 @@ func NewTray(logPath string) Tray {
 		log.Printf("tray icon: %v", err)
 	}
 	t.stateIconPaths[TrayIdle] = t.iconPath
+	// On Wayland the control window is the only UI, so its close button hides
+	// it; on X11 it keeps quitting the app (unchanged).
+	C.ct_control_configure(C.int(boolInt(linuxWayland)))
 	withCString(t.iconPath, func(p *C.char) { C.ct_tray_create(p) })
 	activeLinuxTray = t
 	return t
@@ -232,6 +235,11 @@ func boolInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+// SetCapabilities shows one line per Wayland capability in the control window.
+func (*linuxTray) SetCapabilities(lines []string) {
+	withCString(strings.Join(lines, "\n"), func(p *C.char) { C.ct_control_capabilities(p) })
 }
 func (*linuxTray) SetStatus(text string) { withCString(text, func(p *C.char) { C.ct_status(p) }) }
 

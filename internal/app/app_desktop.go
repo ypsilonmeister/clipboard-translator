@@ -43,6 +43,9 @@ func (a *app) tickDesktop() {
 		return
 	}
 	a.desktopStamp = stamp
+	if t, ok := a.tray.(platform.CapabilityTray); ok {
+		t.SetCapabilities(capabilityLines(s))
+	}
 	a.updateReadyTip()
 	if !a.busy() && a.capturing == nil {
 		a.refreshStatus()
