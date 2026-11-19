@@ -13,6 +13,11 @@ type fakeShortcutWire struct {
 		bindings       []portalBinding
 	}
 	closedSessions, closedRequests []string
+	configures                     []struct{ session, token, parent, activation string }
+}
+
+func (w *fakeShortcutWire) ConfigureShortcuts(session, token, parent, activation string) {
+	w.configures = append(w.configures, struct{ session, token, parent, activation string }{session, token, parent, activation})
 }
 
 func (w *fakeShortcutWire) BindShortcuts(session, token string, bindings []portalBinding) {
@@ -236,5 +241,29 @@ func TestPortalShortcutEditCancelsObsoleteDialog(t *testing.T) {
 	r.Step()
 	if r.client.phase != "ready" || r.client.err != nil {
 		t.Fatal("late canceled call destroyed the shared portal connection")
+	}
+}
+
+func TestPortalShortcutUsesSuppliedProfileID(t *testing.T) {
+	r, w, _ := shortcutFixture()
+	if _, err := r.NewHotkey("Ctrl+K", "profile_3"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.NewHotkey("Ctrl+E", "profile_1"); err != nil {
+		t.Fatal(err)
+	}
+	r.Step()
+	// Since P1-1 the hotkeys own their GlobalShortcuts session, so the bind
+	// carrying the supplied IDs follows the CreateSession response.
+	if len(w.binds) != 0 {
+		t.Fatal("the shortcut session must be created before binding")
+	}
+	answerShortcutCreate(t, r, w, "initial")
+	if len(w.binds) != 1 {
+		t.Fatalf("got %d bind calls, want 1", len(w.binds))
+	}
+	bindings := w.binds[0].bindings
+	if len(bindings) != 2 || bindings[0].id != "profile_3" || bindings[1].id != "profile_1" {
+		t.Fatalf("portal received %+v", bindings)
 	}
 }

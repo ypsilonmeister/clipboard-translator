@@ -125,11 +125,27 @@ func (d *portalDesktop) DesktopStatus() DesktopStatus {
 		s.Retry = true
 	case d.client.phase != "ready":
 		s.Message = "Connecting to Wayland desktop portals..."
+	case d.hotkeys.State() == bindingRefused && d.hotkeys.err != nil:
+		s.Message = "Translation shortcuts were refused in the desktop dialog. Choose Retry Wayland permissions to ask again."
+		s.Retry = true
 	case d.hotkeys.err != nil:
 		s.Message = d.hotkeys.err.Error()
 		s.Retry = true
 	case d.hotkeys.dirty || d.hotkeys.pending != "":
 		s.Message = "Allow translation shortcuts in the desktop permission dialog..."
+	case d.hotkeys.State() == bindingUnbound:
+		// Independent of RemoteDesktop (P1-1): the chooser is usable while it is still waiting.
+		// Re-sending BindShortcuts cannot assign a key (it replies at once with the
+		// stored empty trigger), so Retry is not offered here.
+		s.ChooseKeys = d.hotkeys.CanConfigure()
+		switch {
+		case d.hotkeys.Configuring():
+			s.Message = "Choose the keys in the desktop shortcut dialog. This updates when you confirm there."
+		case d.hotkeys.noConfigure:
+			s.Message = "No keys are assigned to the translation shortcuts yet: " + shortcutSettingsPlace() + "."
+		default:
+			s.Message = "No keys are assigned to the translation shortcuts yet. Choose Choose shortcut keys… to pick them in the desktop dialog."
+		}
 	case d.remote.err != nil:
 		s.Message = d.remote.err.Error()
 		s.Retry = true
@@ -142,19 +158,23 @@ func (d *portalDesktop) DesktopStatus() DesktopStatus {
 	default:
 		s.Ready = true
 		s.Message = "Wayland: release the hotkey modifiers after pressing; paste translations manually with Ctrl+V. Automatic paste is disabled."
-		for _, h := range d.hotkeys.entries {
-			if !h.closed && !h.active {
-				s.Ready = false
-				s.Retry = true
-				s.Message = "A translation shortcut is inactive; choose it in the desktop dialog with Retry Wayland permissions"
-				break
-			}
-		}
 		if d.remote.warning != nil {
 			s.Message += " " + d.remote.warning.Error()
 		}
 	}
+	if !d.closed && !d.manual && d.err == nil && d.client != nil && d.client.err == nil && d.client.phase == "ready" && d.hotkeys != nil {
+		s.Binding = string(d.hotkeys.State())
+	}
 	return s
+}
+
+// ChooseShortcutKeys opens the desktop's own shortcut chooser (ConfigureShortcuts).
+// The binding flips to bound when the desktop reports ShortcutsChanged.
+func (d *portalDesktop) ChooseShortcutKeys() error {
+	if d.closed || d.client == nil || d.hotkeys == nil {
+		return errors.New("Wayland is disconnected; use Retry Wayland permissions")
+	}
+	return d.hotkeys.ConfigureShortcuts()
 }
 func (d *portalDesktop) RetryDesktop() {
 	if d.closed {
@@ -169,7 +189,7 @@ func (d *portalDesktop) RetryDesktop() {
 	}
 	if d.hotkeys.pending == "" {
 		for _, h := range d.hotkeys.entries {
-			if h.err != nil {
+			if h.err != nil && h.state != bindingUnbound {
 				d.hotkeys.dirty = true
 			}
 		}
