@@ -87,7 +87,7 @@ func (w *gioPortalWire) Poll() (portalEvent, bool) {
 		return portalEvent{}, false
 	}
 	defer C.ct_portal_event_free(&e)
-	kinds := []string{"", "registered", "response", "closed", "failed", "activated", "deactivated", "shortcuts-changed", "method", "selection-owner", "selection-transfer", "read", "written", "capability"}
+	kinds := []string{"", "registered", "response", "closed", "failed", "activated", "deactivated", "shortcuts-changed", "method", "selection-owner", "selection-transfer", "read", "written", "capability", "screensaver"}
 	kind := "failed"
 	if int(e.kind) > 0 && int(e.kind) < len(kinds) {
 		kind = kinds[int(e.kind)]
@@ -153,6 +153,17 @@ func (w *gioPortalWire) BindShortcuts(session, token string, bindings []portalBi
 		defer C.free(unsafe.Pointer(items[i].trigger))
 	}
 	C.ct_portal_bind_shortcuts(w.native, a, b, (*C.CTShortcut)(storage), C.int(len(bindings)))
+}
+func (w *gioPortalWire) ConfigureShortcuts(session, token, parent, activation string) {
+	if w.native == nil {
+		return
+	}
+	a, b, c, d := C.CString(session), C.CString(token), C.CString(parent), C.CString(activation)
+	defer C.free(unsafe.Pointer(a))
+	defer C.free(unsafe.Pointer(b))
+	defer C.free(unsafe.Pointer(c))
+	defer C.free(unsafe.Pointer(d))
+	C.ct_portal_configure_shortcuts(w.native, a, b, c, d)
 }
 func (w *gioPortalWire) CloseSession(session string) {
 	if w.native != nil {
@@ -241,5 +252,14 @@ func (w *gioPortalWire) Key(session, token string, sym int, down bool) {
 		defer C.free(unsafe.Pointer(a))
 		defer C.free(unsafe.Pointer(b))
 		C.ct_portal_key(w.native, a, b, C.int(sym), C.int(boolInt(down)))
+	}
+}
+
+// QueryScreenSaver asks for the current screen shield state; the answer arrives
+// as a "screensaver" event (0 = inactive, 1 = active, 2 = unavailable).
+// ActiveChanged from the selected provider uses the same event.
+func (w *gioPortalWire) QueryScreenSaver() {
+	if w.native != nil {
+		C.ct_portal_query_screensaver(w.native)
 	}
 }

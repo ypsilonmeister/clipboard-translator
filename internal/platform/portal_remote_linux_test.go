@@ -18,7 +18,10 @@ type fakeRemoteWire struct {
 	fakePortalWire
 	calls                                   []remoteCall
 	cancels, closedSessions, closedRequests []string
+	saverQueries                            int
 }
+
+func (w *fakeRemoteWire) QueryScreenSaver() { w.saverQueries++ }
 
 func (w *fakeRemoteWire) CloseSession(s string) { w.closedSessions = append(w.closedSessions, s) }
 func (w *fakeRemoteWire) CloseRequest(s string) { w.closedRequests = append(w.closedRequests, s) }
@@ -101,8 +104,9 @@ func TestPortalRemoteAuthorizationAndTokenRotation(t *testing.T) {
 	if len(w.calls) != 1 || w.calls[0].kind != "select" || w.calls[0].value != "old-private-token" {
 		t.Fatal("restore token was not supplied to SelectDevices")
 	}
-	if token, err := r.client.tokens.Load(); err != nil || token != "" {
-		t.Fatal("single-use token was not consumed")
+	// #133 P1-2: the token stays on disk until Start returns its replacement.
+	if token, err := r.client.tokens.Load(); err != nil || token != "old-private-token" {
+		t.Fatal("restore token must be kept until Start succeeds")
 	}
 	w.events = append(w.events, portalEvent{kind: "response", token: r.pending})
 	r.Step()
@@ -125,7 +129,8 @@ func TestPortalRemoteAuthorizationAndTokenRotation(t *testing.T) {
 	}
 }
 func TestPortalRemoteDenialAndRevocationKeepShortcuts(t *testing.T) {
-	for _, phase := range []string{"select", "clipboard", "start", "missing-keyboard", "revoked", "timeout"} {
+	// Session.Closed is no longer a revocation (#133 P1-2); see portal_inhibit_linux_test.go.
+	for _, phase := range []string{"select", "clipboard", "start", "missing-keyboard", "timeout"} {
 		t.Run(phase, func(t *testing.T) {
 			r, w, now := remoteFixture(t)
 			r.Authorize()
@@ -140,10 +145,6 @@ func TestPortalRemoteDenialAndRevocationKeepShortcuts(t *testing.T) {
 				r.Step()
 			}
 			switch phase {
-			case "revoked":
-				w.events = append(w.events, portalEvent{kind: "response", token: r.pending, devices: 1, clipboard: true, restore: "credential"})
-				r.Step()
-				w.events = append(w.events, portalEvent{kind: "closed", session: r.session})
 			case "missing-keyboard":
 				w.events = append(w.events, portalEvent{kind: "response", token: r.pending, clipboard: true})
 			case "timeout":

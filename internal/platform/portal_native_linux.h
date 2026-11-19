@@ -9,6 +9,7 @@ void ct_portal_probe(CTPortal *, const char *);
 void ct_portal_create_session(CTPortal *, const char *, const char *, const char *);
 typedef struct { const char *id, *description, *trigger; } CTShortcut;
 void ct_portal_bind_shortcuts(CTPortal *, const char *, const char *, CTShortcut *, int);
+void ct_portal_configure_shortcuts(CTPortal *, const char *, const char *, const char *, const char *);
 void ct_portal_close_session(CTPortal *, const char *);
 void ct_portal_close_request(CTPortal *, const char *);
 int ct_portal_binding_count(CTPortalEvent *);
@@ -22,6 +23,7 @@ void ct_portal_read_selection(CTPortal *, const char *, const char *, const char
 void ct_portal_write_selection(CTPortal *, const char *, const char *, uint32_t, const void *, int);
 void ct_portal_write_done(CTPortal *, const char *, uint32_t, int);
 void ct_portal_cancel_io(CTPortal *, const char *);
+void ct_portal_query_screensaver(CTPortal *);
 void ct_portal_key(CTPortal *, const char *, const char *, int, int);
 void ct_portal_dispatch(void);
 int ct_portal_poll(CTPortal *, CTPortalEvent *);

@@ -13,6 +13,11 @@ type fakeShortcutWire struct {
 		bindings       []portalBinding
 	}
 	closedSessions, closedRequests []string
+	configures                     []struct{ session, token, parent, activation string }
+}
+
+func (w *fakeShortcutWire) ConfigureShortcuts(session, token, parent, activation string) {
+	w.configures = append(w.configures, struct{ session, token, parent, activation string }{session, token, parent, activation})
 }
 
 func (w *fakeShortcutWire) BindShortcuts(session, token string, bindings []portalBinding) {
@@ -248,6 +253,12 @@ func TestPortalShortcutUsesSuppliedProfileID(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Step()
+	// Since P1-1 the hotkeys own their GlobalShortcuts session, so the bind
+	// carrying the supplied IDs follows the CreateSession response.
+	if len(w.binds) != 0 {
+		t.Fatal("the shortcut session must be created before binding")
+	}
+	answerShortcutCreate(t, r, w, "initial")
 	if len(w.binds) != 1 {
 		t.Fatalf("got %d bind calls, want 1", len(w.binds))
 	}
