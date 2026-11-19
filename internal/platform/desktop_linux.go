@@ -62,8 +62,13 @@ type linuxHotkey struct {
 var x11Registry = newHotkeyRegistry(maxHotkeys)
 
 func NewHotkey(spec string) (Hotkey, error) {
+	return NewProfileHotkey(spec, "")
+}
+
+// NewProfileHotkey uses id as the portal shortcut identity on Wayland.
+func NewProfileHotkey(spec, profileID string) (Hotkey, error) {
 	if linuxWayland && activePortalDesktop != nil {
-		return activePortalDesktop.newHotkey(spec)
+		return activePortalDesktop.newHotkey(spec, profileID)
 	}
 	if err := PlatformRuntimeError(); err != nil {
 		return nil, err

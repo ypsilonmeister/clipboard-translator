@@ -69,7 +69,7 @@ func TestPortalRemoteCreateRefusalLeavesHotkeysBound(t *testing.T) {
 		name  string
 		event func(token string) portalEvent
 	}{
-		{"response-2-inhibited", func(token string) portalEvent { return portalEvent{kind: "response", token: token, code: 2} }},
+		{"response-2-unshielded", func(token string) portalEvent { return portalEvent{kind: "response", token: token, code: 2} }},
 		{"response-1-cancelled", func(token string) portalEvent { return portalEvent{kind: "response", token: token, code: 1} }},
 		{"method-error", func(token string) portalEvent { return portalEvent{kind: "failed", token: token} }},
 		{"malformed-session", func(token string) portalEvent {
@@ -81,6 +81,7 @@ func TestPortalRemoteCreateRefusalLeavesHotkeysBound(t *testing.T) {
 			defer d.Close()
 			shortcuts := d.hotkeys.session
 			requests := len(w.requests)
+			shield(&w.fakeRemoteWire, false)
 			w.events = append(w.events, tc.event(d.remote.pending))
 			d.Step()
 			if d.remote.phase != "failed" || d.remote.err == nil {
@@ -148,7 +149,13 @@ func TestPortalRemoteLaterFailuresLeaveHotkeysBound(t *testing.T) {
 			}
 			requests := len(w.requests)
 			d.Step()
-			if d.remote.phase != "failed" || d.remote.session != "" {
+			// #133 P1-2: Session.Closed parks the remote feature in "waiting"
+			// (reconnect with the kept token) instead of failing it.
+			want := "failed"
+			if kind == "revoked" {
+				want = "waiting"
+			}
+			if d.remote.phase != want || d.remote.session != "" {
 				t.Fatalf("remote failure not recorded: phase=%s session=%q", d.remote.phase, d.remote.session)
 			}
 			closedRemote := false
