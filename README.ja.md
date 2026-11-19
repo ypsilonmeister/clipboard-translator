@@ -277,10 +277,12 @@ GlobalShortcuts・RemoteDesktop キーボード・Clipboard portal です。
 **Wayland では自動貼り付けを無効にしています**。
 実際のショートカットはデスクトップ側が決定し、Settings と Quick start に表示します。
 許可を拒否・取り消した場合は、操作ウィンドウのメニューから
-**Retry Wayland permissions** を選んでください。トレイがない環境では操作ウィンドウを
-開いたまま使います（閉じるとアプリが終了します）。必要な portal がない古いデスクトップ
-では Xorg／X11 セッションが必要です。KDE と wlroots は未検証で、実機確認済みなのは
-GNOME 50.1 のテスト VM です。
+**Retry Wayland permissions** を選んでください。まだキーが割り当てられていない場合は
+**Choose shortcut keys…** を選びます。トレイがない環境では操作ウィンドウがアプリの UI になり、
+閉じるボタンは最小化です（終了はメニューの Quit）。必要な portal がない古いデスクトップでは、
+ホットキーを使うために Xorg／X11 セッションが必要です。KDE Plasma 6 は動作確認をしていますが、
+対応を明言する段階ではありません。wlroots 系のデスクトップではホットキーを使えません
+（下の「デスクトップごとの注意」を参照）。実機で確認済みなのは GNOME 50.1 のテスト VM だけです。
 
 Ubuntu 24.04 では、実行に必要なパッケージを入れます。
 
@@ -321,8 +323,9 @@ Windows のように他アプリとの競合を完全には防げません。
 ### Wayland での操作
 
 最初の対象は GNOME 48+ と、GlobalShortcuts・RemoteDesktop キーボード・Clipboard portal です。
-実機で確認済みなのは指定した Ubuntu 26.04／GNOME 50.1 の VM で、GNOME 48／49、KDE、wlroots は
-未検証です。バージョン番号だけでは対応を判断できないため、起動時に必要な portal の機能を確認します。
+実機で確認済みなのは指定した Ubuntu 26.04／GNOME 50.1 の VM で、GNOME 48／49 と wlroots は
+未検証、KDE Plasma 6 は対応を明言する段階ではありません（「デスクトップごとの注意」を参照）。
+バージョン番号だけでは対応を判断できないため、起動時に必要な portal の機能を確認します。
 
 1. ロックを解除した GUI セッションで起動します。ショートカットの許可画面で使うキーを選んで許可し、
    続いてキーボード・クリップボード操作を許可します。portal の **RemoteDesktop** という名前は、
@@ -346,10 +349,90 @@ Windows のように他アプリとの競合を完全には防げません。
 
 許可の拒否・取り消し・中断があってもアプリは終了せず、操作ウィンドウと Settings に理由を表示します。
 有効になっていれば、操作ウィンドウの **Open menu > Retry Wayland permissions**、またはトレイの
-同名メニューで再試行できます。GNOME がロックされている場合は、解除してから再試行してください。
-必要な portal がない場合は対応デスクトップか Xorg セッションが必要で、許可を再試行しても不足機能は
-追加されません。デスクトップが認めれば保存済みの許可を再起動時に使えますが、許可の取り消しや復元の失敗後は
-再び許可画面が出る場合があります。
+同名メニューで再試行できます。必要な portal がない場合は対応デスクトップか Xorg セッションが必要で、
+許可を再試行しても不足機能は追加されません。デスクトップが認めれば保存済みの許可を再起動時に使えますが、
+許可の取り消しや復元の失敗後は再び許可画面が出る場合があります。
+
+#### 機能ごとの状態表示
+
+操作ウィンドウ、メニュー、Settings には、次の 3 つの機能ごとに 1 行ずつ状態を表示します。
+各機能は個別に縮退し、1 つが使えなくても残りは止まりません。
+
+| 機能 | 必要なもの | 使えないとき |
+| --- | --- | --- |
+| **Hotkey** | GlobalShortcuts portal | ホットキーなし。メニューの **Translate clipboard** は使えます |
+| **Clipboard** | RemoteDesktop のキーボード対応、Clipboard portal、許可済みのセッション | フォーカスのある操作ウィンドウ経由でクリップボードを読み書きします |
+| **Selection capture** | Clipboard と、許可済みのキーボード操作 | ホットキーは動作しますが、選択範囲ではなくクリップボードにある文字を翻訳し、その旨を表示します |
+
+各行の状態は次のとおりです。
+
+| 表示 | 意味 | 対応 |
+| --- | --- | --- |
+| ready | 利用できます | 不要 |
+| waiting for permission | 許可画面が開いている（または開く直前）か、まだキーが割り当てられていません | 許可画面に答えるか、**Choose shortcut keys…** を選びます |
+| reconnecting (unlock the screen if it is locked) | 一時的に使えません。アプリが自動で再接続します | 不要（Retry は表示されません） |
+| needs attention | 拒否または失敗です | **Open menu > Retry Wayland permissions** |
+| not provided by this desktop | このデスクトップにその portal がありません | デスクトップを更新するか、上の表「使えないとき」の代替手段を使います |
+
+**Choose shortcut keys…**（操作ウィンドウのメニュー）は、デスクトップ標準のショートカット選択画面を開きます。
+ショートカットは登録済みでもキーが未割り当ての場合に表示され、この状態は拒否ではなく
+*waiting for permission* として表示されます。KDE で許可画面を閉じた・拒否した場合や、GNOME で
+入力欄を空にした場合などです。**この状態は Retry Wayland permissions では直りません**。
+デスクトップが登録済みのショートカットを保持しており、再送してもキーなしのまま返すためです。
+選択画面で確定すると、アプリを再起動しなくてもショートカットが有効になります。選択画面を
+開けないデスクトップでは、キーを割り当てる場所を状態表示に示します。KDE は
+*System Settings → Shortcuts → Clipboard Translator*、GNOME は
+*Settings → Apps → Clipboard Translator → Global Shortcuts* です（GNOME の場所は実機では未確認です）。
+
+各プロファイルは内部で固定のショートカット ID を持ちます（アプリが `config.json` に書き込む
+プロファイルごとの `id` フィールドです。編集しないでください）。プロファイルを削除・並べ替えても、
+ほかのプロファイルが新規扱いになったり、選んだキーが失われたりしません。
+
+#### 画面ロック・アイドル画面と再接続
+
+GNOME は、ロック画面（シールド）が表示されている間、新しいリモート操作セッションの開始を拒否します。
+自動ロックが無効でも、アイドル時の暗転画面で同様になります。ショートカットとクリップボードは
+独立しているため、Clipboard が *reconnecting* でもホットキーの割り当ては保たれます。
+アプリは画面のロック解除を待って自動で再接続します（1 秒、5 秒、30 秒、1 分、2 分、以降は 5 分間隔で
+再試行します）。保存済みの許可は残るので、デスクトップが認めれば再接続に新しい許可画面は要りません。
+再接続中にホットキーを押すと、直ちに再接続を始めて最大 2 秒待ちます。それでも復帰しなければ
+その翻訳は失敗するので、もう一度操作してください。すでに動作中のセッションが画面ロックを
+乗り越えるかどうかは GNOME のソースからの推定で、実機では未測定です。
+
+#### デスクトップごとの注意
+
+- **GNOME 48+（Ubuntu 26.04／GNOME 50.1 で測定）:** 初回起動ではショートカットの許可画面、続いて
+  リモート操作の許可画面が出ます。GNOME は標準ではトレイアイコンがないため、操作ウィンドウが
+  主な UI です。通常のウィンドウとして Activities や Alt+Tab に表示されます。小さな固定サイズで、
+  閉じるボタンは最小化です。許可画面を拒否した後に GNOME が再度表示するかは未測定です。
+- **KDE Plasma 6:** テストでは portal 経由のクリップボードは動作し、ホットキーは上記の
+  **Choose shortcut keys…** の手順が必要でした。実機でのサインオフがまだのため、対応デスクトップには
+  含めていません。KDE のショートカットとキーは System Settings → Shortcuts にあり、許可画面を閉じて
+  キーが空になった場合もそこで直せます。
+- **GNOME 46/47 と wlroots 系デスクトップ（Sway、Hyprland など）:** GlobalShortcuts portal がないため
+  ホットキーはありません。アプリは一部機能のモードで起動したままになるので、
+  **Open menu > Translate clipboard** を使います。GNOME 46/47 は Clipboard portal を備える場合があり、
+  その場合この操作が使います。いずれも未測定です。
+- **ターミナル:** 選択範囲のコピーに Ctrl+C を送りますが、ターミナルでは実行中のプログラムへの
+  割り込みになります。ターミナルでは自分でコピーし、`input: "clipboard"` のプロファイルを使ってください。
+- **Wayland で未対応:** 自動貼り付けとトレイアイコン（操作ウィンドウがトレイの代わりです。
+  StatusNotifierItem のトレイは別途予定しています）。
+
+#### トラブルシューティング
+
+- *「reconnecting」や「Waiting for the screen to be unlocked」と表示される:* 画面のロックを
+  解除してください。再試行は不要です。
+- *ホットキーが反応せず、Hotkey が「waiting for permission」でキー未割り当て:*
+  **Open menu > Choose shortcut keys…** でキーを割り当てて確定します。
+- *Clipboard や Selection capture が「needs attention」:* **Open menu > Retry Wayland permissions**
+  を選びます。デスクトップの設定で許可を取り消した場合は、許可画面が再び出ます。
+- *ホットキーで選択範囲ではなくクリップボードの文字が翻訳される:* キーボード操作が許可されて
+  いません。許可を再試行して許可してください。
+- *「not provided by this desktop」:* 再試行では解決しません。**Translate clipboard** か Xorg
+  セッションを使ってください。
+- *やり直す:* アプリを終了し、`config.json` と同じ場所の `wayland/restore-token` を削除して保存済みの
+  リモート操作の許可を破棄してから、再度起動します。ショートカットの割り当てはデスクトップ側が
+  保持します。KDE では System Settings → Shortcuts から削除します（GNOME の設定内の場所は未確認です）。
 
 アプリ登録は `~/.local/share/applications/io.github.ypsilonmeister.ClipboardTranslator.desktop`
 （`XDG_DATA_HOME` があればその下）に保存します。再利用する入力操作の許可情報は、Linux アプリの
@@ -365,7 +448,8 @@ Windows のように他アプリとの競合を完全には防げません。
 
 トレイとメニューは GTK 3 で表示します。互換性のあるトレイ領域がない環境では、小さな操作ウィンドウを
 表示し、メニューや Quit を使えるようにします。通知には任意で `notify-send` を使用します。
-操作ウィンドウは開いたままにしてください。閉じるとアプリが終了します。
+Wayland では操作ウィンドウが唯一の UI で、閉じるボタンは最小化です。終了はそのメニューの **Quit** で行います。
+X11 のフォールバックウィンドウは、閉じるとアプリが終了します。
 **Start at login** は X11 では `~/.config/autostart/clipboard-translator.desktop`、Wayland では
 `~/.config/autostart/io.github.ypsilonmeister.ClipboardTranslator.desktop` に書き込みます
 （`XDG_CONFIG_HOME` があればその下）。セッションを切り替えても両形式の自身の登録を認識し、オフにするときは

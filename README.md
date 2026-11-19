@@ -287,10 +287,13 @@ GlobalShortcuts, RemoteDesktop keyboard and Clipboard portals. Accept the shortc
 and keyboard/clipboard permission dialogs, then release the hotkey modifiers after
 pressing. Translations go to the clipboard; **automatic paste is disabled on Wayland**.
 The desktop chooses the actual shortcuts, shown in Settings and Quick start. If access
-is denied or revoked, use **Retry Wayland permissions** in the control-window menu.
-Without a tray host, keep the control window open (closing it quits the app).
-Older desktops without these portals still need an Xorg/X11 session. KDE and wlroots
-have not been verified. Only the GNOME 50.1 test VM has been measured so far.
+is denied or revoked, use **Retry Wayland permissions** in the control-window menu; if
+no keys are assigned yet, use **Choose shortcut keys…**.
+Without a tray host, the control window is the app's UI: its close button minimizes it
+(Quit stays in the menu). Older desktops without these portals still need an Xorg/X11
+session for the hotkey. KDE Plasma 6 has been exercised but is not yet a supported
+claim; wlroots-based desktops have no hotkey (see *Desktop notes* below). Only the
+GNOME 50.1 test VM has been measured so far.
 
 On Ubuntu 24.04, install the runtime dependencies:
 
@@ -335,8 +338,9 @@ be detected reliably, so use manual paste when that matters.
 
 The initial target is GNOME 48+ with GlobalShortcuts, RemoteDesktop keyboard and
 Clipboard portals. GNOME 50.1 on the designated Ubuntu 26.04 VM has been measured;
-GNOME 48/49, KDE and wlroots remain unverified. A version number alone does not
-establish compatibility: the app checks the required portal capabilities at startup.
+GNOME 48/49 and wlroots remain unverified, and KDE Plasma 6 is not yet a supported
+claim (see *Desktop notes*). A version number alone does not establish compatibility:
+the app checks the required portal capabilities at startup.
 
 1. Start the app from the unlocked graphical session. Allow the shortcut dialog and
    choose the keys you want; then allow keyboard/clipboard access. The portal's
@@ -364,11 +368,101 @@ a clipboard manager retains them.
 
 If permission is refused, revoked or interrupted, the app stays open and shows the
 reason in its control window and Settings. Use **Open menu > Retry Wayland permissions**
-in the control window (or the same item in the tray menu) when enabled. If GNOME is
-locked, unlock it before retrying. Missing-portal errors require a desktop with the
-listed capabilities or an Xorg session; repeated consent attempts cannot add those
-capabilities. A restart can reuse saved consent when the desktop permits it; a new
-dialog may still be required after revocation or a failed restore.
+in the control window (or the same item in the tray menu) when enabled. Missing-portal
+errors require a desktop with the listed capabilities or an Xorg session; repeated
+consent attempts cannot add those capabilities. A restart can reuse saved consent when
+the desktop permits it; a new dialog may still be required after revocation or a failed
+restore.
+
+#### Status per capability
+
+The control window, the menu and Settings show one line for each of three capabilities,
+so you can tell what to do next. Each degrades on its own; one missing capability does
+not switch the others off.
+
+| Capability | Needs | If it is not available |
+| --- | --- | --- |
+| **Hotkey** | the GlobalShortcuts portal | no hotkey; the menu's **Translate clipboard** still works |
+| **Clipboard** | RemoteDesktop keyboard support, the Clipboard portal and an authorized session | the clipboard is read and written through the focused control window |
+| **Selection capture** | Clipboard, plus keyboard access granted | the hotkey still fires but translates the text already on the clipboard, and says so |
+
+Each line is in one of these states:
+
+| State shown | Meaning | What to do |
+| --- | --- | --- |
+| ready | works | nothing |
+| waiting for permission | a desktop dialog is (about to be) open, or no keys are assigned yet | answer the dialog, or choose **Choose shortcut keys…** |
+| reconnecting (unlock the screen if it is locked) | temporarily unavailable; the app reconnects by itself | nothing; **Retry** is not offered |
+| needs attention | refused, or failed | **Open menu > Retry Wayland permissions** |
+| not provided by this desktop | the portal does not exist here | upgrade the desktop, or use the fallback in the third column of the table above |
+
+**Choose shortcut keys…** (in the control-window menu) opens the desktop's own
+shortcut chooser. It is offered when the shortcuts are registered but have no keys
+assigned, which is shown as *waiting for permission*, not as a refusal. This is the
+case on KDE after the shortcut dialog was closed or rejected, and possibly on GNOME if
+the field was cleared. **Retry Wayland permissions cannot fix this state**: the desktop
+already holds the shortcuts and just answers again with no keys. When the chooser is
+confirmed, the shortcut becomes active without restarting the app. If the desktop does
+not offer the chooser, the status names where to assign keys: *System Settings →
+Shortcuts → Clipboard Translator* on KDE, *Settings → Apps → Clipboard Translator →
+Global Shortcuts* on GNOME (the GNOME location has not been confirmed on a real desktop).
+
+Each profile keeps its own stable internal shortcut id (a per-profile `id` field the app
+writes into `config.json`; do not edit it). Deleting or reordering profiles therefore does
+not make the desktop treat the others as new shortcuts or drop the keys you chose.
+
+#### Screen lock, idle blank and reconnecting
+
+GNOME refuses to start a new remote-control session while the screen shield is up,
+including the idle blank screen when automatic screen lock is off. The shortcut and
+clipboard features are independent, so the hotkey stays bound while Clipboard shows
+*reconnecting*. The app waits for the screen to unlock and reconnects by itself (it also
+retries with growing delays of 1 s, 5 s, 30 s, 1 min, 2 min and then every 5 min). It keeps
+the saved permission, so reconnecting needs no new dialog when the desktop honors
+it. If you press the hotkey while the session is reconnecting, the app starts the
+reconnect at once and waits up to 2 seconds for it; if it is still down, the translation
+fails and you can try again. Whether a session that is already running survives a screen
+lock is inferred from GNOME's source and has not been measured at a real desktop.
+
+#### Desktop notes
+
+- **GNOME 48+ (Ubuntu 26.04, GNOME 50.1 measured):** first start shows the shortcut
+  dialog and then the remote-control dialog. GNOME has no tray icon by default, so the
+  control window is the main UI; it appears as a normal window in Activities and Alt+Tab.
+  It is small and fixed-size, and its close button minimizes it. Whether GNOME asks
+  again after you deny a dialog has not been measured.
+- **KDE Plasma 6:** the portal clipboard path worked when tested, and the hotkey
+  needed the **Choose shortcut keys…** step above. Because the sign-off run at a real
+  Plasma desktop is still pending, KDE is not listed as supported. KDE keeps shortcuts
+  and keys in System Settings → Shortcuts, so a closed dialog that left the key empty
+  can be fixed there.
+- **GNOME 46/47 and wlroots-based desktops (Sway, Hyprland and others):** these lack
+  the GlobalShortcuts portal, so there is no hotkey. The app stays open in a partial
+  mode: use **Open menu > Translate clipboard**. GNOME 46/47 may still provide the
+  clipboard portal, which that action then uses. These were not measured.
+- **Terminals:** the app sends Ctrl+C to copy the selection, which a terminal treats as
+  an interrupt for the running program. Copy yourself and use an `input: "clipboard"`
+  profile there.
+- **Not supported on Wayland:** automatic paste, and tray icons (the control window
+  replaces the tray; a StatusNotifierItem tray is planned separately).
+
+#### Troubleshooting
+
+- *Status says "reconnecting" or "Waiting for the screen to be unlocked":* unlock the
+  screen. Nothing to retry.
+- *Hotkey does nothing and Hotkey is "waiting for permission" with no keys:* choose
+  **Open menu > Choose shortcut keys…**, assign a key there, and confirm.
+- *Clipboard or capture "needs attention":* choose **Open menu > Retry Wayland
+  permissions**. If you revoked access in the desktop's settings, the dialog will appear
+  again.
+- *Nothing happens on the hotkey and Selection capture says the clipboard text is
+  translated:* keyboard access was not granted; retry the permissions and allow it.
+- *"not provided by this desktop":* retrying cannot help. Use **Translate clipboard** or
+  an Xorg session.
+- *Start fresh:* quit the app, delete `wayland/restore-token` beside `config.json` to
+  forget the saved remote-control permission, and start again. Shortcut bindings belong
+  to the desktop: remove them in KDE's System Settings → Shortcuts (on GNOME, the
+  location in Settings has not been confirmed).
 
 The application entry is written to
 `~/.local/share/applications/io.github.ypsilonmeister.ClipboardTranslator.desktop`
@@ -386,7 +480,8 @@ remaining packaged-app checks, see the [Wayland manual test sheet](https://githu
 
 GTK 3 supplies the tray icon/menu. If the desktop has no compatible tray host, a small
 control window keeps the menu and Quit available. Optional notifications use `notify-send`.
-Keep the fallback control window open; closing it quits the app.
+On Wayland the control window is the only UI: its close button minimizes it and **Quit**
+in its menu exits the app. On X11, closing the fallback window still quits the app.
 **Start at login** writes `~/.config/autostart/clipboard-translator.desktop` on X11,
 or `~/.config/autostart/io.github.ypsilonmeister.ClipboardTranslator.desktop` on Wayland
 (under `XDG_CONFIG_HOME` when set). It recognizes either owned entry across session

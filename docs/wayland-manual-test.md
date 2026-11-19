@@ -3,7 +3,9 @@
 Use this sheet to evaluate a specific build on a specific desktop. Passing CI or a
 portal API smoke test does not establish that the packaged application translates
 correctly. The initial target is GNOME 48+ with the required portals; only GNOME 50.1
-has been measured so far. KDE and wlroots evaluation belongs to W6.
+has been measured so far. The README keeps the GNOME 48+ claim until the GNOME rows
+below pass at a real desktop, and does not list KDE Plasma 6.x until the KDE rows pass
+there. wlroots evaluation belongs to W6.
 
 The implementation and approved decisions are in [wayland-implementation.md](wayland-implementation.md).
 User instructions are in [README.md](../README.md#wayland-workflow) and
@@ -135,7 +137,8 @@ separate W1-W4 evidence ledger.
 - [ ] **R4 — Lock/unlock:** Lock the designated test session and attempt/retry access,
   then unlock it and retry from the control window. Expected: refusal/inhibition is
   recoverable; menu/quit remain usable. Record whether already-running access survives
-  the lock rather than assuming a compositor-wide policy.
+  the lock rather than assuming a compositor-wide policy. See G3 for the per-capability
+  status and silent-reconnect expectations since #133 Phase 1.
 - [ ] **R5 — Application restart:** Quit normally, then reopen the same package folder.
   Expected: actual bindings return and saved keyboard/clipboard consent is restored
   without a new prompt when allowed by the desktop. Repeat T1. Record any renewed prompt
@@ -155,6 +158,63 @@ separate W1-W4 evidence ledger.
   Expected: app and child server stop; clipboard retention after exit depends on the
   clipboard manager. In a separate Xorg session, repeat selection/clipboard and optional
   auto-paste checks: X11 still uses PRIMARY, with no Wayland consent dialogs.
+
+### Phase 1 rows (#133): per-capability status, unbound shortcuts, lock/unlock
+
+These rows are **NOT RUN**. They cover the behavior added in #133 Phase 1 and need a
+person at the real desktop. Record the status lines exactly as the control window shows them.
+An unbound shortcut (no keys assigned) is shown as *waiting for permission* with
+**Choose shortcut keys…** enabled, not as a refusal, and Retry is not offered for it.
+
+#### GNOME 50
+
+- [ ] **G1 — First-run dialogs:** From a fresh app folder with no stored consent, start the
+  app in English and then (separately) in Japanese. Expected: the shortcut dialog, then the
+  remote-control dialog; after both, Hotkey, Clipboard and Selection capture show *ready*.
+- [ ] **G2 — Deny and retry:** Deny each dialog in turn, then choose Retry Wayland
+  permissions. Record whether GNOME prompts again after a denial (unmeasured). If it does
+  not, check whether **Choose shortcut keys…** covers it, and record where GNOME 50 lists the
+  app's global shortcuts in Settings (the README's *Settings → Apps → Clipboard Translator →
+  Global Shortcuts* is unconfirmed).
+- [ ] **G3 — Lock, idle blank and unlock:** With the app running and consent stored, lock the
+  session, then separately let the screen blank on idle (also with automatic lock off), then
+  unlock. Expected: Clipboard shows *reconnecting* while the shield is up and the hotkey stays
+  bound; after unlock there is no new dialog and the hotkey works again within the documented
+  reconnect delays. Also press the hotkey right after unlocking and record whether it
+  waits (up to 2 s) and succeeds. Record whether an already-running session closes on shield-up.
+- [ ] **G4 — Log out and in:** Expected: no dialogs on the next start.
+- [ ] **G5 — Revocation:** Revoke the app in Settings, then check recovery with Retry Wayland
+  permissions, and that the saved token is replaced only after a successful Start.
+- [ ] **G6 — Control window:** Expected: a small fixed-size window listing the three capability
+  lines; its close button minimizes it (the app keeps running and the hotkey works); Quit in
+  its menu exits. Record whether it stays minimized after a reconnect.
+
+#### KDE Plasma 6.6
+
+- [ ] **K1 — Clean state, dialog accepted:** Start from the clean state (see *Cleanup of leftover
+  test state*). Accept the shortcut dialog. Expected: the hotkey works.
+- [ ] **K2 — Dialog rejected:** Reject or close the dialog. Expected: the status says no keys are
+  assigned, **Choose shortcut keys…** is enabled and **Retry Wayland permissions** is not the fix;
+  choosing it opens System Settings → Shortcuts with this app's component. Also run this row from
+  the "previously rejected" state left by #241.
+- [ ] **K3 — Assign a key:** Assign a key in that page. Expected: the status flips to bound and the
+  hotkey works without restarting the app.
+- [ ] **K4 — Restart with the dialog open:** Quit or restart the app while the shortcut dialog is
+  open. Expected: the dialog is not auto-rejected and no keyless shortcut is stored.
+- [ ] **K5 — Stable ids:** With three profiles and keys assigned, delete the middle profile.
+  Expected: the other two keep their keys with no new dialog.
+- [ ] **K6 — Persistence:** Re-login and check the remote-control restore from KDE's permission
+  store; also lock the screen. Expected: no new dialog, and lock does not affect the session.
+
+#### Both desktops
+
+- [ ] **B1 — Typing details:** Held-modifier timing with real hands; JIS, AZERTY, Dvorak layouts
+  for the keysym Ctrl+C.
+- [ ] **B2 — Targets:** Firefox, Chromium/Electron, GTK4, Qt, an Xwayland application and a terminal.
+  Ctrl+C in a terminal is an interrupt; record the result and use an `input: "clipboard"` profile.
+- [ ] **B3 — Partial capability sets:** Where a separate session lacks one capability (for example
+  GNOME 46/47 without GlobalShortcuts), check that the other lines still work and the degraded
+  modes in the README table apply.
 
 ## Opt-in native API smoke tests
 
@@ -199,6 +259,25 @@ GNOME 50.1), on 2026-11-10. They are narrower than the acceptance cases above.
 W4's [CI run](https://github.com/ypsilonmeister/clipboard-translator/actions/runs/42770192639)
 passed Windows, Linux and both macOS runners, including fake portals, X11/Xvfb and
 non-cgo logic. No live Wayland consent or translation quality claim follows from CI.
+
+## Cleanup of leftover test state
+
+The portal apps' state outlives the app, so a rerun can start from stored consent or a keyless
+shortcut instead of the clean state. Do this only for the designated test account, and
+look at each target before deleting it. Quit the app first.
+
+| State | Where | How to remove |
+| --- | --- | --- |
+| Saved remote-control permission token | `wayland/restore-token` beside `config.json` | delete the file |
+| Stored remote-control grant (KDE and GNOME permission store) | `remote-desktop` table, entry for `io.github.ypsilonmeister.ClipboardTranslator` | `gdbus call --session --dest org.freedesktop.impl.portal.PermissionStore --object-path /org/freedesktop/impl/portal/PermissionStore --method org.freedesktop.impl.portal.PermissionStore.DeletePermission remote-desktop <id> io.github.ypsilonmeister.ClipboardTranslator` (list entries with `...PermissionStore.List remote-desktop` first; use the table's real id) |
+| KDE shortcut component | group `[io.github.ypsilonmeister.ClipboardTranslator]` in `~/.config/kglobalshortcutsrc` | remove that group (edit the file; KDE may rewrite it from memory, so do it logged out or with the session about to restart) and log out and in |
+| Application entry | `~/.local/share/applications/io.github.ypsilonmeister.ClipboardTranslator.desktop` | delete it; the app rewrites it on next launch |
+| GNOME shortcut bindings | stored by GNOME per app id | not measured; record how they were removed or note that none was found |
+
+Leftovers from the #241 verification (a rejected, keyless KDE shortcut group and a stored
+remote-control grant) may still exist on the project's test VM. Keep them for the KDE
+acceptance run, which should be done twice: from a clean state and from this "previously
+rejected" state.
 
 ## Cleanup and release decision
 

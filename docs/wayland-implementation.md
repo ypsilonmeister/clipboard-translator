@@ -234,3 +234,21 @@ The maintainer's Ubuntu 26.04 / GNOME 50.1 VM (100.78.89.32) passed this test. T
 verifies the production platform API; translation inference, the complete packaged-app
 workflow, physical long-held modifiers, alternative layouts and other compositors remain
 manual validation items for W5/W6.
+
+## Phase 1 updates (#133)
+
+This document records the W0-W5 stages. The #133 Phase 1 changes (P1-1 to P1-8) supersede
+these statements above; user-facing behavior is in the README's *Wayland workflow*:
+
+- The shortcut and RemoteDesktop sessions are separate failure domains: a RemoteDesktop failure
+  no longer closes the shortcut session, and the "losing the private D-Bus connection still
+  closes both" note applies to the connection only.
+- A screen-shield inhibit shows as *waiting* (reconnect with backoff 1 s, 5 s, 30 s, 1 min,
+  2 min, 5 min; no Retry), and a `Closed` RemoteDesktop session keeps its restore token. The
+  token is replaced only after a successful Start, not consumed before SelectDevices.
+- A shortcut with no keys is *pending* with **Choose shortcut keys…**
+  (`GlobalShortcuts.ConfigureShortcuts`), not refused. An open bind request is never closed
+  by a settings save or shutdown; profile changes are queued. Shortcut ids are stable per profile.
+- Status is per capability (hotkey, clipboard, capture) with partial modes instead of one manual mode.
+- A hotkey during a reconnect waits up to 2 s. On Wayland the control window's close button
+  minimizes it ("closing it still quits the application" now applies to X11 only).
