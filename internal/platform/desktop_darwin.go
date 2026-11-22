@@ -4,7 +4,7 @@ package platform
 
 /*
 #cgo CFLAGS: -Wno-deprecated-declarations
-#cgo LDFLAGS: -framework Cocoa -framework Carbon -framework ApplicationServices
+#cgo LDFLAGS: -framework Cocoa -framework Carbon -framework ApplicationServices -framework UserNotifications
 #include <stdlib.h>
 #include "native_darwin.h"
 */
@@ -166,13 +166,44 @@ type macTray struct {
 	commands []int
 	state    TrayState
 	quit     bool
+	notes    *notifier
 }
+
+// macNoticeBridge is the Notification Center side of notifier (notify_darwin.m).
+type macNoticeBridge struct{ available bool }
+
+func (b macNoticeBridge) Available() bool    { return b.available }
+func (b macNoticeBridge) Status() AuthStatus { return AuthStatus(C.ct_mac_notify_status()) }
+func (b macNoticeBridge) Refresh() int64     { return int64(C.ct_mac_notify_refresh()) }
+func (b macNoticeBridge) Applied() int64     { return int64(C.ct_mac_notify_applied()) }
+func (b macNoticeBridge) Request() bool      { return C.ct_mac_notify_request() != 0 }
+func (b macNoticeBridge) Post(id, title, body string, sound bool) {
+	withCString(id, func(i *C.char) {
+		withCString(title, func(t *C.char) {
+			withCString(body, func(m *C.char) { C.ct_mac_notify_post(i, t, m, C.int(boolInt(sound))) })
+		})
+	})
+}
+func (b macNoticeBridge) Failures() (int, string) {
+	var buf [256]C.char
+	n := int(C.ct_mac_notify_failures(&buf[0], C.int(len(buf))))
+	return n, C.GoString(&buf[0])
+}
+
+// macNotificationsItem is the tray's "Notifications..." item.
+const macNotificationsItem = 5
+
+// macNotificationsPane is System Settings > Notifications. Whether a deep link
+// to the app's own entry works on macOS 13-26 is not verified, so none is used.
+const macNotificationsPane = "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
 
 var activeMacTray *macTray
 
 func NewTray(logPath string) Tray {
 	t := &macTray{logPath: logPath}
 	C.ct_mac_tray_create()
+	t.notes = newNotifier(macNoticeBridge{available: C.ct_mac_notify_init() != 0})
+	t.notes.openSettings = func() { _ = OpenTarget(macNotificationsPane) }
 	activeMacTray = t
 	if !accessibilityGranted() {
 		log.Print("Accessibility access is not granted; translating existing clipboard text remains available. Open Accessibility Settings from the menu to enable selection capture and auto-paste.")
@@ -188,10 +219,27 @@ func (t *macTray) SetState(state TrayState) {
 	C.ct_mac_set_state(C.int(state))
 }
 func (t *macTray) Notify(title, message string, isError bool) {
-	// No notification permission prompts or notification-service dependency.
+	t.NotifyWith(title, message, isError, NoticeOptions{})
+}
+
+// NotifyWith always logs and sets the tooltip, as before Issue #67, and posts
+// to Notification Center only when the system allows it (see decideNotice).
+func (t *macTray) NotifyWith(title, message string, isError bool, o NoticeOptions) {
 	log.Printf("%s: %s", title, message)
 	t.SetStatus(title + ": " + message)
+	t.notes.notice(title, message, isError, o)
 }
+func (t *macTray) SetNotificationMemory(stored string, save func(string) error) {
+	t.notes.setMemory(stored, save)
+}
+
+// The app finds the permission side with a type assertion; fail the build,
+// not that assertion, if a method goes missing.
+var _ NotificationTray = (*macTray)(nil)
+
+func (t *macTray) NotificationStatus() AuthStatus  { return t.notes.settingsStatus() }
+func (t *macTray) NotificationStatusPending() bool { return t.notes.pending() }
+func (t *macTray) RecheckNotificationStatus()      { t.notes.recheck() }
 func (t *macTray) QuitRequested() bool             { return t.quit }
 func (t *macTray) SetMenu(build func() []MenuItem) { t.build = build }
 func (t *macTray) NextCommand() (int, bool) {
@@ -219,7 +267,9 @@ func macMenu(items []MenuItem) unsafe.Pointer {
 func PumpMessages() bool {
 	C.ct_mac_pump()
 	if t := activeMacTray; t != nil {
+		t.notes.sync()
 		if C.ct_mac_wants_menu() != 0 {
+			t.notes.refresh(statusFreshFor) // for the next time; this menu shows the cached status
 			var items []MenuItem
 			if t.build != nil {
 				items = t.build()
@@ -227,8 +277,9 @@ func PumpMessages() bool {
 			items = append(items, MenuItem{Separator: true},
 				MenuItem{ID: 3, Label: "Start at login", Checked: macAutostartEnabled()},
 				MenuItem{ID: 4, Label: "Open Accessibility Settings..."},
-				MenuItem{Label: "Accessibility access granted", Checked: accessibilityGranted(), Disabled: true},
-				MenuItem{ID: 1, Label: "Open log"}, MenuItem{ID: 2, Label: "Quit"})
+				MenuItem{Label: "Accessibility access granted", Checked: accessibilityGranted(), Disabled: true})
+			items = append(items, t.notes.menuLines(macNotificationsItem)...)
+			items = append(items, MenuItem{ID: 1, Label: "Open log"}, MenuItem{ID: 2, Label: "Quit"})
 			C.ct_mac_menu_show(macMenu(items))
 		}
 		for id := int(C.ct_mac_command()); id != 0; id = int(C.ct_mac_command()) {
@@ -243,6 +294,8 @@ func PumpMessages() bool {
 				}
 			case 4:
 				_ = OpenTarget("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+			case macNotificationsItem:
+				t.notes.explicitAction() // acts in sync once the status is fresh
 			default:
 				t.commands = append(t.commands, id)
 			}

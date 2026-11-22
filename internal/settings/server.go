@@ -98,6 +98,13 @@ type State struct {
 	Wayland               bool     `json:"wayland,omitempty"`
 	DesktopStatus         string   `json:"desktop_status,omitempty"`
 	DesktopCapabilities   []string `json:"desktop_capabilities,omitempty"` // one line per Wayland capability
+	// Notifications is the system notification permission (Issue #67):
+	// "unavailable", "unknown", "not_asked", "denied" or "allowed" on macOS,
+	// "n/a" where the tray needs none (Windows, Linux).
+	Notifications string `json:"notifications"`
+	// NotificationsPending: the app is reading the permission again (it may
+	// have changed in System Settings); the page asks once more shortly.
+	NotificationsPending bool `json:"notifications_pending,omitempty"`
 	Form
 	Revision       int              `json:"revision"`
 	Languages      []LanguageOption `json:"language_options"`
@@ -377,8 +384,17 @@ func stateOf(rep Reply) *State {
 	return &rep.State
 }
 
+// ActionRecheckNotifications is a state request that first reads the macOS
+// notification permission again, however recent the last read
+// (GET /api/state?recheck=notifications, sent when the page regains focus).
+const ActionRecheckNotifications = "recheck_notifications"
+
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	rep, ok := s.roundTrip(NewRequest(nil, 8*time.Second))
+	req := NewRequest(nil, 8*time.Second)
+	if r.URL.Query().Get("recheck") == "notifications" {
+		req.Action = ActionRecheckNotifications
+	}
+	rep, ok := s.roundTrip(req)
 	if !ok {
 		writeJSON(w, http.StatusServiceUnavailable, APIResponse{Error: rep.Err.Error()})
 		return

@@ -29,7 +29,7 @@ func runPlatformSmokeTests() bool {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Println("PASS: macOS native AppKit, pasteboard, hotkey registration and menu commands")
+	fmt.Println("PASS: macOS native AppKit, pasteboard, hotkey registration, menu commands and unbundled notification guard")
 	return true
 }
 func macNativeSmoke() error {
@@ -79,6 +79,24 @@ func macNativeSmoke() error {
 	tray := NewTray("/tmp/clipboard-translator-macos-smoke.log")
 	defer tray.Close()
 	tray.SetStatus("Native smoke test")
+	// The test binary has no bundle: Notification Center must be reported as
+	// unavailable without any UserNotifications call (that would raise
+	// across cgo), and notices must still work. This check must never skip.
+	nt, ok := tray.(NotificationTray)
+	if !ok {
+		return fmt.Errorf("the macOS tray does not implement NotificationTray")
+	}
+	nt.SetNotificationMemory("", func(string) error { return fmt.Errorf("must not be saved while unavailable") })
+	if s := nt.NotificationStatus(); s != AuthUnavailable {
+		return fmt.Errorf("unbundled notification status = %v, want unavailable", s)
+	}
+	tray.Notify("Clipboard Translator", "Native smoke notice", true)
+	nt.NotifyWith("Clipboard Translator", "Native smoke hotkey notice", true, NoticeOptions{Origin: OriginHotkey, ID: NoticeIDHotkey})
+	macTestMenu(macNotificationsItem) // unavailable: neither asks nor opens System Settings
+	PumpMessages()
+	if macNotifyTouched() {
+		return fmt.Errorf("UserNotifications was called in an unbundled process")
+	}
 	tray.SetMenu(func() []MenuItem { return []MenuItem{{ID: testMenuCommand, Label: "Cancel"}} })
 	macTestMenu(testMenuCommand)
 	PumpMessages()

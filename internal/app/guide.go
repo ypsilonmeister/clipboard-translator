@@ -90,7 +90,7 @@ func (a *app) guideNotification() (msg string, isError bool) {
 // and stays unseen, so the guide comes back when a hotkey works.
 func (a *app) showQuickstart() {
 	msg, isErr := a.guideNotification()
-	a.tray.Notify("Clipboard Translator", msg, isErr)
+	a.notify("Clipboard Translator", msg, isErr, platform.NoticeOptions{ID: platform.NoticeIDGuide})
 	if !isErr && !a.conf.QuickstartShown {
 		a.conf.QuickstartShown = true
 		log.Print("quick start guide shown")

@@ -155,6 +155,11 @@ func (q *quitOnNotifyTray) Notify(title, message string, isError bool) {
 	q.fakeTray.Notify(title, message, isError)
 }
 
+// NotifyWith keeps the hook above when the app passes notice metadata.
+func (q *quitOnNotifyTray) NotifyWith(title, message string, isError bool, _ platform.NoticeOptions) {
+	q.Notify(title, message, isError)
+}
+
 func TestServeChecksQuitRequestedBetweenQueuedCommands(t *testing.T) {
 	a, tray, _ := newTestApp(t)
 	if err := a.startServer(); err != nil {

@@ -63,10 +63,41 @@ func versionLabel() string {
 	return "Clipboard Translator " + version
 }
 
+// hotkeyProblemLines are disabled menu lines for hotkeys that are not active
+// right now (Issue #67). They are derived from the current registration, so a
+// successful registration from Settings removes them. On macOS they are the
+// readable route to the problem when notifications are not allowed, since the
+// tooltip only shows on hover.
+func (a *app) hotkeyProblemLines() []platform.MenuItem {
+	if !a.hotkeyProblemMenu || a.desktopStatus().Wayland {
+		return nil
+	}
+	var items []platform.MenuItem
+	if a.hasNoHotkey() {
+		items = append(items, platform.MenuItem{Label: "Hotkey " + a.conf.Profiles[0].Hotkey + " is not active (used by another app?)", Disabled: true})
+	}
+	for _, e := range a.extras {
+		if e.hk != nil {
+			continue
+		}
+		p := a.conf.Profiles[e.profile]
+		why := "used by another app?"
+		if e.limited {
+			why = "this build holds fewer hotkeys"
+		}
+		items = append(items, platform.MenuItem{Label: "Hotkey " + p.Hotkey + " (" + p.Label() + ") is not active (" + why + ")", Disabled: true})
+	}
+	if len(items) > 0 {
+		items = append(items, platform.MenuItem{Separator: true})
+	}
+	return items
+}
+
 // buildMenu is the app-specific part of the tray menu. It runs each time the
 // menu opens, so availability and the update entry reflect the current state.
 func (a *app) buildMenu() []platform.MenuItem {
-	items := []platform.MenuItem{{ID: cmdSettings, Label: "Settings..."}, {ID: cmdQuickstart, Label: "Quick start"}}
+	items := a.hotkeyProblemLines()
+	items = append(items, platform.MenuItem{ID: cmdSettings, Label: "Settings..."}, platform.MenuItem{ID: cmdQuickstart, Label: "Quick start"})
 	if runtime.GOOS == "linux" {
 		items = append(items, platform.MenuItem{ID: cmdTranslateClipboard, Label: "Translate clipboard"})
 	}
@@ -262,7 +293,7 @@ func (a *app) switchModelFromMenu(idx int) {
 	e, err := a.checkModelSwitch(target.Key)
 	if err != nil {
 		log.Printf("could not switch model: %v", err)
-		a.tray.Notify("Clipboard Translator", err.Error(), true)
+		a.notify("Clipboard Translator", err.Error(), true, platform.NoticeOptions{ID: platform.NoticeIDEngine})
 		return
 	}
 	_ = a.switchModel(e)
@@ -328,7 +359,7 @@ func (a *app) switchBackend(name string) {
 	newConf.ServerFile, newConf.GPULayers = config.BackendSettings(name)
 	paths, err := config.ResolvePaths(a.dir, newConf)
 	if err != nil {
-		a.tray.Notify("Clipboard Translator", "Could not switch the engine: "+err.Error(), true)
+		a.notify("Clipboard Translator", "Could not switch the engine: "+err.Error(), true, a.switchNotice())
 		return
 	}
 	log.Printf("switching engine to %s", name)
@@ -346,7 +377,7 @@ func (a *app) switchBackend(name string) {
 		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
 		a.saveConfig(map[string]any{"server_file": a.conf.ServerFile, "gpu_layers": a.conf.GPULayers})
-		a.tray.Notify("Clipboard Translator", "Translation engine: "+backendLabel(name), false)
+		a.notify("Clipboard Translator", "Translation engine: "+backendLabel(name), false, engineSuccess)
 		return
 	}
 	if errors.Is(err, llamaserver.ErrQuit) {
@@ -367,12 +398,13 @@ func (a *app) switchBackend(name string) {
 		log.Printf("could not restore the previous engine: %v", err)
 		a.cancelTransientStatus()
 		a.tray.SetStatus("Clipboard Translator - server stopped, restarting...")
-		a.tray.Notify("Clipboard Translator", "Could not switch to "+backendLabel(name)+", and the previous engine did not start either. Trying to recover the translation server...", true)
+		// Translation is unavailable now: say so wherever the switch started.
+		a.notify("Clipboard Translator", "Could not switch to "+backendLabel(name)+", and the previous engine did not start either. Trying to recover the translation server...", true, platform.NoticeOptions{ID: platform.NoticeIDEngine})
 		return
 	}
 	a.cancelTransientStatus()
 	a.tray.SetStatus(a.readyTip)
-	a.tray.Notify("Clipboard Translator", "Could not switch to "+backendLabel(name)+"; keeping the previous engine.", true)
+	a.notify("Clipboard Translator", "Could not switch to "+backendLabel(name)+"; keeping the previous engine.", true, a.switchNotice())
 }
 
 // keepRunningBackend makes the engine that runs now, the CPU fallback, the
@@ -383,7 +415,7 @@ func (a *app) keepRunningBackend(name string) {
 	conf.ServerFile, conf.GPULayers = config.BackendSettings(name)
 	paths, err := config.ResolvePaths(a.dir, conf)
 	if err != nil {
-		a.tray.Notify("Clipboard Translator", "Could not switch the engine: "+err.Error(), true)
+		a.notify("Clipboard Translator", "Could not switch the engine: "+err.Error(), true, a.switchNotice())
 		return
 	}
 	a.conf, a.paths = conf, paths
@@ -391,7 +423,7 @@ func (a *app) keepRunningBackend(name string) {
 	a.activeBackend = name
 	a.saveConfig(map[string]any{"server_file": a.conf.ServerFile, "gpu_layers": a.conf.GPULayers})
 	log.Printf("engine %s (already running) is now the configured one", name)
-	a.tray.Notify("Clipboard Translator", "Translation engine: "+backendLabel(name), false)
+	a.notify("Clipboard Translator", "Translation engine: "+backendLabel(name), false, engineSuccess)
 }
 
 type updateResult struct {
@@ -406,7 +438,7 @@ func (a *app) startUpdateCheck() {
 		return
 	}
 	if update.VersionParts(version) == nil {
-		a.tray.Notify("Clipboard Translator", "This is a development build; it has no version to compare.", false)
+		a.notify("Clipboard Translator", "This is a development build; it has no version to compare.", false, platform.NoticeOptions{ID: platform.NoticeIDUpdate})
 		return
 	}
 	a.checking = true
@@ -423,14 +455,14 @@ func (a *app) onUpdateResult(u updateResult) {
 	switch {
 	case u.err != nil:
 		log.Printf("update check failed: %v", u.err)
-		a.tray.Notify("Clipboard Translator", "Could not check for updates: "+u.err.Error(), true)
+		a.notify("Clipboard Translator", "Could not check for updates: "+u.err.Error(), true, platform.NoticeOptions{ID: platform.NoticeIDUpdate})
 	case update.IsNewerVersion(u.info.Tag, version):
 		a.latest = u.info
 		log.Printf("update available: %s (running %s)", u.info.Tag, version)
-		a.tray.Notify("Clipboard Translator", u.info.Tag+" is available. Open the tray menu and choose Update.", false)
+		a.notify("Clipboard Translator", u.info.Tag+" is available. Open the tray menu and choose Update.", false, platform.NoticeOptions{ID: platform.NoticeIDUpdate})
 	default:
 		a.latest = update.ReleaseInfo{}
-		a.tray.Notify("Clipboard Translator", "You have the latest version ("+version+").", false)
+		a.notify("Clipboard Translator", "You have the latest version ("+version+").", false, platform.NoticeOptions{ID: platform.NoticeIDUpdate})
 	}
 }
 

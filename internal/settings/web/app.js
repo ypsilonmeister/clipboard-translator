@@ -48,6 +48,40 @@
     return dirtyFields.profiles || dirtyFields.auto_paste || dirtyFields.notify_on_complete || dirtyFields.max_chars || dirtyFields.idle_unload_minutes;
   }
 
+  // The macOS-only hint under the completion checkbox (Issue #67): shown when
+  // the system refuses notifications. Other platforms report "n/a".
+  function notificationHint(status) {
+    if (status !== 'denied') return '';
+    return 'macOS notifications are off for Clipboard Translator. Turn them on in System Settings > Notifications.';
+  }
+
+  // The app reads the macOS permission in the background when the state is
+  // asked for (it may have changed in System Settings) and reports it as
+  // pending until a read started after the last focus has landed. Ask again
+  // while it is pending: every second at first, then every 5 s. The app
+  // ends "pending" within about a minute even if reads keep failing
+  // (recheckBound in notice.go); the cap here covers that with room to
+  // spare and is counted again after each focus.
+  const NOTIFY_FAST_RECHECKS = 10;
+  const NOTIFY_MAX_RECHECKS = 30; // 10 x 1 s + 20 x 5 s = 110 s
+  let notifyRecheck = null;
+  let notifyRechecks = 0;
+  function recheckNotifications() {
+    if (closed || notifyRecheck || notifyRechecks >= NOTIFY_MAX_RECHECKS) return;
+    const delay = notifyRechecks < NOTIFY_FAST_RECHECKS ? 1000 : 5000;
+    notifyRechecks++;
+    notifyRecheck = setTimeout(async () => {
+      notifyRecheck = null;
+      if (closed || saving || acting) return;
+      const r = await api('/api/state');
+      if (closed) return;
+      if (r.ok && r.data && r.data.state) mergeState(r.data.state);
+      // A failed request (503: the app was busy) says nothing about the
+      // permission: keep asking, within the same cap.
+      else recheckNotifications();
+    }, delay);
+  }
+
   function isSaveNeeded(dirtyState, noActiveHotkey) {
     return Boolean(dirtyState || noActiveHotkey);
   }
@@ -709,6 +743,13 @@
       pasteNote.textContent = state.auto_paste_unavailable || '';
       pasteNote.hidden = !state.auto_paste_unavailable;
     }
+    const notifyNote = $('notifications-denied');
+    if (notifyNote) {
+      const text = notificationHint(state.notifications);
+      notifyNote.textContent = text;
+      notifyNote.hidden = !text;
+    }
+    if (state.notifications_pending) recheckNotifications();
     const bar = $('busybar');
     if (bar) bar.hidden = !appBusy();
     const busyText = $('busytext');
@@ -1070,7 +1111,10 @@
     });
     window.addEventListener('focus', async () => {
       if (closed || saving || acting) return;
-      const r = await api('/api/state');
+      notifyRechecks = 0;
+      // The user may have just changed the permission in System Settings:
+      // the app reads it again even if its last read is recent.
+      const r = await api('/api/state?recheck=notifications');
       if (r.ok && r.data && r.data.state) {
         mergeState(r.data.state);
       }

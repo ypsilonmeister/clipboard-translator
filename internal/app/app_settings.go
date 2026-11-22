@@ -144,6 +144,9 @@ func (a *app) handleSettingsRequest(req settings.Request) {
 		if translateAPISupported() && req.Action == "translate_api_info" {
 			err = a.ensureTranslateAPIToken()
 		}
+		if req.Action == settings.ActionRecheckNotifications {
+			a.recheckNotifications()
+		}
 		req.Reply <- settings.Reply{State: a.settingsState(), Err: err}
 		return
 	}
@@ -163,6 +166,7 @@ func (a *app) settingsState() settings.State {
 		Inactive:       a.inactiveHotkeys(),
 		NoActiveHotkey: !a.anyHotkeyActive(),
 	}
+	st.Notifications, st.NotificationsPending = a.notificationStatus()
 	for i := range a.conf.Profiles {
 		actual := a.hotkeyLabel(i)
 		if actual != "" && actual != a.conf.Profiles[i].Hotkey {

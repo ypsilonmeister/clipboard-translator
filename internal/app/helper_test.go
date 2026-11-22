@@ -34,6 +34,7 @@ type fakeTray struct {
 	errs     []bool
 	cmds     []int
 	build    func() []platform.MenuItem
+	opts     []platform.NoticeOptions // one per note; plain Notify records the zero value
 }
 
 func (f *fakeTray) QuitRequested() bool { return f.quit }
@@ -46,9 +47,23 @@ func (f *fakeTray) SetState(s platform.TrayState) {
 	f.states = append(f.states, s)
 }
 func (f *fakeTray) Notify(title, msg string, isError bool) {
+	f.NotifyWith(title, msg, isError, platform.NoticeOptions{})
+}
+
+// NotifyWith makes fakeTray a platform.NoticeTray, so tests see the macOS
+// classification of each notice (Issue #67).
+func (f *fakeTray) NotifyWith(title, msg string, isError bool, o platform.NoticeOptions) {
 	f.titles = append(f.titles, title)
 	f.notes = append(f.notes, msg)
 	f.errs = append(f.errs, isError)
+	f.opts = append(f.opts, o)
+}
+
+func (f *fakeTray) lastOpts() platform.NoticeOptions {
+	if len(f.opts) == 0 {
+		return platform.NoticeOptions{}
+	}
+	return f.opts[len(f.opts)-1]
 }
 func (f *fakeTray) SetMenu(b func() []platform.MenuItem) { f.build = b }
 func (f *fakeTray) NextCommand() (int, bool) {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -68,6 +69,15 @@ type app struct {
 	// profile's hotkey could not be registered (the reason is in why).
 	extras      []extraHotkey
 	hotkeyLimit int // how many hotkeys this OS build can register, hotkeyLimit() in production
+	// jobOrigin is what started the current job: OriginHotkey for a hotkey
+	// press, OriginOther for the tray's Translate clipboard and the endpoint.
+	// Only a hotkey outcome may cause the automatic macOS permission request.
+	jobOrigin platform.NoticeOrigin
+	// hotkeyProblemMenu shows inactive hotkeys as menu lines (macOS; tests).
+	hotkeyProblemMenu bool
+	// fromSettings is set while a switch started from the Settings page runs:
+	// the page reports its failures itself (settingsNotice).
+	fromSettings bool
 
 	settings       *settings.Server // the settings page, while it is open
 	apiContext     context.Context
@@ -148,6 +158,7 @@ type extraHotkey struct {
 	profile int // index into conf.Profiles
 	hk      platform.Hotkey
 	why     string // why hk is nil
+	limited bool   // hk is nil only because of hotkeyLimit
 }
 
 func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tray, serverLog io.Writer) *app {
@@ -159,6 +170,7 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 		notifyOnCompleteRev: 1,
 		maxCharsRev:         1,
 		hotkeyLimit:         platform.HotkeyLimit(),
+		hotkeyProblemMenu:   runtime.GOOS == "darwin",
 		settingsReqs:        make(chan settings.Request, 8),
 		dl:                  models.NewManager(dir, version),
 		openURL:             platform.OpenTarget,
@@ -185,6 +197,7 @@ func newApp(dir string, conf config.Config, paths config.Paths, tray platform.Tr
 		now:          time.Now,
 	}
 	tray.SetMenu(a.buildMenu)
+	a.setupNotificationMemory()
 	a.sup = &llamaserver.Supervisor{
 		Model: paths.Model, Template: paths.Template,
 		ContextTokens: conf.ContextTokens, Port: conf.Port, Endpoint: a.endpoint,
@@ -289,7 +302,7 @@ func (a *app) startServer() error {
 	if a.fallbackNotifiedFile != a.conf.ServerFile {
 		a.fallbackNotifiedFile = a.conf.ServerFile
 		label := backendLabel(config.CurrentBackend(a.conf.ServerFile))
-		a.tray.Notify("Clipboard Translator", fmt.Sprintf("The %s engine did not start. Using the CPU engine, which is slower. Open Settings to retry it or to keep the CPU engine.", label), true)
+		a.notify("Clipboard Translator", fmt.Sprintf("The %s engine did not start. Using the CPU engine, which is slower. Open Settings to retry it or to keep the CPU engine.", label), true, platform.NoticeOptions{ID: platform.NoticeIDEngine})
 	}
 	return nil
 }
@@ -456,7 +469,7 @@ func (a *app) restartServer() bool {
 		log.Printf("restarting the server in %s (attempt %d of %d)", wait, a.limiter.Attempt(), a.limiter.Max)
 		a.cancelTransientStatus()
 		a.tray.SetStatus("Clipboard Translator - server stopped, restarting...")
-		a.tray.Notify("Clipboard Translator", "The translation server stopped. Restarting it...", true)
+		a.notify("Clipboard Translator", "The translation server stopped. Restarting it...", true, platform.NoticeOptions{ID: platform.NoticeIDServer})
 		if a.sleepPumping(wait) {
 			log.Print("quit requested during restart")
 			return false
@@ -479,7 +492,7 @@ func (a *app) restartServer() bool {
 	if !fellBack {
 		// The fallback notice already says that a server runs, and on which
 		// engine; "back" right after it would take its place on the screen.
-		a.tray.Notify("Clipboard Translator", "The translation server is back. Ready.", false)
+		a.notify("Clipboard Translator", "The translation server is back. Ready.", false, platform.NoticeOptions{ID: platform.NoticeIDServer})
 	}
 	return true
 }
@@ -523,7 +536,10 @@ func (a *app) run() {
 	defer a.closeSettings()
 	if err := a.startTranslateAPI(); err != nil {
 		log.Printf("translation endpoint: %v", err)
-		a.tray.Notify("Clipboard Translator", "Could not start translation endpoint: "+err.Error(), true)
+		// Explicitly classified (Issue #67): a startup failure the user would
+		// not see otherwise. Reachable only where the endpoint exists
+		// (translateAPISupported: Linux), so it is never a macOS notification.
+		a.notify("Clipboard Translator", "Could not start translation endpoint: "+err.Error(), true, platform.NoticeOptions{ID: platform.NoticeIDStartup})
 	}
 	defer a.stopTranslateAPI()
 	defer a.dl.Close() // closes the partial file of a running download before the process ends
@@ -565,6 +581,7 @@ func (a *app) registerExtraHotkeys() {
 		switch {
 		case i >= a.hotkeyLimit:
 			e.why = fmt.Sprintf("this build registers %d hotkey(s) at most", a.hotkeyLimit)
+			e.limited = true
 		default:
 			hk, err := a.registerProfileHotkey(a.conf.Profiles[i])
 			if err != nil {
@@ -624,6 +641,32 @@ func (a *app) hotkeySummary() string {
 		}
 	}
 	return strings.Join(parts, ", ")
+}
+
+// noteExtraFailures tells the user at startup which extra hotkeys are not
+// active. Lines that only say this OS build holds fewer hotkeys would come back
+// at every launch, so alone they stay in the log, tooltip and menu (Issue #67).
+func (a *app) noteExtraFailures() {
+	f := a.extraFailures()
+	if f == "" {
+		return
+	}
+	kind := platform.NoticeStatusOnly
+	if a.extraConflicts() {
+		kind = platform.NoticeNotify
+	}
+	a.notify("Clipboard Translator", "These hotkeys are not active:\n"+f, true, platform.NoticeOptions{Kind: kind, ID: platform.NoticeIDStartup})
+}
+
+// extraConflicts reports whether an extra hotkey failed for a reason other
+// than this OS build's hotkey limit (another program owns it, a bad key).
+func (a *app) extraConflicts() bool {
+	for _, e := range a.extras {
+		if e.hk == nil && !e.limited {
+			return true
+		}
+	}
+	return false
 }
 
 // extraFailures describes the extra profiles whose hotkey is not active.
@@ -699,7 +742,7 @@ func (a *app) serve(cb platform.Clipboard) {
 	tray.SetStatus(a.readyTip)
 	if a.hasNoHotkey() {
 		log.Printf("ready, but the hotkey %s could not be registered; waiting for the user to pick another", a.conf.Hotkey)
-		tray.Notify("Clipboard Translator", fmt.Sprintf("Could not register the hotkey %s (another program may be using it). Open Settings... from the tray menu and choose another hotkey there.", a.conf.Hotkey), true)
+		a.notify("Clipboard Translator", fmt.Sprintf("Could not register the hotkey %s (another program may be using it). Open Settings... from the tray menu and choose another hotkey there.", a.conf.Hotkey), true, platform.NoticeOptions{ID: platform.NoticeIDStartup})
 	} else {
 		log.Print(readyMessage(a.hotkeySummary()))
 		// A second balloon here could replace the startup fallback notice.
@@ -707,9 +750,7 @@ func (a *app) serve(cb platform.Clipboard) {
 			a.showQuickstart() // first run only; the tray menu shows it again
 		}
 	}
-	if f := a.extraFailures(); f != "" {
-		tray.Notify("Clipboard Translator", "These hotkeys are not active:\n"+f, true)
-	}
+	a.noteExtraFailures()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -1035,6 +1076,7 @@ func (a *app) startHotkeyTranslation(index int, queuedDuringLoad bool) {
 	profile := a.conf.Profiles[index]
 	win := a.foreground()
 	a.resetTranslation()
+	a.jobOrigin = platform.OriginHotkey
 	a.trayStateResetAt = time.Time{}
 	a.setTrayState(platform.TrayBusy)
 	if a.conf.ShowCursorHint && !queuedDuringLoad {
@@ -1090,6 +1132,7 @@ func (a *app) stepCapture() {
 // by a selection capture, so an input "clipboard" profile is never affected.
 func (a *app) translateCaptured(profile config.Profile, win uintptr, source string, fromSelection bool, fallback platform.CaptureFallback, err error) {
 	capturedAt := a.timeNow()
+	origin := a.jobOrigin
 	switch fallback {
 	case platform.FallbackNoCopy:
 		log.Print("no selection was copied; using the text already on the clipboard")
@@ -1117,7 +1160,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 			if !a.desktopStatus().Manual { // manual mode has no hotkey to press again
 				msg += " Release the keys and press the hotkey again."
 			}
-			a.tray.Notify("Clipboard Translator", msg, true)
+			a.notify("Clipboard Translator", msg, true, platform.NoticeOptions{Origin: origin, ID: platform.NoticeIDHotkey})
 		}
 		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
@@ -1130,7 +1173,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		log.Printf("skipped (%s): %s", reason, msg)
 		a.setTransientStatus(config.SkipStatus(reason, profile.Label()))
 		if a.shouldNotifySkip(reason) {
-			a.tray.Notify("Clipboard Translator", msg, true)
+			a.notify("Clipboard Translator", msg, true, platform.NoticeOptions{Origin: origin, ID: platform.NoticeIDHotkey})
 		}
 		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
@@ -1146,7 +1189,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		}
 		a.handleResult(result{original: source, translated: textstruct.Tidy(source, rules, profile.PunctStyle),
 			generation: a.generation, window: win, fromSelection: fromSelection,
-			fallback: fallback, capturedAt: capturedAt, action: config.ActionTidy})
+			fallback: fallback, capturedAt: capturedAt, action: config.ActionTidy, origin: origin})
 		return
 	}
 	if a.modelUnloaded {
@@ -1176,7 +1219,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 				log.Printf("could not load the model again: %v", err)
 				if !fromAPI {
 					// The pointer to the logs comes first: a notification may cut a long reason short.
-					a.tray.Notify("Clipboard Translator", "Nothing was translated: the model could not be loaded again. See server.log and translator.log in the app folder. "+err.Error(), true)
+					a.notify("Clipboard Translator", "Nothing was translated: the model could not be loaded again. See server.log and translator.log in the app folder. "+err.Error(), true, platform.NoticeOptions{Origin: origin, ID: platform.NoticeIDHotkey})
 				}
 			}
 			a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
@@ -1283,7 +1326,7 @@ func (a *app) translateCaptured(profile config.Profile, win uintptr, source stri
 		select {
 		case a.results <- result{original: source, translated: translated, generation: g, err: err,
 			direction: direction, window: win, fromSelection: fromSelection, fallback: fallback, output: outputMode,
-			capturedAt: capturedAt, action: action}:
+			capturedAt: capturedAt, action: action, origin: origin}:
 		default:
 		}
 	}()
@@ -1328,7 +1371,7 @@ func (a *app) handleResult(res result) {
 		if !errors.Is(res.err, context.Canceled) {
 			log.Printf("translation failed: %v", res.err)
 			msg := translationFailureMessage(res.err)
-			a.tray.Notify("Translation failed", msg, true)
+			a.notify("Translation failed", msg, true, res.notice())
 		}
 		a.cancelTransientStatus()
 		a.tray.SetStatus(a.readyTip)
@@ -1363,7 +1406,7 @@ func (a *app) handleResult(res result) {
 			a.pendingResult = nil
 			a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
 			a.tray.SetStatus(a.readyTip)
-			a.tray.Notify("Clipboard Translator", "Clipboard transfer timed out. The "+noun+" is available in Recent translations.", true)
+			a.notify("Clipboard Translator", "Clipboard transfer timed out. The "+noun+" is available in Recent translations.", true, res.notice())
 			a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 			return
 		}
@@ -1378,7 +1421,7 @@ func (a *app) handleResult(res result) {
 		a.hist.Add(historyEntry{Source: res.original, Translated: res.translated, Direction: res.direction})
 		log.Printf("clipboard check/write failed: %v", err)
 		a.tray.SetStatus(a.readyTip)
-		a.tray.Notify("Clipboard Translator", "The "+noun+" is kept in Recent translations in the tray menu. Could not write "+noun+" to the clipboard: "+err.Error(), true)
+		a.notify("Clipboard Translator", "The "+noun+" is kept in Recent translations in the tray menu. Could not write "+noun+" to the clipboard: "+err.Error(), true, res.notice())
 		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
@@ -1396,7 +1439,7 @@ func (a *app) handleResult(res result) {
 			log.Printf("clipboard change diagnostics: %s", platform.ClassifyClipboardDiff(res.original, current, elapsed))
 		}
 		a.tray.SetStatus(a.readyTip)
-		a.tray.Notify("Clipboard Translator", "The clipboard changed while "+ongoing+". Your new clipboard text was kept; copy the "+noun+" from Recent translations in the tray menu.", false)
+		a.notify("Clipboard Translator", "The clipboard changed while "+ongoing+". Your new clipboard text was kept; copy the "+noun+" from Recent translations in the tray menu.", false, res.notice())
 		a.setTrayStateWithTimeout(platform.TrayProblem, trayProblemDuration)
 		return
 	}
@@ -1417,14 +1460,14 @@ func (a *app) handleResult(res result) {
 		if err := a.paste(res.window); err != nil {
 			log.Printf("auto-paste failed: %v", err)
 			a.tray.SetStatus(readyStatus)
-			a.tray.Notify("Clipboard Translator", strings.ToUpper(noun[:1])+noun[1:]+" ready, but it could not be pasted ("+err.Error()+"). Press "+platform.PasteShortcut()+".", true)
+			a.notify("Clipboard Translator", strings.ToUpper(noun[:1])+noun[1:]+" ready, but it could not be pasted ("+err.Error()+"). Press "+platform.PasteShortcut()+".", true, res.notice())
 			return
 		}
 		log.Print(noun + " pasted")
 		a.tray.SetStatus("Clipboard Translator - " + noun + " pasted")
 	case pasteWindowChanged:
 		log.Print(noun + " ready; the active window changed, so it was not pasted")
-		a.tray.Notify("Clipboard Translator", strings.ToUpper(noun[:1])+noun[1:]+" ready in the clipboard. The active window changed, so it was not pasted. Press "+platform.PasteShortcut()+".", false)
+		a.notify("Clipboard Translator", strings.ToUpper(noun[:1])+noun[1:]+" ready in the clipboard. The active window changed, so it was not pasted. Press "+platform.PasteShortcut()+".", false, res.notice())
 		a.tray.SetStatus(readyStatus)
 	default:
 		log.Print(noun+" ready in clipboard (", platform.PasteShortcut(), " to paste)")
@@ -1432,7 +1475,7 @@ func (a *app) handleResult(res result) {
 	}
 	// The fallback notice replaces the completion notice for this result: a
 	// second balloon would take the place of the first on Windows.
-	if res.action != config.ActionTidy && res.fallback == platform.FallbackNoCopy && a.noteNoCopy() {
+	if res.action != config.ActionTidy && res.fallback == platform.FallbackNoCopy && a.noteNoCopy(res.notice()) {
 		return
 	}
 	if a.conf.NotifyOnComplete && action == pasteNone {
@@ -1440,7 +1483,7 @@ func (a *app) handleResult(res result) {
 		if res.action == config.ActionTidy {
 			title, msg = "Text tidy", "Text "+verb+" and ready on the clipboard. Press "+platform.PasteShortcut()+"."
 		}
-		a.tray.Notify(title, msg, false)
+		a.notify(title, msg, false, platform.NoticeOptions{Origin: res.origin, ID: platform.NoticeIDCompletion})
 	}
 }
 
@@ -1464,12 +1507,12 @@ func (a *app) readyStatus(fallback platform.CaptureFallback) string {
 // skip, a failure or a dropped result must neither claim a translation nor use
 // up the one notice. Copying first on purpose is a normal way to use the
 // hotkey, so this is only a notice.
-func (a *app) noteNoCopy() bool {
+func (a *app) noteNoCopy(o platform.NoticeOptions) bool {
 	if a.noCopyNotified {
 		return false
 	}
 	a.noCopyNotified = true
-	a.tray.Notify("Clipboard Translator", "No selection was copied, so the text already on the clipboard was translated. If you copy first on purpose, set \"Text from\" to Clipboard for this hotkey in Settings.", false)
+	a.notify("Clipboard Translator", "No selection was copied, so the text already on the clipboard was translated. If you copy first on purpose, set \"Text from\" to Clipboard for this hotkey in Settings.", false, o)
 	return true
 }
 
@@ -1520,5 +1563,5 @@ func (a *app) ping() {
 
 func (a *app) showAlreadyRunning() {
 	log.Print("another instance started; showing tray notification")
-	a.tray.Notify("Clipboard Translator", "Clipboard Translator is already running. Its icon is here in the tray.", false)
+	a.notify("Clipboard Translator", "Clipboard Translator is already running. Its icon is here in the tray.", false, platform.NoticeOptions{ID: platform.NoticeIDStartup})
 }

@@ -112,14 +112,16 @@ func (a *app) finishHistoryCopy(text string) {
 	a.pendingHistory = nil
 	if err != nil {
 		log.Printf("could not copy from history: %v", err)
-		a.tray.Notify("Clipboard Translator", "Could not copy to the clipboard: "+err.Error(), true)
+		a.notify("Clipboard Translator", "Could not copy to the clipboard: "+err.Error(), true, platform.NoticeOptions{})
 		return
 	}
-	a.tray.Notify("Clipboard Translator", "Copied. Paste with "+platform.PasteShortcut()+".", false)
+	// A synchronous menu click whose effect is obvious: no notification.
+	a.notify("Clipboard Translator", "Copied. Paste with "+platform.PasteShortcut()+".", false, platform.NoticeOptions{Kind: platform.NoticeStatusOnly})
 }
 
 func (a *app) startClipboardTranslation() {
 	a.abortTranslation()
+	a.jobOrigin = platform.OriginOther // a menu click, not a hotkey press
 	a.trayStateResetAt = time.Time{}
 	a.setTrayState(platform.TrayBusy)
 	a.resetIdleTimer()

@@ -505,3 +505,29 @@ func TestProfileActionConfig(t *testing.T) {
 		t.Errorf("error %q should mention requires languages", err.Error())
 	}
 }
+
+// mac_notifications is the app's memory of the one automatic macOS permission
+// request (Issue #67): it must survive a save and leave the other keys alone.
+func TestMacNotificationsRoundTrip(t *testing.T) {
+	dir := writeConfig(t, `{"hotkey": "Ctrl+Alt+E", "my_note": "keep me"}`)
+	c, err := Load(dir)
+	if err != nil || c.MacNotifications != "" {
+		t.Fatalf("fresh config: %q %v", c.MacNotifications, err)
+	}
+	for _, v := range []string{"asked"} {
+		if err := UpdateFile(dir, map[string]any{"mac_notifications": v}); err != nil {
+			t.Fatal(err)
+		}
+		c, err := Load(dir)
+		if err != nil || c.MacNotifications != v {
+			t.Fatalf("after saving %q: %q %v", v, c.MacNotifications, err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"my_note": "keep me"`) || !strings.Contains(string(data), `"hotkey": "Ctrl+Alt+E"`) {
+		t.Fatalf("other keys were not preserved:\n%s", data)
+	}
+}
