@@ -5,8 +5,8 @@
 English | [日本語](README.ja.md)
 
 Local clipboard translation for Windows and macOS (the Linux build is experimental).
-Select text in any app, press **Ctrl+Alt+E**, and the translation lands on your clipboard,
-ready to paste with **Ctrl+V**. It translates between 53 languages
+Select text in any app (on macOS this needs the Accessibility permission), press **Ctrl+Alt+E**,
+and the translation lands on your clipboard, ready to paste with **Ctrl+V** on Windows or **Command+V** on macOS. It translates between 53 languages
 (Japanese <-> English by default).
 
 Everything runs on your own PC, with [llama.cpp](https://github.com/ggml-org/llama.cpp)
@@ -169,7 +169,7 @@ builds are available from the PR's Actions artifacts; tagged builds are attached
 Releases. Extract the matching zip and move **Clipboard Translator.app** to `/Applications`
 before the first launch, granting permissions or enabling autostart.
 The builds are **ad-hoc signed**, without Developer ID signing or notarization, which is why
-the first launch needs **Open Anyway** (step 4).
+the first launch of a quarantined copy goes through **Open Anyway** (step 4, which also documents removing the quarantine as an alternative).
 
 First-run setup runs in the app itself (its `setup` subcommand); no Python is needed.
 Start the app and accept the explicit
