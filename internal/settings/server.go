@@ -102,6 +102,9 @@ type State struct {
 	// "unavailable", "unknown", "not_asked", "denied" or "allowed" on macOS,
 	// "n/a" where the tray needs none (Windows, Linux).
 	Notifications string `json:"notifications"`
+	// NotificationsPending: the app is reading the permission again (it may
+	// have changed in System Settings); the page asks once more shortly.
+	NotificationsPending bool `json:"notifications_pending,omitempty"`
 	Form
 	Revision       int              `json:"revision"`
 	Languages      []LanguageOption `json:"language_options"`

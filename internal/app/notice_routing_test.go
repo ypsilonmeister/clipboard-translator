@@ -2,13 +2,17 @@ package app
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
+	"github.com/ypsilonmeister/clipboard-translator/internal/models"
 	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 	"github.com/ypsilonmeister/clipboard-translator/internal/update"
@@ -42,8 +46,8 @@ func TestNoticeWithoutNoticeTrayIsPlainNotify(t *testing.T) {
 	if strings.Join(tray.plain, ",") != "Copied.,failed" {
 		t.Fatalf("Windows/Linux must get every notice as plain Notify, got %v", tray.plain)
 	}
-	if a.notificationStatus() != "n/a" {
-		t.Fatalf("notification status without a NotificationTray = %q", a.notificationStatus())
+	if s, pending := a.notificationStatus(); s != "n/a" || pending {
+		t.Fatalf("notification status without a NotificationTray = %q %v", s, pending)
 	}
 }
 
@@ -163,7 +167,7 @@ func TestNoticeEngineSwitchTrayVersusSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.switchBackend("cuda")
-	if !strings.HasPrefix(tray.lastNote(), "Translation engine:") || tray.lastOpts() != engineSuccess {
+	if !strings.HasPrefix(tray.lastNote(), "Translation engine:") || tray.lastOpts() != wantSwitchSuccess {
 		t.Fatalf("tray switch success: %q %+v", tray.lastNote(), tray.lastOpts())
 	}
 	a.switchBackend("vulkan") // cannot start; cuda stays
@@ -183,18 +187,87 @@ func TestNoticeEngineSwitchTrayVersusSettings(t *testing.T) {
 	}
 }
 
+// wantSwitchSuccess is written out here, not taken from engineSuccess, so a
+// change of that production value fails the tests (maintainer decision on
+// Issue #67, Q2: switch success is status only).
+var wantSwitchSuccess = platform.NoticeOptions{Kind: platform.NoticeStatusOnly, ID: platform.NoticeIDEngine}
+
+func TestNoticeModelSwitchSuccessIsStatusOnly(t *testing.T) {
+	withModels(t, testEntry("a", "a.gguf"), testEntry("b", "b.gguf"))
+	a, tray, _ := newTestApp(t)
+	putModel(t, a.dir, models.Catalog[1])
+	if err := a.startServer(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.switchModel(models.Catalog[1]); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(tray.lastNote(), "Model: ") || tray.lastOpts() != wantSwitchSuccess {
+		t.Fatalf("model switch success: %q %+v", tray.lastNote(), tray.lastOpts())
+	}
+}
+
+// The translation worker goroutine, not the test, supplies the origin of a
+// failed result (app.go, the result sent on a.results): a hotkey job's
+// failure is a hotkey outcome, a Translate clipboard job's is not.
+func TestNoticeAsyncFailureOriginFromWorker(t *testing.T) {
+	a, tray, cb, _, _ := uxApp(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal model error", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	a.endpoint = srv.URL
+	a.capture = func(platform.Clipboard, uintptr) (string, bool, error) { return "Hello", true, nil }
+	cb.text = "Hello"
+	wait := func() result {
+		t.Helper()
+		select {
+		case res := <-a.results:
+			return res
+		case <-time.After(10 * time.Second):
+			t.Fatal("no result from the worker")
+		}
+		return result{}
+	}
+	a.startTranslation(0)
+	res := wait()
+	if res.err == nil || res.origin != platform.OriginHotkey {
+		t.Fatalf("hotkey job result: err=%v origin=%v", res.err, res.origin)
+	}
+	a.handleResult(res)
+	if tray.lastTitle() != "Translation failed" || tray.lastOpts() != (platform.NoticeOptions{Origin: platform.OriginHotkey, ID: platform.NoticeIDHotkey}) {
+		t.Fatalf("hotkey job failure notice: %q %+v", tray.lastTitle(), tray.lastOpts())
+	}
+	cb.text = "Hello again"
+	a.startClipboardTranslation()
+	res = wait()
+	if res.err == nil || res.origin != platform.OriginOther {
+		t.Fatalf("Translate clipboard job result: err=%v origin=%v", res.err, res.origin)
+	}
+	a.handleResult(res)
+	if tray.lastTitle() != "Translation failed" || tray.lastOpts() != (platform.NoticeOptions{Origin: platform.OriginOther, ID: platform.NoticeIDHotkey}) {
+		t.Fatalf("Translate clipboard failure notice: %q %+v", tray.lastTitle(), tray.lastOpts())
+	}
+}
+
 // fakeNotificationTray stands in for the macOS tray's permission side.
 type fakeNotificationTray struct {
 	fakeTray
-	status platform.AuthStatus
-	stored string
-	save   func(string) error
+	status  platform.AuthStatus
+	pending bool
+	reads   int
+	stored  string
+	save    func(string) error
 }
 
 func (f *fakeNotificationTray) SetNotificationMemory(stored string, save func(string) error) {
 	f.stored, f.save = stored, save
 }
-func (f *fakeNotificationTray) NotificationStatus() platform.AuthStatus { return f.status }
+func (f *fakeNotificationTray) NotificationStatus() platform.AuthStatus {
+	f.reads++
+	return f.status
+}
+func (f *fakeNotificationTray) NotificationStatusPending() bool { return f.pending }
 
 func TestNotificationMemoryAndSettingsState(t *testing.T) {
 	a, _, _ := newTestApp(t)
@@ -218,9 +291,12 @@ func TestNotificationMemoryAndSettingsState(t *testing.T) {
 	if got := a.settingsState().Notifications; got != "denied" {
 		t.Fatalf("state = %q, want denied", got)
 	}
-	nt.status = platform.AuthAuthorized
-	if got := a.settingsState().Notifications; got != "allowed" {
-		t.Fatalf("state = %q, want allowed", got)
+	nt.status, nt.pending = platform.AuthAuthorized, true
+	if st := a.settingsState(); st.Notifications != "allowed" || !st.NotificationsPending {
+		t.Fatalf("state = %q pending=%v, want allowed and pending", st.Notifications, st.NotificationsPending)
+	}
+	if nt.reads == 0 {
+		t.Fatal("the Settings state must go through NotificationStatus (which refreshes on macOS)")
 	}
 }
 
@@ -239,6 +315,11 @@ func TestSettingsPageNotificationHint(t *testing.T) {
 	}
 	if !strings.Contains(js, "notificationHint(state.notifications)") {
 		t.Error("the page must derive the hint from state.notifications")
+	}
+	// A permission read in flight (it may have changed in System Settings):
+	// the page asks once more, a bounded number of times.
+	if !strings.Contains(js, "if (state.notifications_pending) recheckNotifications();") || !strings.Contains(js, "notifyRechecks >= 5") {
+		t.Error("the page must read the state again, a bounded number of times, while notifications_pending")
 	}
 	nodePath, err := exec.LookPath("node")
 	if err != nil {

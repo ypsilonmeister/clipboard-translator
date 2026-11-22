@@ -55,6 +55,22 @@
     return 'macOS notifications are off for Clipboard Translator. Turn them on in System Settings > Notifications.';
   }
 
+  // The app reads the macOS permission in the background when the state is
+  // asked for (it may have changed in System Settings). Ask again shortly for
+  // the fresh answer; a few times at most, counted again after each focus.
+  let notifyRecheck = null;
+  let notifyRechecks = 0;
+  function recheckNotifications() {
+    if (closed || notifyRecheck || notifyRechecks >= 5) return;
+    notifyRechecks++;
+    notifyRecheck = setTimeout(async () => {
+      notifyRecheck = null;
+      if (closed || saving || acting) return;
+      const r = await api('/api/state');
+      if (!closed && r.ok && r.data && r.data.state) mergeState(r.data.state);
+    }, 1000);
+  }
+
   function isSaveNeeded(dirtyState, noActiveHotkey) {
     return Boolean(dirtyState || noActiveHotkey);
   }
@@ -722,6 +738,7 @@
       notifyNote.textContent = text;
       notifyNote.hidden = !text;
     }
+    if (state.notifications_pending) recheckNotifications();
     const bar = $('busybar');
     if (bar) bar.hidden = !appBusy();
     const busyText = $('busytext');
@@ -1083,6 +1100,7 @@
     });
     window.addEventListener('focus', async () => {
       if (closed || saving || acting) return;
+      notifyRechecks = 0;
       const r = await api('/api/state');
       if (r.ok && r.data && r.data.state) {
         mergeState(r.data.state);

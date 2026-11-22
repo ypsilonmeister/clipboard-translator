@@ -174,7 +174,8 @@ type macNoticeBridge struct{ available bool }
 
 func (b macNoticeBridge) Available() bool    { return b.available }
 func (b macNoticeBridge) Status() AuthStatus { return AuthStatus(C.ct_mac_notify_status()) }
-func (b macNoticeBridge) Refresh()           { C.ct_mac_notify_refresh() }
+func (b macNoticeBridge) Refresh() int64     { return int64(C.ct_mac_notify_refresh()) }
+func (b macNoticeBridge) Applied() int64     { return int64(C.ct_mac_notify_applied()) }
 func (b macNoticeBridge) Request() bool      { return C.ct_mac_notify_request() != 0 }
 func (b macNoticeBridge) Post(id, title, body string, sound bool) {
 	withCString(id, func(i *C.char) {
@@ -202,6 +203,7 @@ func NewTray(logPath string) Tray {
 	t := &macTray{logPath: logPath}
 	C.ct_mac_tray_create()
 	t.notes = newNotifier(macNoticeBridge{available: C.ct_mac_notify_init() != 0})
+	t.notes.openSettings = func() { _ = OpenTarget(macNotificationsPane) }
 	activeMacTray = t
 	if !accessibilityGranted() {
 		log.Print("Accessibility access is not granted; translating existing clipboard text remains available. Open Accessibility Settings from the menu to enable selection capture and auto-paste.")
@@ -230,7 +232,8 @@ func (t *macTray) NotifyWith(title, message string, isError bool, o NoticeOption
 func (t *macTray) SetNotificationMemory(stored string, save func(string) error) {
 	t.notes.setMemory(stored, save)
 }
-func (t *macTray) NotificationStatus() AuthStatus  { return t.notes.status() }
+func (t *macTray) NotificationStatus() AuthStatus  { return t.notes.settingsStatus() }
+func (t *macTray) NotificationStatusPending() bool { return t.notes.pending() }
 func (t *macTray) QuitRequested() bool             { return t.quit }
 func (t *macTray) SetMenu(build func() []MenuItem) { t.build = build }
 func (t *macTray) NextCommand() (int, bool) {
@@ -260,7 +263,7 @@ func PumpMessages() bool {
 	if t := activeMacTray; t != nil {
 		t.notes.sync()
 		if C.ct_mac_wants_menu() != 0 {
-			t.notes.bridge.Refresh() // for the next time; this menu shows the cached status
+			t.notes.refresh(statusFreshFor) // for the next time; this menu shows the cached status
 			var items []MenuItem
 			if t.build != nil {
 				items = t.build()
@@ -286,9 +289,7 @@ func PumpMessages() bool {
 			case 4:
 				_ = OpenTarget("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
 			case macNotificationsItem:
-				if t.notes.explicitAction() {
-					_ = OpenTarget(macNotificationsPane)
-				}
+				t.notes.explicitAction() // acts in sync once the status is fresh
 			default:
 				t.commands = append(t.commands, id)
 			}

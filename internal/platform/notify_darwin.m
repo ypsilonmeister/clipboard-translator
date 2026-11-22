@@ -63,8 +63,13 @@ static int map_status(UNAuthorizationStatus s) {
 }
 @end
 
-static void start_refresh(dispatch_semaphore_t answered) {
-    if (!center) return;
+// start_refresh reads the permission asynchronously and returns the read's
+// ticket, or 0 if it could not start (recorded as a failure). With
+// clears_request the request's in-flight bit clears only once the answer is
+// in status_value, so a request never looks finished while the snapshot still
+// says "not determined".
+static long start_refresh(dispatch_semaphore_t answered, int clears_request) {
+    if (!center) return 0;
     os_unfair_lock_lock(&notify_lock);
     long seq = ++refresh_started;
     os_unfair_lock_unlock(&notify_lock);
@@ -76,12 +81,15 @@ static void start_refresh(dispatch_semaphore_t answered) {
                 refresh_applied = seq;
                 status_value = value;
             }
+            if (clears_request) request_in_flight = 0;
             os_unfair_lock_unlock(&notify_lock);
             if (answered) dispatch_semaphore_signal(answered);
         }];
     } @catch (NSException *e) {
         record_failure("refresh", [e name], 0);
+        return 0;
     }
+    return seq;
 }
 
 int ct_mac_notify_init(void) {
@@ -109,13 +117,20 @@ int ct_mac_notify_init(void) {
     // Startup notices come right after this: wait briefly for the first
     // answer instead of treating them as "not allowed". Never blocks long.
     dispatch_semaphore_t answered = dispatch_semaphore_create(0);
-    start_refresh(answered);
+    start_refresh(answered, 0);
     dispatch_semaphore_wait(answered, dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC));
     dispatch_release(answered);
     return 1;
 }
 
-void ct_mac_notify_refresh(void) { start_refresh(NULL); }
+long long ct_mac_notify_refresh(void) { return start_refresh(NULL, 0); }
+
+long long ct_mac_notify_applied(void) {
+    os_unfair_lock_lock(&notify_lock);
+    long value = refresh_applied;
+    os_unfair_lock_unlock(&notify_lock);
+    return value;
+}
 
 int ct_mac_notify_status(void) {
     os_unfair_lock_lock(&notify_lock);
@@ -138,10 +153,11 @@ int ct_mac_notify_request(void) {
         // style stays the user's choice in System Settings.
         [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound) completionHandler:^(BOOL granted, NSError *error) {
             if (error) record_failure("request", [error domain], (long)[error code]);
-            os_unfair_lock_lock(&notify_lock);
-            request_in_flight = 0;
-            os_unfair_lock_unlock(&notify_lock);
-            start_refresh(NULL);
+            if (!start_refresh(NULL, 1)) {
+                os_unfair_lock_lock(&notify_lock);
+                request_in_flight = 0;
+                os_unfair_lock_unlock(&notify_lock);
+            }
         }];
     } @catch (NSException *e) {
         os_unfair_lock_lock(&notify_lock);

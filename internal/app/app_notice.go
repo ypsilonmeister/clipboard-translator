@@ -54,10 +54,12 @@ func (a *app) setupNotificationMemory() {
 }
 
 // notificationStatus is the Settings page's "notifications" field: "n/a" where
-// the tray has no system permission to report (Windows, Linux).
-func (a *app) notificationStatus() string {
+// the tray has no system permission to report (Windows, Linux). Reading it
+// starts a background refresh on macOS; pending says one is still in flight.
+func (a *app) notificationStatus() (status string, pending bool) {
 	if t, ok := a.tray.(platform.NotificationTray); ok {
-		return t.NotificationStatus().String()
+		s := t.NotificationStatus()
+		return s.String(), t.NotificationStatusPending()
 	}
-	return "n/a"
+	return "n/a", false
 }

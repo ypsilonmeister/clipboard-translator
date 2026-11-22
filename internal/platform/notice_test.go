@@ -5,82 +5,95 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
-func TestDecideNotice(t *testing.T) {
-	hotkey := NoticeOptions{Origin: OriginHotkey, ID: NoticeIDHotkey}
-	other := NoticeOptions{ID: NoticeIDStartup}
-	statusOnly := NoticeOptions{Kind: NoticeStatusOnly, Origin: OriginHotkey}
-	for _, tc := range []struct {
-		name      string
-		status    AuthStatus
-		available bool
-		stored    string
-		o         NoticeOptions
-		post, req bool
-		newStored string
-	}{
-		{"never asked, hotkey: the one automatic request", AuthNotDetermined, true, "", hotkey, false, true, "asked"},
-		{"never asked, startup: no request", AuthNotDetermined, true, "", other, false, false, ""},
-		{"already asked (ignored prompt): never again", AuthNotDetermined, true, "asked", hotkey, false, false, "asked"},
-		{"authorized, then reset by an update: asks once more", AuthNotDetermined, true, "authorized", hotkey, false, true, "asked"},
-		{"authorized-then-reset, background event: no request", AuthNotDetermined, true, "authorized", other, false, false, "authorized"},
-		{"denied before, reset: never asked automatically", AuthNotDetermined, true, "denied", hotkey, false, false, "denied"},
-		{"unknown stored value: conservative", AuthNotDetermined, true, "maybe", hotkey, false, false, "maybe"},
-		{"allowed, hotkey: post", AuthAuthorized, true, "authorized", hotkey, true, false, "authorized"},
-		{"allowed, startup: post", AuthAuthorized, true, "", other, true, false, ""},
-		{"provisional counts as allowed", AuthProvisional, true, "asked", other, true, false, "asked"},
-		{"denied, hotkey: skip, no request", AuthDenied, true, "denied", hotkey, false, false, "denied"},
-		{"denied while stored is empty: still no request", AuthDenied, true, "", hotkey, false, false, ""},
-		{"status not read yet: skip, no request", AuthUnknown, true, "", hotkey, false, false, ""},
-		{"unavailable (unbundled): nothing", AuthUnavailable, false, "", hotkey, false, false, ""},
-		{"unavailable even if a status is cached", AuthAuthorized, false, "", hotkey, false, false, ""},
-		{"status only, allowed: no post", AuthAuthorized, true, "authorized", statusOnly, false, false, "authorized"},
-		{"status only, never asked: no request", AuthNotDetermined, true, "", statusOnly, false, false, ""},
-	} {
-		post, req, stored := decideNotice(tc.status, tc.available, tc.stored, tc.o)
-		if post != tc.post || req != tc.req || stored != tc.newStored {
-			t.Errorf("%s: got post=%v request=%v stored=%q, want %v %v %q", tc.name, post, req, stored, tc.post, tc.req, tc.newStored)
+// The full origin x kind x status x availability x marker matrix. The
+// expectations are the maintainer decision on Issue #67 spelled out
+// directly, not derived from decideNotice.
+func TestDecideNoticeMatrix(t *testing.T) {
+	statuses := []AuthStatus{AuthUnavailable, AuthUnknown, AuthNotDetermined, AuthDenied, AuthAuthorized, AuthProvisional}
+	// "authorized" and "denied" were written by development builds of this
+	// branch; like any non-empty value they mean the request was used.
+	markers := []string{"", "asked", "authorized", "denied", "maybe"}
+	kinds := []NoticeKind{NoticeNotify, NoticeStatusOnly}
+	origins := []NoticeOrigin{OriginHotkey, OriginOther}
+	rows, requests := 0, 0
+	for _, status := range statuses {
+		for _, available := range []bool{true, false} {
+			for _, stored := range markers {
+				for _, kind := range kinds {
+					for _, origin := range origins {
+						o := NoticeOptions{Kind: kind, Origin: origin, ID: NoticeIDHotkey}
+						wantPost := available && kind == NoticeNotify && (status == AuthAuthorized || status == AuthProvisional)
+						wantReq := available && kind == NoticeNotify && origin == OriginHotkey && status == AuthNotDetermined && stored == ""
+						wantStored := stored
+						if wantReq {
+							wantStored = "asked"
+						}
+						post, req, got := decideNotice(status, available, stored, o)
+						rows++
+						if req {
+							requests++
+						}
+						if post != wantPost || req != wantReq || got != wantStored {
+							t.Errorf("status=%v available=%v stored=%q kind=%v origin=%v: got post=%v request=%v stored=%q, want %v %v %q",
+								status, available, stored, kind, origin, post, req, got, wantPost, wantReq, wantStored)
+						}
+					}
+				}
+			}
 		}
 	}
-}
-
-func TestStoredForStatus(t *testing.T) {
-	for _, tc := range []struct {
-		status       AuthStatus
-		stored, want string
-	}{
-		{AuthAuthorized, "asked", "authorized"},
-		{AuthProvisional, "", "authorized"},
-		{AuthDenied, "asked", "denied"},
-		{AuthDenied, "authorized", "denied"},
-		{AuthNotDetermined, "asked", "asked"},
-		{AuthNotDetermined, "authorized", "authorized"},
-		{AuthUnknown, "", ""},
-	} {
-		if got := storedForStatus(tc.status, tc.stored); got != tc.want {
-			t.Errorf("storedForStatus(%v, %q) = %q, want %q", tc.status, tc.stored, got, tc.want)
-		}
+	if rows != 6*2*5*2*2 || requests != 1 {
+		t.Fatalf("matrix rows=%d, combinations that ask=%d (want 240 and exactly 1)", rows, requests)
 	}
 }
 
 // fakeBridge is a native notification center whose callbacks the test
-// completes by hand, in any order.
+// completes by hand, in any order. status is the cached snapshot (what
+// Status returns); system is what macOS would answer to a read now.
 type fakeBridge struct {
 	available bool
 	status    AuthStatus
+	system    AuthStatus
+	hasSystem bool
 	inFlight  bool
 	requests  int
 	refreshes int
+	failRead  bool
+	queued    []fakeRead
+	applied   int64
+	tickets   int64
 	posts     []string
 	sounds    []bool
 	failures  int
 	last      string
 }
 
+type fakeRead struct {
+	ticket int64
+	value  AuthStatus
+}
+
 func (b *fakeBridge) Available() bool    { return b.available }
 func (b *fakeBridge) Status() AuthStatus { return b.status }
-func (b *fakeBridge) Refresh()           { b.refreshes++ }
+func (b *fakeBridge) Refresh() int64 {
+	b.refreshes++
+	if b.failRead {
+		b.failures++
+		b.last = "refresh: NSInternalInconsistencyException 0"
+		return 0
+	}
+	b.tickets++
+	v := b.status
+	if b.hasSystem {
+		v = b.system
+	}
+	b.queued = append(b.queued, fakeRead{b.tickets, v})
+	return b.tickets
+}
+func (b *fakeBridge) Applied() int64 { return b.applied }
 func (b *fakeBridge) Request() bool {
 	if b.inFlight {
 		return false
@@ -95,8 +108,40 @@ func (b *fakeBridge) Post(id, title, body string, sound bool) {
 }
 func (b *fakeBridge) Failures() (int, string) { return b.failures, b.last }
 
-// answer completes the pending request as the user's choice would.
-func (b *fakeBridge) answer(s AuthStatus) { b.inFlight = false; b.status = s }
+// answer completes the pending request as the user's choice would, with the
+// answer already in the snapshot (the native side clears the in-flight bit
+// only after its refresh).
+func (b *fakeBridge) answer(s AuthStatus) { b.inFlight = false; b.status = s; b.setSystem(s) }
+
+// setSystem changes the permission outside the app (System Settings, a reset).
+func (b *fakeBridge) setSystem(s AuthStatus) { b.system, b.hasSystem = s, true }
+
+// land delivers the oldest outstanding read; a late answer to an older
+// ticket never overwrites a newer one, as in notify_darwin.m.
+func (b *fakeBridge) land() {
+	if len(b.queued) == 0 {
+		return
+	}
+	r := b.queued[0]
+	b.queued = b.queued[1:]
+	if r.ticket > b.applied {
+		b.applied, b.status = r.ticket, r.value
+	}
+}
+
+// settle delivers every outstanding read, including the ones sync starts
+// in response, as the system would over a few pumps.
+func settle(n *notifier, b *fakeBridge) {
+	for i := 0; i < 10; i++ {
+		n.sync()
+		if len(b.queued) == 0 {
+			return
+		}
+		for len(b.queued) > 0 {
+			b.land()
+		}
+	}
+}
 
 type memory struct {
 	saved []string
@@ -111,11 +156,41 @@ func (m *memory) save(v string) error {
 	return nil
 }
 
+// last is what a restarted app would read from config.json.
+func (m *memory) last() string {
+	if len(m.saved) == 0 {
+		return ""
+	}
+	return m.saved[len(m.saved)-1]
+}
+
+type clock struct{ t time.Time }
+
+func (c *clock) now() time.Time          { return c.t }
+func (c *clock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
 func newTestNotifier(b *fakeBridge, stored string, m *memory) (*notifier, *[]string) {
+	n, logs, _ := newClockedNotifier(b, stored, m)
+	return n, logs
+}
+
+func newClockedNotifier(b *fakeBridge, stored string, m *memory) (*notifier, *[]string, *clock) {
 	var logs []string
-	n := &notifier{bridge: b, lastStatus: AuthUnknown, logf: func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }}
+	c := &clock{t: time.Date(2026, 11, 22, 9, 0, 0, 0, time.UTC)}
+	n := &notifier{bridge: b, lastStatus: AuthUnknown, now: c.now,
+		logf: func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }}
 	n.setMemory(stored, m.save)
-	return n, &logs
+	return n, &logs, c
+}
+
+func count(logs []string, sub string) int {
+	k := 0
+	for _, l := range logs {
+		if strings.Contains(l, sub) {
+			k++
+		}
+	}
+	return k
 }
 
 var hotkeyNotice = NoticeOptions{Origin: OriginHotkey, ID: NoticeIDHotkey}
@@ -141,12 +216,62 @@ func TestNotifierGrantFlowDoesNotReplay(t *testing.T) {
 	if len(b.posts) != 0 {
 		t.Fatalf("the triggering notice must not be replayed after the grant: %v", b.posts)
 	}
-	if n.stored != "authorized" || m.saved[len(m.saved)-1] != "authorized" {
-		t.Fatalf("stored after grant = %q (%v)", n.stored, m.saved)
+	// The marker is not replaced by the observed grant (Codex review P1).
+	if n.stored != "asked" || strings.Join(m.saved, ",") != "asked" {
+		t.Fatalf("marker after grant = %q (saved %v), want asked only", n.stored, m.saved)
 	}
 	n.notice("Clipboard Translator", "failed", true, hotkeyNotice)
 	if len(b.posts) != 1 || b.posts[0] != "hotkey-outcome|failed" || !b.sounds[0] {
 		t.Fatalf("after the grant notices are posted: %v %v", b.posts, b.sounds)
+	}
+}
+
+// Codex review P1: grant -> reset (while running and across restarts) must
+// not re-arm the automatic request. Exactly one automatic request, ever.
+func TestNotifierAutomaticRequestOnceAcrossGrantResetRestart(t *testing.T) {
+	m := &memory{}
+	automatic := 0
+	hotkeys := func(n *notifier, b *fakeBridge) {
+		before := b.requests
+		for i := 0; i < 3; i++ {
+			n.notice("t", "too long", true, hotkeyNotice)
+			n.sync()
+		}
+		automatic += b.requests - before
+	}
+	// Run 1: the one automatic request, granted.
+	b := &fakeBridge{available: true, status: AuthNotDetermined}
+	n, _ := newTestNotifier(b, "", m)
+	hotkeys(n, b)
+	b.answer(AuthAuthorized)
+	n.sync()
+	hotkeys(n, b)
+	// macOS forgets the answer while the app runs (update, re-sign).
+	b.setSystem(AuthNotDetermined)
+	b.status = AuthNotDetermined
+	n.sync()
+	hotkeys(n, b)
+	// Run 2: restart with what config.json holds; still reset.
+	b2 := &fakeBridge{available: true, status: AuthNotDetermined}
+	n2, _ := newTestNotifier(b2, m.last(), m)
+	hotkeys(n2, b2)
+	// The user asks explicitly and grants again; then another reset and restart.
+	n2.explicitAction()
+	settle(n2, b2)
+	if b2.requests != 1 {
+		t.Fatalf("the explicit item still asks while not determined: requests=%d", b2.requests)
+	}
+	b2.answer(AuthAuthorized)
+	n2.sync()
+	hotkeys(n2, b2)
+	b3 := &fakeBridge{available: true, status: AuthNotDetermined}
+	n3, _ := newTestNotifier(b3, m.last(), m)
+	hotkeys(n3, b3)
+	if automatic != 1 {
+		t.Fatalf("automatic requests across grant/reset/restart = %d, want exactly 1", automatic)
+	}
+	if strings.Join(m.saved, ",") != "asked" {
+		t.Fatalf("the marker is written once and never changes: %v", m.saved)
 	}
 }
 
@@ -160,34 +285,33 @@ func TestNotifierDeniedNeverAsksAgain(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		n.notice("t", "more", true, hotkeyNotice)
 	}
-	if b.requests != 1 || len(b.posts) != 0 || n.stored != "denied" {
+	if b.requests != 1 || len(b.posts) != 0 || n.stored != "asked" {
 		t.Fatalf("after a denial: requests=%d posts=%v stored=%q", b.requests, b.posts, n.stored)
 	}
-	skips := 0
-	for _, l := range *logs {
-		if strings.Contains(l, "not allowed") {
-			skips++
-		}
+	if k := count(*logs, "not allowed"); k != 1 {
+		t.Fatalf("the skip diagnostic is logged once per run, got %d: %v", k, *logs)
 	}
-	if skips != 1 {
-		t.Fatalf("the skip diagnostic is logged once per run, got %d: %v", skips, *logs)
-	}
-	// After a restart (new notifier, same stored value) and even a reset by an
-	// update, a denial is never followed by an automatic request.
+	// After a restart and even a reset by an update, no automatic request.
 	b2 := &fakeBridge{available: true, status: AuthNotDetermined}
-	n2, _ := newTestNotifier(b2, n.stored, m)
+	opened := 0
+	n2, _ := newTestNotifier(b2, m.last(), m)
+	n2.openSettings = func() { opened++ }
 	n2.notice("t", "x", true, hotkeyNotice)
 	if b2.requests != 0 {
 		t.Fatalf("restart after denial asked again")
 	}
 	// The explicit item still asks while the system says not determined...
-	if open := n2.explicitAction(); open || b2.requests != 1 {
-		t.Fatalf("explicit item with not determined: open=%v requests=%d", open, b2.requests)
+	n2.explicitAction()
+	settle(n2, b2)
+	if opened != 0 || b2.requests != 1 {
+		t.Fatalf("explicit item with not determined: opened=%d requests=%d", opened, b2.requests)
 	}
 	// ...and opens System Settings once denied.
 	b2.answer(AuthDenied)
-	if !n2.explicitAction() || b2.requests != 1 {
-		t.Fatalf("explicit item with denied must open System Settings")
+	n2.explicitAction()
+	settle(n2, b2)
+	if opened != 1 || b2.requests != 1 {
+		t.Fatalf("explicit item with denied must open System Settings: opened=%d requests=%d", opened, b2.requests)
 	}
 }
 
@@ -216,22 +340,175 @@ func TestNotifierFailedWriteSuppressesRequest(t *testing.T) {
 	}
 }
 
-func TestNotifierRevokedWhileRunning(t *testing.T) {
-	b := &fakeBridge{available: true, status: AuthAuthorized}
+// Codex review P2: a change made in System Settings while the app runs is
+// picked up from the Settings page path (and from a skipped notice) without
+// a tray menu or a relaunch; reads coalesce.
+func TestNotifierExternalEnableAndRevoke(t *testing.T) {
+	b := &fakeBridge{available: true, status: AuthDenied}
 	m := &memory{}
-	n, _ := newTestNotifier(b, "authorized", m)
+	n, _, c := newClockedNotifier(b, "asked", m)
+	b.setSystem(AuthAuthorized) // turned on in System Settings
+	if s := n.settingsStatus(); s != AuthDenied || !n.pending() || b.refreshes != 1 {
+		t.Fatalf("first page read: %v pending=%v refreshes=%d (want the cached denied and one read started)", s, n.pending(), b.refreshes)
+	}
+	n.settingsStatus()
+	n.settingsStatus()
+	if b.refreshes != 1 {
+		t.Fatalf("page reads while one is in flight must coalesce: refreshes=%d", b.refreshes)
+	}
+	b.land()
+	n.sync()
+	if !n.pending() || b.refreshes != 2 {
+		// The coalesced requests are one more read after the first.
+		t.Fatalf("after the first answer: pending=%v refreshes=%d", n.pending(), b.refreshes)
+	}
+	b.land()
+	n.sync()
+	if s := n.settingsStatus(); s != AuthAuthorized || n.pending() || b.refreshes != 2 {
+		t.Fatalf("fresh read: %v pending=%v refreshes=%d", s, n.pending(), b.refreshes)
+	}
 	n.notice("t", "a", false, NoticeOptions{})
-	b.status = AuthDenied // turned off in System Settings
+	if strings.Join(b.posts, ",") != "misc|a" {
+		t.Fatalf("posts after the external enable: %v", b.posts)
+	}
+	// Revoked in System Settings: the page sees it after the fresh window.
+	b.setSystem(AuthDenied)
+	c.advance(3 * time.Second)
+	n.settingsStatus()
+	b.land()
 	n.sync()
+	if s := n.settingsStatus(); s != AuthDenied {
+		t.Fatalf("after the external revoke the page shows %v", s)
+	}
 	n.notice("t", "b", false, NoticeOptions{})
-	b.status = AuthAuthorized // and on again
-	n.sync()
+	// Enabled again; nobody opens the page, but the next skipped notice
+	// reads the status again so the one after it is posted.
+	b.setSystem(AuthAuthorized)
+	c.advance(3 * time.Second)
 	n.notice("t", "c", false, NoticeOptions{})
-	if strings.Join(b.posts, ",") != "misc|a,misc|c" || b.requests != 0 {
+	b.land()
+	n.sync()
+	n.notice("t", "d", false, NoticeOptions{})
+	if strings.Join(b.posts, ",") != "misc|a,misc|d" || b.requests != 0 {
 		t.Fatalf("posts=%v requests=%d", b.posts, b.requests)
 	}
-	if strings.Join(m.saved, ",") != "denied,authorized" {
-		t.Fatalf("saved=%v", m.saved)
+	if len(m.saved) != 0 {
+		t.Fatalf("observed status changes are not written to the marker: %v", m.saved)
+	}
+}
+
+// Codex review P2: the tray item must not act on a snapshot older than the
+// click. Here the automatic prompt was just answered (allow) but the cached
+// status still says not determined; the item opens System Settings instead of
+// requesting again, and back-to-back clicks act once.
+func TestNotifierExplicitActionWaitsForFreshStatus(t *testing.T) {
+	b := &fakeBridge{available: true, status: AuthNotDetermined}
+	opened := 0
+	n, _, c := newClockedNotifier(b, "", &memory{})
+	n.openSettings = func() { opened++ }
+	n.notice("t", "x", true, hotkeyNotice) // the automatic request
+	// A page read started before the user answered.
+	n.settingsStatus()
+	b.inFlight = false
+	b.setSystem(AuthAuthorized) // answered; the snapshot is behind
+	n.explicitAction()
+	n.explicitAction() // back-to-back
+	if b.requests != 1 || opened != 0 {
+		t.Fatalf("acted on the stale snapshot: requests=%d opened=%d", b.requests, opened)
+	}
+	if lines := n.menuLines(5); !lines[0].Disabled {
+		t.Fatalf("the item waits for its answer: %+v", lines)
+	}
+	b.land() // the read that started before the click: not fresh enough
+	n.sync()
+	if opened != 0 || b.requests != 1 {
+		t.Fatalf("acted on a read older than the click: requests=%d opened=%d", b.requests, opened)
+	}
+	b.land() // the read started after the click
+	n.sync()
+	n.explicitAction() // a third click lands after the action: a new one
+	n.sync()
+	if opened != 1 || b.requests != 1 {
+		t.Fatalf("fresh answer allowed: requests=%d opened=%d", b.requests, opened)
+	}
+	b.land()
+	n.sync()
+	if opened != 2 || b.requests != 1 {
+		t.Fatalf("the click after the action acts again: requests=%d opened=%d", b.requests, opened)
+	}
+	// No answer arrives: the item acts on the cached status after actionWait.
+	b.setSystem(AuthDenied)
+	n.explicitAction()
+	c.advance(actionWait)
+	n.sync()
+	if opened != 3 {
+		t.Fatalf("no answer within %v: opened=%d", actionWait, opened)
+	}
+}
+
+// While the prompt is open the fresh status is still not determined; the
+// item must not stack a second request.
+func TestNotifierExplicitActionWhilePromptOpen(t *testing.T) {
+	b := &fakeBridge{available: true, status: AuthNotDetermined}
+	n, logs := newTestNotifier(b, "", &memory{})
+	n.notice("t", "x", true, hotkeyNotice)
+	n.explicitAction()
+	settle(n, b)
+	if b.requests != 1 || count(*logs, "already open") != 1 {
+		t.Fatalf("requests=%d logs=%v", b.requests, *logs)
+	}
+}
+
+// Codex review P2 (refresh failure loop): a status read that keeps failing is
+// retried with backoff a bounded number of times, then the app falls back to
+// the log and tooltip quietly, whatever the pump rate.
+func TestNotifierRefreshFailuresAreBounded(t *testing.T) {
+	b := &fakeBridge{available: true, status: AuthAuthorized, failRead: true}
+	n, logs, c := newClockedNotifier(b, "asked", &memory{})
+	n.notice("t", "a", false, NoticeOptions{})
+	b.failures, b.last = 1, "post: UNErrorDomain 1" // a refused post asks for a read
+	for i := 0; i < 2000; i++ {                     // 200 s of 100 ms pumps
+		n.sync()
+		n.settingsStatus()
+		c.advance(100 * time.Millisecond)
+	}
+	if want := 1 + len(refreshBackoff); b.refreshes != want {
+		t.Fatalf("reads = %d, want %d (first try + retries)", b.refreshes, want)
+	}
+	if k := count(*logs, "could not be read"); k != 1 {
+		t.Fatalf("give-up line logged %d times: %v", k, *logs)
+	}
+	if k := count(*logs, "operation(s) failed"); k > 2+len(refreshBackoff) { // the post + each read
+		t.Fatalf("failure lines are bounded, got %d", k)
+	}
+	n.notice("t", "b", true, hotkeyNotice)
+	n.explicitAction()
+	if strings.Join(b.posts, ",") != "misc|a" || b.requests != 0 || n.settingsStatus() != AuthUnavailable || b.refreshes != 1+len(refreshBackoff) {
+		t.Fatalf("after giving up: posts=%v requests=%d status=%v reads=%d", b.posts, b.requests, n.status(), b.refreshes)
+	}
+	if lines := n.menuLines(5); len(lines) != 1 || !lines[0].Disabled {
+		t.Fatalf("menu after giving up: %+v", lines)
+	}
+}
+
+// A read whose answer never arrives counts as failed; a read that succeeds
+// resets the retry budget.
+func TestNotifierRefreshTimeoutAndRecovery(t *testing.T) {
+	b := &fakeBridge{available: true, status: AuthDenied}
+	n, _, c := newClockedNotifier(b, "asked", &memory{})
+	n.settingsStatus()
+	c.advance(refreshTimeout)
+	n.sync()
+	if !n.retryAt.After(c.now()) || n.failedReads != 1 || n.pending() {
+		t.Fatalf("a read without an answer must count as failed: %+v", n)
+	}
+	c.advance(refreshBackoff[0])
+	n.sync() // the retry
+	b.land()
+	b.land()
+	n.sync()
+	if n.failedReads != 0 || n.broken || n.pending() {
+		t.Fatalf("a good read resets the budget: failed=%d broken=%v", n.failedReads, n.broken)
 	}
 }
 
@@ -240,36 +517,30 @@ func TestNotifierUnavailableAndStatusOnly(t *testing.T) {
 	n, _ := newTestNotifier(b, "", &memory{})
 	n.notice("t", "x", true, hotkeyNotice)
 	n.sync()
+	n.settingsStatus()
+	n.explicitAction()
+	n.sync()
 	if b.requests != 0 || len(b.posts) != 0 || b.refreshes != 0 {
 		t.Fatalf("an unavailable center must never be touched: %+v", b)
 	}
 	if lines := n.menuLines(5); len(lines) != 1 || !lines[0].Disabled {
 		t.Fatalf("unavailable menu: %+v", lines)
 	}
-	if n.explicitAction() {
-		t.Fatalf("unavailable: nothing to open")
-	}
 	b2 := &fakeBridge{available: true, status: AuthAuthorized}
-	n2, logs := newTestNotifier(b2, "authorized", &memory{})
+	n2, logs := newTestNotifier(b2, "asked", &memory{})
 	n2.notice("t", "Copied.", false, NoticeOptions{Kind: NoticeStatusOnly})
-	if len(b2.posts) != 0 || strings.Contains(strings.Join(*logs, "\n"), "not allowed") {
-		t.Fatalf("status-only notice posted or logged a skip: %v %v", b2.posts, *logs)
+	if len(b2.posts) != 0 || strings.Contains(strings.Join(*logs, "\n"), "not allowed") || b2.refreshes != 0 {
+		t.Fatalf("status-only notice posted, logged a skip or read the status: %v %v %d", b2.posts, *logs, b2.refreshes)
 	}
 }
 
 func TestNotifierLogsAsyncFailures(t *testing.T) {
 	b := &fakeBridge{available: true, status: AuthAuthorized}
-	n, logs := newTestNotifier(b, "authorized", &memory{})
+	n, logs := newTestNotifier(b, "asked", &memory{})
 	b.failures, b.last = 2, "post: UNErrorDomain 1"
 	n.sync()
 	n.sync()
-	got := 0
-	for _, l := range *logs {
-		if strings.Contains(l, "UNErrorDomain 1") {
-			got++
-		}
-	}
-	if got != 1 || b.refreshes != 1 {
+	if got := count(*logs, "UNErrorDomain 1"); got != 1 || b.refreshes != 1 {
 		t.Fatalf("failures are logged once per change and refresh the status: %d %d %v", got, b.refreshes, *logs)
 	}
 }
@@ -278,7 +549,7 @@ func TestNotifierMenuLines(t *testing.T) {
 	b := &fakeBridge{available: true, status: AuthDenied}
 	n, _ := newTestNotifier(b, "", &memory{})
 	lines := n.menuLines(5)
-	if len(lines) != 2 || lines[0].ID != 5 || lines[0].Label != "Notifications..." || lines[1].Checked {
+	if len(lines) != 2 || lines[0].ID != 5 || lines[0].Label != "Notifications..." || lines[0].Disabled || lines[1].Checked {
 		t.Fatalf("denied menu: %+v", lines)
 	}
 	b.status = AuthAuthorized

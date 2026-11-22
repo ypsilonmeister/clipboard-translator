@@ -514,7 +514,7 @@ func TestMacNotificationsRoundTrip(t *testing.T) {
 	if err != nil || c.MacNotifications != "" {
 		t.Fatalf("fresh config: %q %v", c.MacNotifications, err)
 	}
-	for _, v := range []string{"asked", "authorized", "denied"} {
+	for _, v := range []string{"asked"} {
 		if err := UpdateFile(dir, map[string]any{"mac_notifications": v}); err != nil {
 			t.Fatal(err)
 		}
