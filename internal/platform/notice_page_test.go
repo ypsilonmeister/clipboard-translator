@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ import (
 
 // pageHarness is the page side. It prints one JSON line per state request
 // ({"t": ms, "path": ...}) and reads the reply line ({"notifications",
-// "notifications_pending"}). Focus events come from the scenario. At the
+// "notifications_pending"}, or {"http_status": 503} for a failed request). Focus events come from the scenario. At the
 // end it prints {"done": true, "hint": ..., "polls": ...}.
 const pageHarness = `
 const fs = require('fs');
@@ -66,7 +67,9 @@ let polls = 0;
 async function api(path) {
   polls++;
   fs.writeSync(1, JSON.stringify({ t: now, path }) + '\n');
-  return { ok: true, status: 200, data: { state: JSON.parse(readLine()) } };
+  const reply = JSON.parse(readLine());
+  if (reply.http_status) return { ok: false, status: reply.http_status, data: { error: 'busy' } };
+  return { ok: true, status: 200, data: { state: reply } };
 }
 
 let closed = false, saving = false, acting = false, hint = '';
@@ -162,8 +165,10 @@ type pageResult struct {
 }
 
 // runPage plays focus events (ms since start) through app.js against n.
-// steps change the system at given times. It returns the page's last view.
-func runPage(t *testing.T, n *notifier, b *timedBridge, c *clock, start time.Time, focus []int64, steps []pageStep) pageResult {
+// steps change the system at given times. The state requests numbered in
+// fail (from 1) get a 503 without reaching the app, as when the server's
+// request queue is full. It returns the page's last view.
+func runPage(t *testing.T, n *notifier, b *timedBridge, c *clock, start time.Time, focus []int64, steps []pageStep, fail ...int) pageResult {
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -195,6 +200,7 @@ func runPage(t *testing.T, n *notifier, b *timedBridge, c *clock, start time.Tim
 		}
 	}
 	var res pageResult
+	requests := 0
 	sc := bufio.NewScanner(outPipe)
 	for sc.Scan() {
 		var req struct {
@@ -211,11 +217,17 @@ func runPage(t *testing.T, n *notifier, b *timedBridge, c *clock, start time.Tim
 			break
 		}
 		advanceTo(req.T)
-		if strings.Contains(req.Path, "recheck=notifications") {
-			n.recheck()
+		requests++
+		var reply []byte
+		if slices.Contains(fail, requests) {
+			reply = []byte(`{"http_status": 503}`)
+		} else {
+			if strings.Contains(req.Path, "recheck=notifications") {
+				n.recheck()
+			}
+			s := n.settingsStatus()
+			reply, _ = json.Marshal(map[string]any{"notifications": s.String(), "notifications_pending": n.pending()})
 		}
-		s := n.settingsStatus()
-		reply, _ := json.Marshal(map[string]any{"notifications": s.String(), "notifications_pending": n.pending()})
 		if _, err := fmt.Fprintf(in, "%s\n", reply); err != nil {
 			t.Fatal(err)
 		}
@@ -314,6 +326,56 @@ func TestSettingsPageFocusSlowCoalescedReplies(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Re-review 4: the focus reply reports the cached denial as pending and a
+// follow-up state request then fails with 503 (queue full or deadline
+// missed). The page keeps polling within its cap and ends on the new answer
+// with no further focus or input; if every follow-up fails, it stops at the cap.
+func TestSettingsPageFocusPollSurvivesFailedRequest(t *testing.T) {
+	sec := func(f float64) time.Duration { return time.Duration(f * float64(time.Second)) }
+	for _, tc := range []struct {
+		name      string
+		fail      []int // state requests answered with 503, from 1 (1 is the focus request)
+		want      AuthStatus
+		wantPolls int // 0: any
+	}{
+		{name: "first follow-up fails", fail: []int{2}, want: AuthAuthorized},
+		{name: "several follow-ups fail", fail: []int{2, 3, 4, 5}, want: AuthAuthorized},
+		{name: "every follow-up fails", fail: seq(2, 40), want: AuthDenied, wantPolls: 31},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fb := &fakeBridge{available: true, status: AuthDenied}
+			n, _, c := newClockedNotifier(fb, "asked", &memory{})
+			// Read 1 lands at 0.8 s (fresh at the focus); the focus read
+			// takes 2.1 s, so the focus reply is the cached denial, pending.
+			b := &timedBridge{fakeBridge: fb, c: c, delays: []time.Duration{sec(0.3), sec(2.1)}, defaultDelay: sec(0.3)}
+			n.bridge = b
+			start := c.now()
+			c.advance(sec(0.5))
+			n.settingsStatus()
+			steps := []pageStep{{sec(1.8), func() { fb.setSystem(AuthAuthorized) }}}
+			res := runPage(t, n, b, c, start, []int64{2000}, steps, tc.fail...)
+			if res.Notifications != tc.want.String() {
+				t.Fatalf("the page ends on %q, want %q (polls %d, last at %d ms, app now %v, pending %v)",
+					res.Notifications, tc.want.String(), res.Polls, res.T, n.status(), n.pending())
+			}
+			if (tc.want == AuthDenied) != strings.Contains(res.Hint, "macOS notifications are off") {
+				t.Fatalf("hint %q for %v", res.Hint, tc.want)
+			}
+			if tc.wantPolls != 0 && res.Polls != tc.wantPolls {
+				t.Fatalf("polls = %d, want %d (the focus request and the capped rechecks)", res.Polls, tc.wantPolls)
+			}
+		})
+	}
+}
+
+func seq(from, to int) []int {
+	var s []int
+	for i := from; i <= to; i++ {
+		s = append(s, i)
+	}
+	return s
 }
 
 // The page polls at least as long as the app may report a focus recheck

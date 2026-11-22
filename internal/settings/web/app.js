@@ -74,7 +74,11 @@
       notifyRecheck = null;
       if (closed || saving || acting) return;
       const r = await api('/api/state');
-      if (!closed && r.ok && r.data && r.data.state) mergeState(r.data.state);
+      if (closed) return;
+      if (r.ok && r.data && r.data.state) mergeState(r.data.state);
+      // A failed request (503: the app was busy) says nothing about the
+      // permission: keep asking, within the same cap.
+      else recheckNotifications();
     }, delay);
   }
 
