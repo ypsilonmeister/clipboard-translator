@@ -162,6 +162,7 @@ func (a *app) settingsState() settings.State {
 		WinKey:         settings.WinKeyName(runtime.GOOS),
 		Inactive:       a.inactiveHotkeys(),
 		NoActiveHotkey: !a.anyHotkeyActive(),
+		Notifications:  a.notificationStatus(),
 	}
 	for i := range a.conf.Profiles {
 		actual := a.hotkeyLabel(i)

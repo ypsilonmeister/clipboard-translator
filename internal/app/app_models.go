@@ -12,6 +12,7 @@ import (
 	"github.com/ypsilonmeister/clipboard-translator/internal/config"
 	"github.com/ypsilonmeister/clipboard-translator/internal/llamaserver"
 	"github.com/ypsilonmeister/clipboard-translator/internal/models"
+	"github.com/ypsilonmeister/clipboard-translator/internal/platform"
 	"github.com/ypsilonmeister/clipboard-translator/internal/settings"
 )
 
@@ -156,6 +157,8 @@ func (a *app) startModelSwitch(req settings.Request) {
 	st := a.settingsState()
 	st.Busy = "switching to " + e.Name
 	req.Reply <- settings.Reply{State: st} // answer first: what follows blocks the loop
+	a.fromSettings = true
+	defer func() { a.fromSettings = false }()
 	if err := a.switchModel(e); err != nil && !errors.Is(err, llamaserver.ErrQuit) {
 		a.settingsNotice = err.Error()
 	}
@@ -238,7 +241,7 @@ func (a *app) switchModel(e models.Entry) error {
 		a.clearFallback() // a different model may fit the preferred engine
 		a.saveConfig(saveMap)
 		a.refreshStatus()
-		a.tray.Notify("Clipboard Translator", "Model: "+e.Name, false)
+		a.notify("Clipboard Translator", "Model: "+e.Name, false, engineSuccess)
 		return nil
 	}
 	if errors.Is(err, llamaserver.ErrQuit) {
@@ -261,10 +264,12 @@ func (a *app) switchModel(e models.Entry) error {
 		a.cancelTransientStatus()
 		a.tray.SetStatus("Clipboard Translator - server stopped, restarting...")
 		msg = "The translation server stopped. Restarting it..."
-	} else {
-		a.refreshStatus()
+		// Translation is unavailable now: say so wherever the switch started.
+		a.notify("Clipboard Translator", msg, true, platform.NoticeOptions{ID: platform.NoticeIDEngine})
+		return errors.New(msg)
 	}
-	a.tray.Notify("Clipboard Translator", msg, true)
+	a.refreshStatus()
+	a.notify("Clipboard Translator", msg, true, a.switchNotice())
 	return errors.New(msg)
 }
 
@@ -278,6 +283,8 @@ func (a *app) startEngineSwitch(req settings.Request) {
 		req.Reply <- settings.Reply{State: a.settingsState(), Err: fmt.Errorf("the %q engine is not installed", req.Arg)}
 		return
 	}
+	a.fromSettings = true
+	defer func() { a.fromSettings = false }()
 	if a.runningBackend() == req.Arg {
 		a.switchBackend(req.Arg) // at most makes a running fallback the configured engine; nothing restarts
 		req.Reply <- settings.Reply{State: a.settingsState()}
@@ -300,9 +307,9 @@ func (a *app) onDownloadFinished(st models.DownloadState) {
 	e, _ := models.ByKey(st.Key)
 	switch st.Phase {
 	case "done":
-		a.tray.Notify("Clipboard Translator", e.Name+" is downloaded. Open Settings... to use it.", false)
+		a.notify("Clipboard Translator", e.Name+" is downloaded. Open Settings... to use it.", false, platform.NoticeOptions{ID: platform.NoticeIDDownload})
 	case "failed":
-		a.tray.Notify("Clipboard Translator", "The download of "+e.Name+" failed: "+st.Error, true)
+		a.notify("Clipboard Translator", "The download of "+e.Name+" failed: "+st.Error, true, platform.NoticeOptions{ID: platform.NoticeIDDownload})
 	}
 }
 

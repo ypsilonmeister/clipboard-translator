@@ -98,6 +98,10 @@ type State struct {
 	Wayland               bool     `json:"wayland,omitempty"`
 	DesktopStatus         string   `json:"desktop_status,omitempty"`
 	DesktopCapabilities   []string `json:"desktop_capabilities,omitempty"` // one line per Wayland capability
+	// Notifications is the system notification permission (Issue #67):
+	// "unavailable", "unknown", "not_asked", "denied" or "allowed" on macOS,
+	// "n/a" where the tray needs none (Windows, Linux).
+	Notifications string `json:"notifications"`
 	Form
 	Revision       int              `json:"revision"`
 	Languages      []LanguageOption `json:"language_options"`

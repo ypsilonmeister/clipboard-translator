@@ -50,6 +50,10 @@ type Config struct {
 	// QuickstartShown is set once the first-run guide has been shown, so later
 	// launches stay quiet. The guide stays available in the tray and Settings.
 	QuickstartShown bool `json:"quickstart_shown"`
+	// MacNotifications is the app's own memory of the macOS notification
+	// permission (Issue #67), so the one automatic request is never repeated:
+	// "" (never asked), "asked", "authorized" or "denied". Internal; macOS only.
+	MacNotifications string `json:"mac_notifications,omitempty"`
 	// Languages is the pair translated in both directions, e.g. ["ja", "en"].
 	Languages []string `json:"languages"`
 	// Profiles are the hotkeys, each with its own language setting. When it is

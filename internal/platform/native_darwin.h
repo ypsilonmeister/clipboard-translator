@@ -29,4 +29,12 @@ int ct_mac_open(const char *target);
 void ct_mac_setup_begin(const char *logpath);
 int ct_mac_setup_cancelled(void);
 void ct_mac_setup_end(void);
+/* Notification Center (notify_darwin.m) */
+int ct_mac_notify_init(void);
+void ct_mac_notify_refresh(void);
+int ct_mac_notify_status(void);
+int ct_mac_notify_request(void);
+void ct_mac_notify_post(const char *ident, const char *title, const char *body, int sound);
+int ct_mac_notify_failures(char *last, int size);
+int ct_mac_notify_touched(void);
 #endif

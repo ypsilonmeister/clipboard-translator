@@ -79,7 +79,12 @@ macOS needs a native macOS runner with Xcode Command Line Tools. Build with
 `internal/platform/desktop_darwin.go` / `native_darwin.m` own AppKit/Carbon and must stay on the
 process main thread. `CT_TEST_MACOS=1 go test -tags mactest -run '^TestMacNative' -v ./internal/platform`
 executes native smoke checks through TestMain on that thread (CI only, no key
-injection or Accessibility prompts). Setup behaviour is covered by the
+injection or Accessibility prompts). Notification Center code (`notify_darwin.m`) must
+never call a UserNotifications API in a process without an app bundle (`go run`, a bare
+binary, the test harness): `+currentNotificationCenter` raises there and an exception
+across cgo aborts. `ct_mac_notify_init` checks the bundle first and the smoke test asserts
+no UN call was made; the permission policy itself is pure Go (`notice.go`, `decideNotice`)
+and is tested on every OS. Setup behaviour is covered by the
 `internal/setup` Go tests on any platform. macOS data goes to Application Support, never
 inside the `.app`. Packages are ad-hoc signed only; Developer ID signing and
 notarization are outside this implementation.

@@ -48,6 +48,13 @@
     return dirtyFields.profiles || dirtyFields.auto_paste || dirtyFields.notify_on_complete || dirtyFields.max_chars || dirtyFields.idle_unload_minutes;
   }
 
+  // The macOS-only hint under the completion checkbox (Issue #67): shown when
+  // the system refuses notifications. Other platforms report "n/a".
+  function notificationHint(status) {
+    if (status !== 'denied') return '';
+    return 'macOS notifications are off for Clipboard Translator. Turn them on in System Settings > Notifications.';
+  }
+
   function isSaveNeeded(dirtyState, noActiveHotkey) {
     return Boolean(dirtyState || noActiveHotkey);
   }
@@ -708,6 +715,12 @@
     if (pasteNote) {
       pasteNote.textContent = state.auto_paste_unavailable || '';
       pasteNote.hidden = !state.auto_paste_unavailable;
+    }
+    const notifyNote = $('notifications-denied');
+    if (notifyNote) {
+      const text = notificationHint(state.notifications);
+      notifyNote.textContent = text;
+      notifyNote.hidden = !text;
     }
     const bar = $('busybar');
     if (bar) bar.hidden = !appBusy();

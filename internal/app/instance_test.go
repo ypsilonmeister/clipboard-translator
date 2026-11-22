@@ -230,6 +230,11 @@ func (t *pingQuitTray) Notify(title, msg string, isError bool) {
 	}
 }
 
+// NotifyWith keeps the hook above when the app passes notice metadata.
+func (t *pingQuitTray) NotifyWith(title, msg string, isError bool, _ platform.NoticeOptions) {
+	t.Notify(title, msg, isError)
+}
+
 // TestApp_ServeHandlesPing verifies that a ping delivered to an app in its serve
 // loop is processed and triggers the tray notification on the UI thread.
 func TestApp_ServeHandlesPing(t *testing.T) {

@@ -37,6 +37,7 @@ type result struct {
 	output               string
 	capturedAt           time.Time
 	action               string
+	origin               platform.NoticeOrigin // OriginHotkey for a hotkey press (Issue #67)
 }
 
 func appDir() (string, error) {

@@ -67,7 +67,8 @@
       <input type="checkbox" id="notify-on-complete">
       <span>Show notification when translation finishes</span>
     </label>
-    <p class="hint">Shows a tray notification when the translation is ready in the clipboard.</p>
+    <p class="hint">Shows a notification when the translation is ready in the clipboard and was not pasted automatically.</p>
+    <p id="notifications-denied" class="hint" hidden></p>
     <div class="row field-row">
       <label for="max-chars" class="label">Longest text</label>
       <input type="number" id="max-chars" min="1" max="100000" step="1" inputmode="numeric">

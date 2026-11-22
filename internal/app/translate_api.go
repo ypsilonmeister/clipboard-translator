@@ -280,6 +280,7 @@ func (a *app) handleAPITranslation(req settings.Request) {
 	a.apiReply = req.Reply
 	a.apiContext = req.Context
 	a.apiFlattened = req.PossiblyFlattened
+	a.jobOrigin = platform.OriginOther
 	a.translateCaptured(p, 0, req.Text, false, platform.FallbackNone, nil)
 	// Reload failures or a canceled startup must not leave an HTTP caller waiting.
 	if !a.translating && a.apiReply != nil {

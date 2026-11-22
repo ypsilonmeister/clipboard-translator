@@ -201,9 +201,39 @@ quit the app, then run `bash "$HOME/Library/Application Support/ClipboardTransla
 (or `metal`). **Start at login** writes only
 `~/Library/LaunchAgents/com.github.ypsilonmeister.clipboard-translator.plist`; the setting
 applies at the next login. Toggle it after moving the app. Quit from the menu before
-replacing the app to update it; data in Application Support is retained. Status/error
-notifications appear in the menu-bar tooltip and log, without requesting Notification
-Center access. Errors requiring intervention also use native dialogs.
+replacing the app to update it; data in Application Support is retained. Errors requiring
+intervention also use native dialogs.
+
+### Notifications (macOS)
+
+Every message still goes to `translator.log` and the menu-bar tooltip. Once you allow
+notifications, the messages you would otherwise miss also appear as banners and in
+Notification Center: a hotkey press that translated nothing (too long, nothing copied,
+translation failed), a translation that could not be written or pasted, the translation
+server restarting, an update check result, a finished or failed model download, and, with
+**Show notification when translation finishes** on, "translation ready" when it was not
+pasted automatically. Notices never contain the text you translated. Error notices play
+the default sound; the others are silent. Messages about things you already see, such as
+"Copied." or a model or engine switch that worked, stay in the tooltip only.
+
+- **When macOS asks.** Never at launch. The app asks once, the first time a hotkey press
+  ends in something worth a notification (for example a selection that is too long). That
+  first message is not shown again after you allow it; later ones are. If you dismiss,
+  ignore or deny the request, the app never asks on its own again.
+- **Turning them on later.** The menu's **Notifications...** asks macOS if it has never
+  asked; otherwise it opens *System Settings > Notifications*, where Clipboard Translator
+  can be turned on or off and the banner style chosen. The line **Notifications allowed**
+  shows the current state, and the Settings page shows a hint while they are off.
+- **A hotkey that is not active** (another app uses it) is also shown as a line at the top
+  of the menu, so it can be read without notifications or hovering over the icon.
+- **After an update.** These builds are ad-hoc signed. Whether macOS keeps the permission
+  when the app is replaced by a newer version has not been measured yet; you may have to
+  allow it again, as with Accessibility. If notices stop appearing after an update, check
+  *System Settings > Notifications*.
+- **Keep one copy of the app.** Two copies (for example a development build and a release)
+  share one identity and may confuse Notification Center.
+- Clicking a notification does nothing app-specific. A binary run outside the app bundle
+  (`go run`, a bare `go build`) cannot use Notification Center and logs that once.
 
 To build on a Mac (or a GitHub-hosted macOS runner), install Go and Xcode Command Line Tools,
 then run `bash tools/package-macos.sh dev`. This builds the runner's native architecture,
@@ -629,7 +659,8 @@ can save your corrections and start it again.
 | `hotkey` | Modifier(s) + one key: a letter A-Z, a digit 0-9, or a function key F1-F12, e.g. `Ctrl+Alt+E` or `Ctrl+F5` (on macOS `Cmd` / `Command` and `Option` also work) |
 | `auto_paste` | `true` types Ctrl+V after translating on supported desktops (default `false`; always disabled on Wayland) |
 | `quickstart_shown` | `true` once the first-run quick start has been shown (set by the app; set it to `false` to see the balloon again; default `false`) |
-| `notify_on_complete` | `true` shows a tray notification that the translation is ready in the clipboard (without showing text) when not auto-pasted (default `false`) |
+| `notify_on_complete` | `true` shows a tray notification (on macOS, a Notification Center notification once allowed) that the translation is ready in the clipboard (without showing text) when not auto-pasted (default `false`) |
+| `mac_notifications` | macOS only, set by the app: whether it already asked for notification permission (`""`, `"asked"`, `"authorized"`, `"denied"`), so the one automatic request is not repeated. Do not edit |
 | `show_cursor_hint` | `true` shows a busy icon near the mouse pointer while a hotkey request is in progress (Windows only, default `false`) |
 | `languages` | Two language codes translated in both directions, e.g. `["ja", "en"]` (default), `["en", "ko"]`, `["ja", "zh-hans"]`. Codes are the model's: `ja en ko zh-hans zh-hant ru th ar de fr es ...` (53 in all, see the [model card](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)). The direction is read from the script of the text, so the two languages must use different scripts (en ↔ de is refused for now). Japanese ↔ English is the main use; other languages are best effort. |
 | `profiles` | Several hotkeys, each with its own languages, e.g. `[{"hotkey": "Ctrl+Alt+E", "languages": ["ja", "en"]}, {"hotkey": "Ctrl+Alt+K", "target": "ko", "output": "bilingual"}]`. A translation profile (`action: "translate"`, the default) has either `languages` (a pair, both ways) or `target` (always translate into that language; the model detects the source, so any language works, including pairs that share a script such as `en` and `de`: use one `target` profile for each), and an optional `output` format: `"replace"` (default; key absent = replace) puts only the translation on the clipboard; `"bilingual"` puts the original text, a newline, and then the translation (`<source>\n<translated>`, with trailing CR/LF characters trimmed from the source before adding the newline). Translation history keeps Source and Translated separately; "Recent translations" lets you copy the original, the translation, or both. An optional `input` says where the text comes from: `"selection"` (default) copies the current selection first (Ctrl+C, waiting up to 2 s on Windows for a slow page); `"clipboard"` translates what is already on the clipboard, sends no Ctrl+C, skips the selection-copy wait and never auto-pastes (Wayland clipboard transfer is still asynchronous), which suits a page that copies slowly (copy yourself, then press the hotkey). Takes the place of `hotkey` and `languages`; Settings edits each profile. Up to 8 hotkeys on Windows and Linux; on macOS only the first is registered for now, and the app says which ones are not active. A hotkey another program owns only disables its own profile. |
