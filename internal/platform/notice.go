@@ -201,8 +201,13 @@ type notifier struct {
 	retryAt      time.Time // no read before this (backoff)
 	broken       bool      // reads keep failing: notices stay in the log/tooltip
 	actionWanted bool      // the tray item waits for a fresh status
-	actionTicket int64     // the first read started after the click
-	actionBy     time.Time // act on the cached status after this
+	// The Settings page regained focus: it is told "pending" until a read
+	// started after the focus has landed, or reads give up (broken). The
+	// read may first queue behind an older one, and a failed one is retried.
+	recheckWanted bool
+	recheckTicket int64     // the first read started after the focus, 0 if none yet
+	actionTicket  int64     // the first read started after the click
+	actionBy      time.Time // act on the cached status after this
 }
 
 func newNotifier(b noticeBridge) *notifier {
@@ -237,10 +242,33 @@ func (n *notifier) settingsStatus() AuthStatus {
 // recheck is the Settings page regaining focus: a read that landed within
 // statusFreshFor may predate a change the user just made in System Settings,
 // so start a new one (coalesced with one in flight, bounded by the backoff).
-func (n *notifier) recheck() { n.refresh(0) }
+// The page is told "pending" until a read started after this call lands.
+func (n *notifier) recheck() {
+	if !n.usable() {
+		return
+	}
+	n.recheckWanted, n.recheckTicket = true, 0
+	n.refresh(0)
+}
 
-// pending reports a status read in flight.
-func (n *notifier) pending() bool { return n.ticket != 0 }
+// pending reports a status read in flight, or a focus recheck whose read
+// has not landed yet (queued behind an older read, or waiting for a retry).
+// It ends: reads time out after refreshTimeout and give up after the
+// bounded retries (see recheckBound).
+func (n *notifier) pending() bool {
+	return n.ticket != 0 || (n.recheckWanted && !n.broken)
+}
+
+// recheckBound is the longest pending() can stay true after a focus
+// recheck with no new state request in between: an older read times out,
+// then the focus read and its retries do. app.js polls longer than this.
+func recheckBound() time.Duration {
+	d := refreshTimeout // the older read in flight
+	for _, b := range refreshBackoff {
+		d += refreshTimeout + b
+	}
+	return d + refreshTimeout
+}
 
 // markAsked records the automatic-request marker; false if it could not be
 // written. The marker only ever goes from empty to "asked".
@@ -261,12 +289,19 @@ func (n *notifier) markAsked() bool {
 // refresh asks for a status read unless one that landed within maxAge (0:
 // always) is good enough. Reads coalesce: while one is in flight or waiting
 // for its backoff, a new request only makes sure one more read follows.
+// With maxAge > 0 a read in flight is good enough (its answer is newer than
+// the cache), so polls during a slow read do not chain reads; only an
+// explicit recheck (maxAge 0: focus, the tray item) needs a read started
+// after the call.
 func (n *notifier) refresh(maxAge time.Duration) {
 	if !n.usable() {
 		return
 	}
 	now := n.now()
 	if maxAge > 0 && !n.freshAt.IsZero() && now.Sub(n.freshAt) < maxAge {
+		return
+	}
+	if n.ticket != 0 && maxAge > 0 {
 		return
 	}
 	if n.ticket != 0 || now.Before(n.retryAt) {
@@ -287,14 +322,20 @@ func (n *notifier) startRead() {
 	if n.actionWanted && n.actionTicket == 0 {
 		n.actionTicket = t
 	}
+	if n.recheckWanted && n.recheckTicket == 0 {
+		n.recheckTicket = t
+	}
 }
 
 // readFailed schedules a bounded retry, or gives up quietly for this run.
 func (n *notifier) readFailed() {
+	if n.recheckTicket == n.ticket {
+		n.recheckTicket = 0 // the retry stands in for the focus read
+	}
 	n.ticket = 0
 	n.failedReads++
 	if n.failedReads > len(refreshBackoff) {
-		n.broken, n.again = true, false
+		n.broken, n.again, n.recheckWanted = true, false, false
 		n.logf("macOS notification status could not be read after %d attempts; messages go to the log and the menu-bar tooltip until the app restarts.", n.failedReads)
 		return
 	}
@@ -343,6 +384,9 @@ func (n *notifier) sync() {
 	if n.ticket != 0 {
 		if n.bridge.Applied() >= n.ticket {
 			n.ticket, n.failedReads, n.retryAt, n.freshAt = 0, 0, time.Time{}, now
+			if n.recheckWanted && n.recheckTicket != 0 && n.bridge.Applied() >= n.recheckTicket {
+				n.recheckWanted, n.recheckTicket = false, 0
+			}
 		} else if now.Sub(n.ticketSince) >= refreshTimeout {
 			n.readFailed()
 		}
@@ -393,11 +437,18 @@ func (n *notifier) explicitAction() {
 // has never asked, otherwise opens System Settings (the only route after a
 // denial). Without a fresh read a cached "not determined" may hide a grant
 // or denial made since, so a timeout never requests: System Settings is the
-// route that is right in every case.
+// route that is right in every case. That includes reads giving up while
+// the click waits (broken): the click was accepted, so it still opens
+// System Settings rather than doing nothing.
 func (n *notifier) act(fresh bool) {
 	n.actionWanted, n.actionTicket = false, 0
 	switch s := n.status(); {
-	case s == AuthUnavailable:
+	case !n.bridge.Available():
+	case n.broken:
+		n.logf("the notification permission could not be read; opening System Settings")
+		if n.openSettings != nil {
+			n.openSettings()
+		}
 	case s == AuthNotDetermined && fresh:
 		n.markAsked() // best effort: the user asked, so ask anyway
 		if !n.bridge.Request() {

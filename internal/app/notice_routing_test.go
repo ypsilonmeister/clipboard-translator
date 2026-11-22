@@ -355,8 +355,10 @@ func TestSettingsPageNotificationHint(t *testing.T) {
 		t.Error("the page must derive the hint from state.notifications")
 	}
 	// A permission read in flight (it may have changed in System Settings):
-	// the page asks once more, a bounded number of times.
-	if !strings.Contains(js, "if (state.notifications_pending) recheckNotifications();") || !strings.Contains(js, "notifyRechecks >= 5") {
+	// the page asks once more, a bounded number of times (the bound covers
+	// the app's own, see TestSettingsPagePollsLongerThanRecheckBound in
+	// internal/platform).
+	if !strings.Contains(js, "if (state.notifications_pending) recheckNotifications();") || !strings.Contains(js, "notifyRechecks >= NOTIFY_MAX_RECHECKS") {
 		t.Error("the page must read the state again, a bounded number of times, while notifications_pending")
 	}
 	// Returning from System Settings: the focus request rechecks however

@@ -56,19 +56,26 @@
   }
 
   // The app reads the macOS permission in the background when the state is
-  // asked for (it may have changed in System Settings). Ask again shortly for
-  // the fresh answer; a few times at most, counted again after each focus.
+  // asked for (it may have changed in System Settings) and reports it as
+  // pending until a read started after the last focus has landed. Ask again
+  // while it is pending: every second at first, then every 5 s. The app
+  // ends "pending" within about a minute even if reads keep failing
+  // (recheckBound in notice.go); the cap here covers that with room to
+  // spare and is counted again after each focus.
+  const NOTIFY_FAST_RECHECKS = 10;
+  const NOTIFY_MAX_RECHECKS = 30; // 10 x 1 s + 20 x 5 s = 110 s
   let notifyRecheck = null;
   let notifyRechecks = 0;
   function recheckNotifications() {
-    if (closed || notifyRecheck || notifyRechecks >= 5) return;
+    if (closed || notifyRecheck || notifyRechecks >= NOTIFY_MAX_RECHECKS) return;
+    const delay = notifyRechecks < NOTIFY_FAST_RECHECKS ? 1000 : 5000;
     notifyRechecks++;
     notifyRecheck = setTimeout(async () => {
       notifyRecheck = null;
       if (closed || saving || acting) return;
       const r = await api('/api/state');
       if (!closed && r.ok && r.data && r.data.state) mergeState(r.data.state);
-    }, 1000);
+    }, delay);
   }
 
   function isSaveNeeded(dirtyState, noActiveHotkey) {

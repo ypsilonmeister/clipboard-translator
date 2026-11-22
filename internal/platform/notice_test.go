@@ -358,13 +358,10 @@ func TestNotifierExternalEnableAndRevoke(t *testing.T) {
 	}
 	b.land()
 	n.sync()
-	if !n.pending() || b.refreshes != 2 {
-		// The coalesced requests are one more read after the first.
-		t.Fatalf("after the first answer: pending=%v refreshes=%d", n.pending(), b.refreshes)
-	}
-	b.land()
-	n.sync()
-	if s := n.settingsStatus(); s != AuthAuthorized || n.pending() || b.refreshes != 2 {
+	// The read in flight is newer than the cache, so page reads meanwhile
+	// add no read of their own (only a focus recheck does, see
+	// TestNotifierFocusInsideFreshWindowConverges).
+	if s := n.settingsStatus(); s != AuthAuthorized || n.pending() || b.refreshes != 1 {
 		t.Fatalf("fresh read: %v pending=%v refreshes=%d", s, n.pending(), b.refreshes)
 	}
 	n.notice("t", "a", false, NoticeOptions{})
@@ -694,4 +691,51 @@ func TestNotifierExplicitActionStaleUndeterminedTimeout(t *testing.T) {
 			t.Fatalf("a landed post-click read of not determined asks: requests=%d opened=%d", b.requests, opened)
 		}
 	})
+}
+
+// Re-review 2 finding 2: the tray accepts a click while the last allowed
+// status read is out; that read then times out and the center counts as
+// unavailable. The accepted click (and the ones coalesced with it) must
+// still open System Settings once, and never request authorization.
+func TestNotifierExplicitActionRetryExhaustion(t *testing.T) {
+	b := &fakeBridge{available: true, status: AuthNotDetermined}
+	opened := 0
+	n, logs, c := newClockedNotifier(b, "asked", &memory{})
+	n.openSettings = func() { opened++ }
+	b.setSystem(AuthDenied) // the stale snapshot hides a denial
+	step := func(d time.Duration) {
+		for end := c.now().Add(d); c.now().Before(end); {
+			c.advance(100 * time.Millisecond)
+			n.sync()
+		}
+	}
+	n.settingsStatus() // read 1; no read ever answers
+	for n.failedReads < len(refreshBackoff) || n.ticket == 0 {
+		step(100 * time.Millisecond)
+		if b.refreshes > 1+len(refreshBackoff) {
+			t.Fatalf("setup: too many reads: %d", b.refreshes)
+		}
+	}
+	if b.refreshes != 1+len(refreshBackoff) || n.broken {
+		t.Fatalf("setup: not at the final read: reads=%d broken=%v", b.refreshes, n.broken)
+	}
+	step(4 * time.Second) // the final read is now 4 s old
+	n.explicitAction()
+	if menu := n.menuLines(1); len(menu) == 0 || !menu[0].Disabled || menu[0].ID != 1 {
+		t.Fatalf("the click was not accepted: %+v", menu)
+	}
+	step(500 * time.Millisecond)
+	n.explicitAction() // coalesced with the waiting click
+	step(500 * time.Millisecond)
+	if !n.broken {
+		t.Fatalf("the final read did not time out at 5 s")
+	}
+	if b.requests != 0 || opened != 1 || n.actionWanted {
+		t.Fatalf("after retry exhaustion: requests=%d opened=%d waiting=%v logs=%v", b.requests, opened, n.actionWanted, *logs)
+	}
+	step(time.Minute)
+	n.explicitAction() // unavailable now: the item is disabled, a click does nothing
+	if b.requests != 0 || opened != 1 || b.refreshes != 1+len(refreshBackoff) {
+		t.Fatalf("later: requests=%d opened=%d reads=%d", b.requests, opened, b.refreshes)
+	}
 }
