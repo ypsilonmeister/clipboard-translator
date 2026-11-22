@@ -222,7 +222,8 @@ the default sound; the others are silent. Messages about things you already see,
   ignore or deny the request, the app never asks on its own again.
 - **Turning them on later.** The menu's **Notifications...** asks macOS if it has never
   asked; otherwise it opens *System Settings > Notifications*, where Clipboard Translator
-  can be turned on or off and the banner style chosen. The line **Notifications allowed**
+  can be turned on or off and the banner style chosen (it also opens System Settings if
+  macOS does not report the current permission within two seconds). The line **Notifications allowed**
   shows the current state, and the Settings page shows a hint while they are off.
 - **A hotkey that is not active** (another app uses it) is also shown as a line at the top
   of the menu, so it can be read without notifications or hovering over the icon.

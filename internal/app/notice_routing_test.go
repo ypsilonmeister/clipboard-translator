@@ -256,6 +256,7 @@ type fakeNotificationTray struct {
 	status  platform.AuthStatus
 	pending bool
 	reads   int
+	calls   []string // "recheck" and "status", in order
 	stored  string
 	save    func(string) error
 }
@@ -265,7 +266,11 @@ func (f *fakeNotificationTray) SetNotificationMemory(stored string, save func(st
 }
 func (f *fakeNotificationTray) NotificationStatus() platform.AuthStatus {
 	f.reads++
+	f.calls = append(f.calls, "status")
 	return f.status
+}
+func (f *fakeNotificationTray) RecheckNotificationStatus() {
+	f.calls = append(f.calls, "recheck")
 }
 func (f *fakeNotificationTray) NotificationStatusPending() bool { return f.pending }
 
@@ -300,6 +305,39 @@ func TestNotificationMemoryAndSettingsState(t *testing.T) {
 	}
 }
 
+// Codex re-review finding 1: the state request the page sends on focus
+// rechecks the permission before the state is built, so it reports the read
+// as pending and the page asks again; other state requests do not recheck.
+func TestSettingsFocusRechecksNotifications(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	nt := &fakeNotificationTray{status: platform.AuthDenied}
+	a.tray = nt
+	ask := func(action string) {
+		r := settings.NewRequest(nil, time.Minute)
+		r.Action = action
+		a.handleSettingsRequest(r)
+		if rep := <-r.Reply; rep.Err != nil || rep.State.Notifications != "denied" {
+			t.Fatalf("action %q: %+v", action, rep)
+		}
+	}
+	ask("")
+	if strings.Join(nt.calls, ",") != "status" {
+		t.Fatalf("plain state request: %v", nt.calls)
+	}
+	nt.calls = nil
+	ask(settings.ActionRecheckNotifications)
+	if strings.Join(nt.calls, ",") != "recheck,status" {
+		t.Fatalf("focus state request must recheck before reading the status: %v", nt.calls)
+	}
+	a.tray = &fakeTray{}
+	ask2 := settings.NewRequest(nil, time.Minute)
+	ask2.Action = settings.ActionRecheckNotifications
+	a.handleSettingsRequest(ask2)
+	if rep := <-ask2.Reply; rep.Err != nil || rep.State.Notifications != "n/a" {
+		t.Fatalf("Windows/Linux focus request: %+v", rep)
+	}
+}
+
 func TestSettingsPageNotificationHint(t *testing.T) {
 	b, err := os.ReadFile("../settings/web/app.js")
 	if err != nil {
@@ -320,6 +358,14 @@ func TestSettingsPageNotificationHint(t *testing.T) {
 	// the page asks once more, a bounded number of times.
 	if !strings.Contains(js, "if (state.notifications_pending) recheckNotifications();") || !strings.Contains(js, "notifyRechecks >= 5") {
 		t.Error("the page must read the state again, a bounded number of times, while notifications_pending")
+	}
+	// Returning from System Settings: the focus request rechecks however
+	// recent the app's last read (Codex re-review finding 1), and resets
+	// the recheck budget.
+	focus := js[strings.Index(js, "window.addEventListener('focus'"):]
+	focus = focus[:strings.Index(focus, "});")]
+	if !strings.Contains(focus, "notifyRechecks = 0;") || !strings.Contains(focus, "api('/api/state?recheck=notifications')") {
+		t.Errorf("the focus handler must reset the budget and send the recheck request:\n%s", focus)
 	}
 	nodePath, err := exec.LookPath("node")
 	if err != nil {

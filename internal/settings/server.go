@@ -384,8 +384,17 @@ func stateOf(rep Reply) *State {
 	return &rep.State
 }
 
+// ActionRecheckNotifications is a state request that first reads the macOS
+// notification permission again, however recent the last read
+// (GET /api/state?recheck=notifications, sent when the page regains focus).
+const ActionRecheckNotifications = "recheck_notifications"
+
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
-	rep, ok := s.roundTrip(NewRequest(nil, 8*time.Second))
+	req := NewRequest(nil, 8*time.Second)
+	if r.URL.Query().Get("recheck") == "notifications" {
+		req.Action = ActionRecheckNotifications
+	}
+	rep, ok := s.roundTrip(req)
 	if !ok {
 		writeJSON(w, http.StatusServiceUnavailable, APIResponse{Error: rep.Err.Error()})
 		return

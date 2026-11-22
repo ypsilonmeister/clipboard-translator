@@ -140,3 +140,27 @@ vm.runInContext('(async () => {\n' + js.slice(initIdx, initEnd) + '\n})()', sand
 		t.Fatalf("translate API state preservation test: %v\n%s", err, out)
 	}
 }
+
+// The page's focus request (GET /api/state?recheck=notifications) reaches
+// the app as ActionRecheckNotifications; any other state request does not.
+func TestStateRecheckNotificationsRoute(t *testing.T) {
+	var last atomic.Value
+	s := &Server{ask: func(req Request) Reply {
+		if req.Save != nil {
+			t.Fatalf("request=%+v", req)
+		}
+		last.Store(req.Action)
+		return Reply{State: State{Notifications: "denied"}}
+	}}
+	for path, want := range map[string]string{
+		"/api/state":                        "",
+		"/api/state?recheck=notifications":  ActionRecheckNotifications,
+		"/api/state?recheck=something-else": "",
+	} {
+		w := httptest.NewRecorder()
+		s.handleState(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 200 || last.Load() != want || !strings.Contains(w.Body.String(), `"notifications":"denied"`) {
+			t.Fatalf("%s: code=%d action=%v body=%s", path, w.Code, last.Load(), w.Body.String())
+		}
+	}
+}

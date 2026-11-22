@@ -144,6 +144,9 @@ func (a *app) handleSettingsRequest(req settings.Request) {
 		if translateAPISupported() && req.Action == "translate_api_info" {
 			err = a.ensureTranslateAPIToken()
 		}
+		if req.Action == settings.ActionRecheckNotifications {
+			a.recheckNotifications()
+		}
 		req.Reply <- settings.Reply{State: a.settingsState(), Err: err}
 		return
 	}

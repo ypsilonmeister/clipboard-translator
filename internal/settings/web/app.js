@@ -1101,7 +1101,9 @@
     window.addEventListener('focus', async () => {
       if (closed || saving || acting) return;
       notifyRechecks = 0;
-      const r = await api('/api/state');
+      // The user may have just changed the permission in System Settings:
+      // the app reads it again even if its last read is recent.
+      const r = await api('/api/state?recheck=notifications');
       if (r.ok && r.data && r.data.state) {
         mergeState(r.data.state);
       }

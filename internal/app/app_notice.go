@@ -63,3 +63,11 @@ func (a *app) notificationStatus() (status string, pending bool) {
 	}
 	return "n/a", false
 }
+
+// recheckNotifications starts a fresh permission read on macOS (the Settings
+// page regained focus); the state that follows reports it as pending.
+func (a *app) recheckNotifications() {
+	if t, ok := a.tray.(platform.NotificationTray); ok {
+		t.RecheckNotificationStatus()
+	}
+}

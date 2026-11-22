@@ -232,8 +232,14 @@ func (t *macTray) NotifyWith(title, message string, isError bool, o NoticeOption
 func (t *macTray) SetNotificationMemory(stored string, save func(string) error) {
 	t.notes.setMemory(stored, save)
 }
+
+// The app finds the permission side with a type assertion; fail the build,
+// not that assertion, if a method goes missing.
+var _ NotificationTray = (*macTray)(nil)
+
 func (t *macTray) NotificationStatus() AuthStatus  { return t.notes.settingsStatus() }
 func (t *macTray) NotificationStatusPending() bool { return t.notes.pending() }
+func (t *macTray) RecheckNotificationStatus()      { t.notes.recheck() }
 func (t *macTray) QuitRequested() bool             { return t.quit }
 func (t *macTray) SetMenu(build func() []MenuItem) { t.build = build }
 func (t *macTray) NextCommand() (int, bool) {

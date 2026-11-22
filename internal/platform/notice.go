@@ -71,6 +71,11 @@ type NotificationTray interface {
 	// NotificationStatusPending reports a refresh still in flight, so the
 	// page can read the state once more when it lands.
 	NotificationStatusPending() bool
+	// RecheckNotificationStatus starts a read now, however recent the last
+	// one: the page regained focus, and the user may have just changed the
+	// permission in System Settings. NotificationStatusPending then stays
+	// true until that read lands, so the page asks once more.
+	RecheckNotificationStatus()
 }
 
 // AuthStatus is the system's notification permission for this app.
@@ -229,6 +234,11 @@ func (n *notifier) settingsStatus() AuthStatus {
 	return n.status()
 }
 
+// recheck is the Settings page regaining focus: a read that landed within
+// statusFreshFor may predate a change the user just made in System Settings,
+// so start a new one (coalesced with one in flight, bounded by the backoff).
+func (n *notifier) recheck() { n.refresh(0) }
+
 // pending reports a status read in flight.
 func (n *notifier) pending() bool { return n.ticket != 0 }
 
@@ -354,8 +364,11 @@ func (n *notifier) sync() {
 		}
 		n.lastStatus = status
 	}
-	if n.actionWanted && (n.broken || (n.actionTicket != 0 && n.bridge.Applied() >= n.actionTicket) || !now.Before(n.actionBy)) {
-		n.act()
+	if n.actionWanted {
+		fresh := n.actionTicket != 0 && n.bridge.Applied() >= n.actionTicket
+		if n.broken || fresh || !now.Before(n.actionBy) {
+			n.act(fresh)
+		}
 	}
 }
 
@@ -363,7 +376,8 @@ func (n *notifier) sync() {
 // the cached status (it may predate the answer to a prompt, or a change in
 // System Settings): it starts a read and acts in sync once a read started
 // after the click has landed, or after actionWait. Clicks while one waits
-// are the same request.
+// are the same request. Only a landed post-click read may lead to a
+// request; on timeout the item opens System Settings.
 func (n *notifier) explicitAction() {
 	if !n.usable() || n.actionWanted {
 		return
@@ -371,22 +385,28 @@ func (n *notifier) explicitAction() {
 	n.actionWanted, n.actionTicket, n.actionBy = true, 0, n.now().Add(actionWait)
 	n.refresh(0)
 	if n.broken {
-		n.act()
+		n.act(false)
 	}
 }
 
-// act asks when the system has never asked, otherwise opens System Settings
-// (the only route after a denial).
-func (n *notifier) act() {
+// act asks when a read that started after the click (fresh) says the system
+// has never asked, otherwise opens System Settings (the only route after a
+// denial). Without a fresh read a cached "not determined" may hide a grant
+// or denial made since, so a timeout never requests: System Settings is the
+// route that is right in every case.
+func (n *notifier) act(fresh bool) {
 	n.actionWanted, n.actionTicket = false, 0
-	switch n.status() {
-	case AuthUnavailable:
-	case AuthNotDetermined:
+	switch s := n.status(); {
+	case s == AuthUnavailable:
+	case s == AuthNotDetermined && fresh:
 		n.markAsked() // best effort: the user asked, so ask anyway
 		if !n.bridge.Request() {
 			n.logf("a notification permission request is already open")
 		}
 	default:
+		if s == AuthNotDetermined {
+			n.logf("the notification permission could not be read in time; opening System Settings instead of asking")
+		}
 		if n.openSettings != nil {
 			n.openSettings()
 		}

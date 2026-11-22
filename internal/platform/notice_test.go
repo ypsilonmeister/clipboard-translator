@@ -557,3 +557,141 @@ func TestNotifierMenuLines(t *testing.T) {
 		t.Fatalf("allowed menu: %+v", lines)
 	}
 }
+
+// page is the Settings page's side of the permission hint, as app.js does
+// it: on focus one state request that rechecks the permission, then while
+// the state says pending one more state request a second later, at most 5
+// times per focus. The hint is derived from the status string alone.
+// Between page requests the app pumps (sync) and the system answers at most
+// one outstanding read per second (a slow center).
+func pageFocus(n *notifier, b *fakeBridge, c *clock) (hint string, requests int) {
+	n.recheck()
+	s := n.settingsStatus()
+	pending := n.pending()
+	for k := 0; pending && k < 5; k++ {
+		c.advance(time.Second)
+		b.land()
+		n.sync()
+		s, pending = n.settingsStatus(), n.pending()
+		requests++
+	}
+	return s.String(), requests
+}
+
+// Codex re-review finding 1: the user changes the permission in System
+// Settings and returns to the page inside statusFreshFor of the last read.
+// The focus request must not reuse that read: the hint converges with no
+// further user input, whether or not an older read is still in flight.
+func TestNotifierFocusInsideFreshWindowConverges(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		from, to AuthStatus
+		inFlight bool // a read started before the change is still outstanding
+	}{
+		{"enable", AuthDenied, AuthAuthorized, false},
+		{"revoke", AuthAuthorized, AuthDenied, false},
+		{"enable, older read in flight", AuthDenied, AuthAuthorized, true},
+		{"revoke, older read in flight", AuthAuthorized, AuthDenied, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &fakeBridge{available: true, status: tc.from}
+			n, _, c := newClockedNotifier(b, "asked", &memory{})
+			n.settingsStatus() // the page was open; its read landed
+			b.land()
+			n.sync()
+			if tc.inFlight {
+				c.advance(statusFreshFor) // a later state poll starts another read
+				n.settingsStatus()
+				if !n.pending() {
+					t.Fatal("setup: no read in flight")
+				}
+			}
+			c.advance(statusFreshFor / 4)
+			b.setSystem(tc.to) // toggled in System Settings
+			c.advance(statusFreshFor / 4)
+			if !tc.inFlight && c.now().Sub(n.freshAt) >= statusFreshFor {
+				t.Fatal("setup: the focus must come inside the freshness window")
+			}
+			hint, requests := pageFocus(n, b, c)
+			if hint != tc.to.String() {
+				t.Fatalf("hint after focus = %q, want %q (page requests %d, reads %d)", hint, tc.to.String(), requests, b.refreshes)
+			}
+			if n.pending() || requests > 3 {
+				t.Fatalf("converged late or still pending: requests=%d pending=%v", requests, n.pending())
+			}
+			// Further state polls inside the window reuse the fresh read.
+			before := b.refreshes
+			n.settingsStatus()
+			if b.refreshes != before {
+				t.Fatalf("a plain state request inside the window read again")
+			}
+		})
+	}
+}
+
+// Codex re-review finding 2: the cached status says not determined but the
+// system already has an answer, and the post-click read is slow or never
+// lands. The item must never request authorization from that snapshot; on
+// timeout it opens System Settings.
+func TestNotifierExplicitActionStaleUndeterminedTimeout(t *testing.T) {
+	for _, system := range []AuthStatus{AuthAuthorized, AuthDenied} {
+		t.Run("delayed reply/"+system.String(), func(t *testing.T) {
+			b := &fakeBridge{available: true, status: AuthNotDetermined}
+			opened := 0
+			n, logs, c := newClockedNotifier(b, "asked", &memory{})
+			n.openSettings = func() { opened++ }
+			b.setSystem(system)
+			n.explicitAction()
+			c.advance(actionWait)
+			n.sync()
+			if b.requests != 0 || opened != 1 || count(*logs, "could not be read in time") != 1 {
+				t.Fatalf("timeout with a stale not-determined: requests=%d opened=%d logs=%v", b.requests, opened, *logs)
+			}
+			b.land() // the reply arrives late
+			n.sync()
+			if b.requests != 0 || opened != 1 || n.status() != system {
+				t.Fatalf("late reply: requests=%d opened=%d status=%v", b.requests, opened, n.status())
+			}
+			n.explicitAction() // a new click acts on a read that lands in time
+			b.land()
+			n.sync()
+			if b.requests != 0 || opened != 2 {
+				t.Fatalf("click after the late reply: requests=%d opened=%d", b.requests, opened)
+			}
+		})
+	}
+	t.Run("missing reply, repeated clicks", func(t *testing.T) {
+		b := &fakeBridge{available: true, status: AuthNotDetermined}
+		opened := 0
+		n, _, c := newClockedNotifier(b, "asked", &memory{})
+		n.openSettings = func() { opened++ }
+		b.setSystem(AuthDenied)
+		for i := 1; i <= 6; i++ { // no read ever lands; clicks keep coming
+			n.explicitAction()
+			n.explicitAction() // back-to-back: the same request
+			for k := 0; k < int(actionWait/(100*time.Millisecond)); k++ {
+				c.advance(100 * time.Millisecond)
+				n.sync()
+			}
+			if b.requests != 0 || opened != i {
+				t.Fatalf("click %d with no reply: requests=%d opened=%d", i, b.requests, opened)
+			}
+		}
+		if b.refreshes > 1+len(refreshBackoff) {
+			t.Fatalf("reads stay bounded without replies: %d", b.refreshes)
+		}
+	})
+	t.Run("genuinely not determined still asks", func(t *testing.T) {
+		b := &fakeBridge{available: true, status: AuthNotDetermined}
+		opened := 0
+		n, _, c := newClockedNotifier(b, "", &memory{})
+		n.openSettings = func() { opened++ }
+		n.explicitAction()
+		c.advance(actionWait / 2)
+		b.land() // a slow but timely reply: still not determined
+		n.sync()
+		if b.requests != 1 || opened != 0 {
+			t.Fatalf("a landed post-click read of not determined asks: requests=%d opened=%d", b.requests, opened)
+		}
+	})
+}
