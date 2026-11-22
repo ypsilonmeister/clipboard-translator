@@ -27,7 +27,8 @@ import (
 // end it prints {"done": true, "hint": ..., "polls": ...}.
 const pageHarness = `
 const fs = require('fs');
-const js = fs.readFileSync(process.argv[1], 'utf8');
+// The anchors below use LF; a Windows checkout (text=auto) has CRLF.
+const js = fs.readFileSync(process.argv[1], 'utf8').replace(/\r\n/g, '\n');
 const scenario = JSON.parse(process.argv[2]);
 function slice(from, to, keepEnd = true) {
   const s = js.indexOf(from), e = js.indexOf(to, s);
