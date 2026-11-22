@@ -5,8 +5,8 @@
 English | [日本語](README.ja.md)
 
 Local clipboard translation for Windows and macOS (the Linux build is experimental).
-Select text in any app, press **Ctrl+Alt+E**, and the translation lands on your clipboard,
-ready to paste with **Ctrl+V**. It translates between 53 languages
+Select text in any app (on macOS this needs the Accessibility permission), press **Ctrl+Alt+E**,
+and the translation lands on your clipboard, ready to paste with **Ctrl+V** on Windows or **Command+V** on macOS. It translates between 53 languages
 (Japanese <-> English by default).
 
 Everything runs on your own PC, with [llama.cpp](https://github.com/ggml-org/llama.cpp)
@@ -37,7 +37,7 @@ gh attestation verify <file> --repo ypsilonmeister/clipboard-translator
 | Windows 10/11 x64 | install script, Scoop, or `Portable-Clipboard-Translator-Windows-x64-<version>.zip` | [Windows](#install-windows-1011-x64) |
 | Mac with Apple silicon (M1 or later) | `clipboard-translator-macos-arm64-<version>.zip` | [macOS](#macos-macos-13) |
 | Mac with an Intel processor | `clipboard-translator-macos-amd64-<version>.zip` | [macOS](#macos-macos-13) |
-| Linux x86_64, X11 session | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linux-x11-experimental) |
+| Linux x86_64, X11 session | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linux-x11--wayland-experimental) |
 
 macOS is supported (the builds are ad-hoc signed, not notarized; see the macOS section). Linux is experimental. Linux arm64 tarballs are published since v0.11.0, but the table lists only the x86_64 X11 build.
 
@@ -169,7 +169,7 @@ builds are available from the PR's Actions artifacts; tagged builds are attached
 Releases. Extract the matching zip and move **Clipboard Translator.app** to `/Applications`
 before the first launch, granting permissions or enabling autostart.
 The builds are **ad-hoc signed**, without Developer ID signing or notarization, which is why
-the first launch needs **Open Anyway** (step 4).
+the first launch of a quarantined copy goes through **Open Anyway** (step 4, which also documents removing the quarantine as an alternative).
 
 First-run setup runs in the app itself (its `setup` subcommand); no Python is needed.
 Start the app and accept the explicit

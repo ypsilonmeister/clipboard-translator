@@ -5,8 +5,8 @@
 [English](README.md) | 日本語
 
 Windows と macOS 用のローカルクリップボード翻訳ツールです（Linux 版は実験的対応）。
-どのアプリでも、テキストを選択して **Ctrl+Alt+E** を押すと、翻訳がクリップボードに入り、
-**Ctrl+V** でそのまま貼り付けられます。53 言語に対応し、既定は日本語 <-> 英語です。
+どのアプリでも(macOS ではアクセシビリティ権限が必要です)、テキストを選択して **Ctrl+Alt+E** を押すと、翻訳がクリップボードに入り、
+Windows では **Ctrl+V**、macOS では **Command+V** でそのまま貼り付けられます。53 言語に対応し、既定は日本語 <-> 英語です。
 
 翻訳はすべて手元の PC で、[llama.cpp](https://github.com/ggml-org/llama.cpp) と
 Preferred Networks の [PLaMo 3 Translate (GGUF)](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF)
@@ -36,7 +36,7 @@ gh attestation verify <file> --repo ypsilonmeister/clipboard-translator
 | Windows 10/11 x64 | インストールスクリプト、Scoop、または `Portable-Clipboard-Translator-Windows-x64-<version>.zip` | [Windows](#インストールwindows-1011-x64) |
 | Apple シリコンの Mac(M1 以降) | `clipboard-translator-macos-arm64-<version>.zip` | [macOS](#macosmacos-13-以降) |
 | Intel プロセッサの Mac | `clipboard-translator-macos-amd64-<version>.zip` | [macOS](#macosmacos-13-以降) |
-| Linux x86_64(X11 セッション) | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linuxx11実験的対応) |
+| Linux x86_64(X11 セッション) | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linuxx11wayland実験的対応) |
 
 macOS は正式対応です(ビルドは ad-hoc 署名で、公証はされていません。macOS の項を参照)。Linux は実験的対応です。Linux arm64 の tar.gz は v0.11.0 から配布していますが、上の表に載せているのは x86_64・X11 用だけです。
 
@@ -158,8 +158,8 @@ CI は Apple Silicon（`arm64`）と Intel（`amd64`）用に、それぞれ
 `clipboard-translator-macos-<アーキテクチャ>-<バージョン>.zip` と SHA-256 ファイルを作成します。
 開発版は PR の Actions 成果物、タグ付きビルドは Releases から取得できます。
 対応する zip を展開し、初回の起動や権限の付与、自動起動の設定の前に **Clipboard Translator.app** を `/Applications` へ移してください。
-ビルドは **ad-hoc 署名**で、Developer ID 署名と公証は含みません。そのため初回の起動には
-**このまま開く** が必要です(手順 4)。
+ビルドは **ad-hoc 署名**で、Developer ID 署名と公証は含みません。そのため、隔離属性が付いたコピーの初回の起動は
+**このまま開く** で行います(手順 4。隔離属性を外す方法も代替として載せています)。
 
 初回セットアップはアプリ本体（`setup` サブコマンド）が担うため、Python は不要です。
 アプリを開き、ダウンロードの確認に同意すると、キャンセル可能なセットアップウィンドウを表示します。
