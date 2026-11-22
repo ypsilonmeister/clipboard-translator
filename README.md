@@ -4,7 +4,7 @@
 
 English | [日本語](README.ja.md)
 
-Local clipboard translation for Windows (the macOS and Linux builds are experimental).
+Local clipboard translation for Windows and macOS (the Linux build is experimental).
 Select text in any app, press **Ctrl+Alt+E**, and the translation lands on your clipboard,
 ready to paste with **Ctrl+V**. It translates between 53 languages
 (Japanese <-> English by default).
@@ -22,9 +22,6 @@ no Ollama, no Python — first-run setup runs in the app itself.
 used under the [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-community-license-ja);
 see [Licenses](#licenses) before using the app for business.
 
-> **Status: prototype.** It has not been tested on a wide range of PCs or GPU
-> drivers. Use at your own risk.
-
 ## Which download?
 
 Every [release](https://github.com/ypsilonmeister/clipboard-translator/releases) has one file per platform
@@ -38,11 +35,11 @@ gh attestation verify <file> --repo ypsilonmeister/clipboard-translator
 | Your computer | File | Instructions |
 | --- | --- | --- |
 | Windows 10/11 x64 | install script, Scoop, or `Portable-Clipboard-Translator-Windows-x64-<version>.zip` | [Windows](#install-windows-1011-x64) |
-| Mac with Apple silicon (M1 or later) | `clipboard-translator-macos-arm64-<version>.zip` | [macOS](#macos-experimental-macos-13) |
-| Mac with an Intel processor | `clipboard-translator-macos-amd64-<version>.zip` | [macOS](#macos-experimental-macos-13) |
+| Mac with Apple silicon (M1 or later) | `clipboard-translator-macos-arm64-<version>.zip` | [macOS](#macos-macos-13) |
+| Mac with an Intel processor | `clipboard-translator-macos-amd64-<version>.zip` | [macOS](#macos-macos-13) |
 | Linux x86_64, X11 session | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linux-x11-experimental) |
 
-macOS and Linux are experimental, and no Linux arm64 build is published.
+macOS is supported (the builds are ad-hoc signed, not notarized; see the macOS section). Linux is experimental. Linux arm64 tarballs are published since v0.11.0, but the table lists only the x86_64 X11 build.
 
 ## Install (Windows 10/11 x64)
 
@@ -132,7 +129,7 @@ use the same [PLaMo Community License](https://plamo.preferredai.jp/info/plamo-c
 On Linux and macOS the option is `--model 0.8b|2b|8b` (for example
 `bash setup.sh --backend cpu --model 8b`).
 
-## macOS (experimental, macOS 13+)
+## macOS (macOS 13+)
 
 ### Install steps
 
@@ -146,29 +143,33 @@ On Linux and macOS the option is `--model 0.8b|2b|8b` (for example
    shasum -a 256 -c clipboard-translator-macos-<arch>-<version>.zip.sha256
    ```
 
-3. **Unzip** it and move **Clipboard Translator.app** to `/Applications` (or wherever it should stay).
-4. **Open it for the first time.** The app is not notarized, so macOS may refuse to open it
-   (the exact prompts differ between macOS versions). Either open *System Settings > Privacy & Security*
-   and choose **Open Anyway** after the first blocked attempt, or remove the download quarantine flag
-   before opening it:
+3. **Unzip** it and move **Clipboard Translator.app** to `/Applications`, **before the first
+   launch**. Do not open it from Downloads: a quarantined copy started from there runs
+   translocated and never finishes initialising, so the app stays non-functional.
+4. **Open it for the first time.** The app is ad-hoc signed and not notarized, so Gatekeeper
+   stops the first launch (the exact prompts differ between macOS versions). Try to open it once,
+   then open *System Settings > Privacy & Security*, scroll to the message about
+   "Clipboard Translator" and choose **Open Anyway**. As an alternative, remove the download
+   quarantine flag before opening it:
 
    ```bash
    xattr -dr com.apple.quarantine "/Applications/Clipboard Translator.app"
    ```
 
-5. **Start the app** and accept the download prompt (model over 1 GB). Then grant access in
-   *System Settings > Privacy & Security > Accessibility* so it can copy the selection.
+5. **Start the app** and accept the download prompt (model over 1 GB).
+6. **Grant Accessibility** in *System Settings > Privacy & Security > Accessibility*. It is needed
+   to capture the selected text. Translating the text already on the clipboard works without it.
+7. **After an update,** grant Accessibility again (see [Updating](#updating-the-app-macos)).
 
 The details below explain each part.
 
 CI produces separate Apple Silicon (`arm64`) and Intel (`amd64`) app bundles:
 `clipboard-translator-macos-<arch>-<version>.zip`, with SHA-256 files. Development
 builds are available from the PR's Actions artifacts; tagged builds are attached to
-Releases. Extract the matching zip and move **Clipboard Translator.app** to its final
-location (for example Applications) before granting permissions or enabling autostart.
-These are **ad-hoc signed development builds**, without Developer ID signing or
-notarization. Gatekeeper acceptance and public-distribution signing are not verified.
-Accessibility access may need to be granted again after replacing a development build.
+Releases. Extract the matching zip and move **Clipboard Translator.app** to `/Applications`
+before the first launch, granting permissions or enabling autostart.
+The builds are **ad-hoc signed**, without Developer ID signing or notarization, which is why
+the first launch needs **Open Anyway** (step 4).
 
 First-run setup runs in the app itself (its `setup` subcommand); no Python is needed.
 Start the app and accept the explicit
@@ -183,7 +184,9 @@ Grant the app access in **System Settings > Privacy & Security > Accessibility**
 enable selected-text capture (synthetic Cmd+C) and optional auto-paste (Cmd+V).
 The menu's **Open Accessibility Settings...** opens that page; permissions are never
 requested automatically. Without access, manually copy text with Cmd+C, press the
-hotkey, and paste the translation yourself. Auto-paste is off by default. The app
+hotkey, and paste the translation yourself. On macOS only one hotkey profile can be active:
+the first profile in `profiles` is registered and the rest are ignored (the Settings page says
+this too). Auto-paste is off by default. The app
 rechecks the frontmost process/window after modifiers are released, but cannot reliably
 detect a changed selection in the same window. Its pasteboard compare/write is best
 effort, not atomic. Sandbox restrictions and Secure Input may prevent some operations.
@@ -200,9 +203,21 @@ The embedded macOS script is written there as `setup.sh`. To reinstall/select CP
 quit the app, then run `bash "$HOME/Library/Application Support/ClipboardTranslator/setup.sh" --backend cpu`
 (or `metal`). **Start at login** writes only
 `~/Library/LaunchAgents/com.github.ypsilonmeister.clipboard-translator.plist`; the setting
-applies at the next login. Toggle it after moving the app. Quit from the menu before
-replacing the app to update it; data in Application Support is retained. Errors requiring
+applies at the next login. Toggle it after moving the app. Errors requiring
 intervention also use native dialogs.
+
+### Updating the app (macOS)
+
+Quit the app from the menu, then replace **Clipboard Translator.app** in `/Applications`
+with the new build. Data in Application Support is retained.
+
+- **Grant Accessibility again.** The builds are ad-hoc signed, so macOS drops the
+  Accessibility permission when the app is replaced by a new build. Open
+  *System Settings > Privacy & Security > Accessibility* and allow Clipboard Translator again
+  (the menu's **Open Accessibility Settings...** opens that page). Until then, selection capture
+  and auto-paste do not work; translating the clipboard text still does.
+- **Notifications are kept.** The notification permission survives an update (see
+  [Notifications](#notifications-macos)).
 
 ### Notifications (macOS)
 
@@ -227,11 +242,11 @@ the default sound; the others are silent. Messages about things you already see,
   shows the current state, and the Settings page shows a hint while they are off.
 - **A hotkey that is not active** (another app uses it) is also shown as a line at the top
   of the menu, so it can be read without notifications or hovering over the icon.
-- **After an update.** These builds are ad-hoc signed. Whether macOS keeps the permission
-  when the app is replaced by a newer version has not been measured yet; you may have to
-  allow it again, as with Accessibility. The app does not ask on its own a second time: if
-  notices stop appearing after an update, use **Notifications...** in the menu (it asks
-  macOS again if macOS has forgotten the answer) or check *System Settings > Notifications*.
+- **After an update.** The notification permission is kept when the app is replaced by a
+  newer build (unlike Accessibility, which must be granted again; see
+  [Updating the app](#updating-the-app-macos)). If notices stop appearing anyway, use
+  **Notifications...** in the menu (it asks macOS again if macOS has forgotten the answer) or
+  check *System Settings > Notifications*. The app does not ask on its own a second time.
 - **Keep one copy of the app.** Two copies (for example a development build and a release)
   share one identity and may confuse Notification Center.
 - Clicking a notification does nothing app-specific. A binary run outside the app bundle
