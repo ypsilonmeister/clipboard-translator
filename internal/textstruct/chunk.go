@@ -663,7 +663,7 @@ func isReferenceIdentifier(word, token string) bool {
 
 	// "no" and "nos" denote numbers, not lettered sections or figures.
 	// In prose, "No. I ..." and "No. A ..." are ordinary responses where "No." is followed
-	// by the pronoun "I" or article "A". A single capital letter is never a valid number identifier.
+	// by the pronoun "I" or article "A". Of the single capital letters only the Roman numerals V X L C D M are accepted (not I or A).
 	if word == "no" || word == "nos" {
 		hasDigit := false
 		for _, r := range runes {
@@ -676,6 +676,10 @@ func isReferenceIdentifier(word, token string) bool {
 			return true
 		}
 		if len(runes) > 1 && reRomanNumeral.MatchString(token) {
+			return true
+		}
+		// Single-letter Roman numerals other than I (pronoun) and A (article).
+		if len(runes) == 1 && strings.ContainsRune("VXLCDM", runes[0]) {
 			return true
 		}
 		return false

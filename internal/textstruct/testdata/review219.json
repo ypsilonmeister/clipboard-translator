@@ -1062,10 +1062,9 @@
     "kind": "sentences",
     "input": "See No. V for details.",
     "want": [
-      "See No.",
-      "V for details."
+      "See No. V for details."
     ],
     "round": 4,
-    "note": "Deliberately left: single-letter No. identifiers remain ambiguous with No. I / No. A responses; no contextual redesign."
+    "note": "Fixed in #222: single-letter Roman numerals V/X/L/C/D/M after No. are identifiers; No. I / No. A still split."
   }
 ]
