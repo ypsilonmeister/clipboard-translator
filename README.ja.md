@@ -4,7 +4,7 @@
 
 [English](README.md) | 日本語
 
-Windows 用のローカルクリップボード翻訳ツールです（macOS／Linux 版は実験的対応）。
+Windows と macOS 用のローカルクリップボード翻訳ツールです（Linux 版は実験的対応）。
 どのアプリでも、テキストを選択して **Ctrl+Alt+E** を押すと、翻訳がクリップボードに入り、
 **Ctrl+V** でそのまま貼り付けられます。53 言語に対応し、既定は日本語 <-> 英語です。
 
@@ -21,9 +21,6 @@ Ollama も Python も不要で、初回セットアップはアプリ本体が�
 [PLaMo コミュニティライセンス](https://plamo.preferredai.jp/info/plamo-community-license-ja)
 のもとで利用しています。業務で使う場合は、先に[ライセンス](#ライセンス)の項を読んでください。
 
-> **状態: プロトタイプ。** 幅広い PC や GPU ドライバーでの確認はできていません。
-> 自己責任でお使いください。
-
 ## どれをダウンロードするか
 
 [リリース](https://github.com/ypsilonmeister/clipboard-translator/releases)には、環境ごとに 1 つずつファイルがあり、
@@ -37,11 +34,11 @@ gh attestation verify <file> --repo ypsilonmeister/clipboard-translator
 | お使いのコンピューター | ファイル | 手順 |
 | --- | --- | --- |
 | Windows 10/11 x64 | インストールスクリプト、Scoop、または `Portable-Clipboard-Translator-Windows-x64-<version>.zip` | [Windows](#インストールwindows-1011-x64) |
-| Apple シリコンの Mac(M1 以降) | `clipboard-translator-macos-arm64-<version>.zip` | [macOS](#macos実験的対応macos-13-以降) |
-| Intel プロセッサの Mac | `clipboard-translator-macos-amd64-<version>.zip` | [macOS](#macos実験的対応macos-13-以降) |
+| Apple シリコンの Mac(M1 以降) | `clipboard-translator-macos-arm64-<version>.zip` | [macOS](#macosmacos-13-以降) |
+| Intel プロセッサの Mac | `clipboard-translator-macos-amd64-<version>.zip` | [macOS](#macosmacos-13-以降) |
 | Linux x86_64(X11 セッション) | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linuxx11実験的対応) |
 
-macOS と Linux は実験的対応です。Linux arm64 用のビルドは配布していません。
+macOS は正式対応です(ビルドは ad-hoc 署名で、公証はされていません。macOS の項を参照)。Linux は実験的対応です。Linux arm64 の tar.gz は v0.11.0 から配布していますが、上の表に載せているのは x86_64・X11 用だけです。
 
 ## インストール(Windows 10/11 x64)
 
@@ -124,7 +121,7 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1 -Model 8b   # または 0.8
 [PLaMo コミュニティライセンス](https://plamo.preferredai.jp/info/plamo-community-license-ja)です。
 Linux と macOS では `--model 0.8b|2b|8b` を使います(例: `bash setup.sh --backend cpu --model 8b`)。
 
-## macOS（実験的対応、macOS 13 以降）
+## macOS（macOS 13 以降）
 
 ### インストール手順
 
@@ -138,28 +135,31 @@ Linux と macOS では `--model 0.8b|2b|8b` を使います(例: `bash setup.sh 
    shasum -a 256 -c clipboard-translator-macos-<アーキテクチャ>-<バージョン>.zip.sha256
    ```
 
-3. zip を**展開**し、**Clipboard Translator.app** を `/Applications`(または置いておきたい場所)へ移します。
-4. **初回の起動。** このアプリは公証されていないため、macOS が開くのを拒否することがあります
-   (表示や手順は macOS のバージョンで異なります)。最初に開こうとして拒否されたあと、
-   *システム設定 > プライバシーとセキュリティ* で **このまま開く** を選ぶか、開く前に
-   ダウンロード時の隔離属性を外してください。
+3. zip を**展開**し、**初回の起動の前に** **Clipboard Translator.app** を `/Applications` へ移します。
+   ダウンロードフォルダーから直接開かないでください。そこで隔離属性が付いたまま起動したコピーは
+   translocation された状態で動き、初期化が終わらず、アプリが機能しません。
+4. **初回の起動。** このアプリは ad-hoc 署名で公証されていないため、初回の起動は Gatekeeper に止められます
+   (表示や手順は macOS のバージョンで異なります)。一度開こうとしたあと、*システム設定 > プライバシーとセキュリティ* を開き、
+   下の方に表示される「Clipboard Translator」についてのメッセージで **このまま開く** を選びます。
+   代わりに、開く前にダウンロード時の隔離属性を外す方法もあります。
 
    ```bash
    xattr -dr com.apple.quarantine "/Applications/Clipboard Translator.app"
    ```
 
-5. **アプリを起動**し、ダウンロードの確認(モデルは 1 GB 超)に同意します。そのあと、選択範囲をコピーできるように
-   *システム設定 > プライバシーとセキュリティ > アクセシビリティ* で許可します。
+5. **アプリを起動**し、ダウンロードの確認(モデルは 1 GB 超)に同意します。
+6. **アクセシビリティを許可**します。*システム設定 > プライバシーとセキュリティ > アクセシビリティ* で、
+   選択テキストの取得に必要です。クリップボードにあるテキストの翻訳は、許可なしでも使えます。
+7. **アップデート後**は、アクセシビリティをもう一度許可します([アップデート](#アプリのアップデートmacos)を参照)。
 
 以下に、それぞれの詳細を説明します。
 
 CI は Apple Silicon（`arm64`）と Intel（`amd64`）用に、それぞれ
 `clipboard-translator-macos-<アーキテクチャ>-<バージョン>.zip` と SHA-256 ファイルを作成します。
 開発版は PR の Actions 成果物、タグ付きビルドは Releases から取得できます。
-対応する zip を展開し、権限を与える前に **Clipboard Translator.app** を最終配置先（例: Applications）へ移してください。
-これは **ad-hoc 署名の開発用ビルド**です。Developer ID 署名・公証は含まず、Gatekeeper の受け入れや
-一般配布の署名手順は未検証です。
-開発用ビルドの置き換え後は、アクセシビリティ権限の再設定が必要になる場合があります。
+対応する zip を展開し、初回の起動や権限の付与、自動起動の設定の前に **Clipboard Translator.app** を `/Applications` へ移してください。
+ビルドは **ad-hoc 署名**で、Developer ID 署名と公証は含みません。そのため初回の起動には
+**このまま開く** が必要です(手順 4)。
 
 初回セットアップはアプリ本体（`setup` サブコマンド）が担うため、Python は不要です。
 アプリを開き、ダウンロードの確認に同意すると、キャンセル可能なセットアップウィンドウを表示します。
@@ -173,6 +173,8 @@ CI は Apple Silicon（`arm64`）と Intel（`amd64`）用に、それぞれ
 **システム設定 > プライバシーとセキュリティ > アクセシビリティ**でアプリへの許可が必要です。
 メニューの **Open Accessibility Settings...** から設定ページを開けます。権限の要求は自動では行いません。
 許可がない場合も、手動で Cmd+C → ホットキー → Cmd+V と操作してクリップボードを翻訳できます。
+macOS で有効にできるホットキーのプロファイルは 1 つだけです。`profiles` の最初のプロファイルだけを登録し、
+残りは無視します(Settings ページにも同じ表示があります)。
 自動貼り付けは初期オフで、修飾キーを離した後にも最前面のプロセスとウィンドウを確認します。
 同じウィンドウ内の選択変更は確実に検出できず、クリップボードの比較・置換も不可分な操作ではありません。
 アプリのサンドボックスや Secure Input により操作できない場合があります。
@@ -191,8 +193,18 @@ CI は Apple Silicon（`arm64`）と Intel（`amd64`）用に、それぞれ
 を実行します（Metal は `metal`）。**Start at login** は
 `~/Library/LaunchAgents/com.github.ypsilonmeister.clipboard-translator.plist` だけを管理し、
 次回ログインから適用します。アプリを移動した場合は設定を入れ直してください。
-更新は終了してアプリを置き換える方式で、Application Support のデータは残ります。
 操作が必要なエラーにはネイティブダイアログも使用します。
+
+### アプリのアップデート（macOS）
+
+メニューからアプリを終了し、`/Applications` の **Clipboard Translator.app** を新しいビルドに置き換えます。
+Application Support のデータは残ります。
+
+- **アクセシビリティをもう一度許可してください。** ビルドは ad-hoc 署名のため、新しいビルドに置き換えると
+  macOS がアクセシビリティの許可を取り消します。*システム設定 > プライバシーとセキュリティ > アクセシビリティ* で
+  Clipboard Translator を許可し直してください(メニューの **Open Accessibility Settings...** から設定ページを開けます)。
+  許可し直すまでは、選択テキストの取得と自動貼り付けは使えません。クリップボードのテキストの翻訳は使えます。
+- **通知の許可は保たれます。** 通知の許可はアップデート後も残ります([通知](#通知macos)を参照)。
 
 ### 通知（macOS）
 
@@ -214,10 +226,10 @@ CI は Apple Silicon（`arm64`）と Intel（`amd64`）用に、それぞれ
   **Notifications allowed** の行が現在の状態を示し、オフの間は Settings ページにも案内が出ます。
 - **有効になっていないホットキー**（ほかのアプリが使用中など）はメニューの先頭にも1行で表示するので、
   通知やアイコンへのマウスオーバーなしで読めます。
-- **アップデート後。** 配布ビルドは ad-hoc 署名です。新しいバージョンに置き換えたあとも通知の許可が保たれるかは
-  まだ確認していません。アクセシビリティと同じく、もう一度許可が必要になる場合があります。
-  アプリが自分から二度目の許可を求めることはありません。アップデート後に通知が出なくなったら、メニューの
-  **Notifications...**(macOS が許可の状態を忘れていれば、もう一度許可を求めます)を使うか、*システム設定 > 通知* を確認してください。
+- **アップデート後。** 新しいビルドに置き換えても通知の許可は保たれます(アクセシビリティは
+  もう一度許可が必要です。[アプリのアップデート](#アプリのアップデートmacos)を参照)。それでも通知が出なくなったら、
+  メニューの **Notifications...**(macOS が許可の状態を忘れていれば、もう一度許可を求めます)を使うか、
+  *システム設定 > 通知* を確認してください。アプリが自分から二度目の許可を求めることはありません。
 - **アプリは1つだけ置いてください。** 開発ビルドとリリース版のように2つあると同じ識別子を共有し、
   通知センターが混乱することがあります。
 - 通知をクリックしても、アプリ固有の動作はしません。アプリバンドルの外で実行したバイナリ
