@@ -37,7 +37,7 @@ gh attestation verify <file> --repo ypsilonmeister/clipboard-translator
 | Windows 10/11 x64 | install script, Scoop, or `Portable-Clipboard-Translator-Windows-x64-<version>.zip` | [Windows](#install-windows-1011-x64) |
 | Mac with Apple silicon (M1 or later) | `clipboard-translator-macos-arm64-<version>.zip` | [macOS](#macos-macos-13) |
 | Mac with an Intel processor | `clipboard-translator-macos-amd64-<version>.zip` | [macOS](#macos-macos-13) |
-| Linux x86_64, X11 session | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linux-x11-experimental) |
+| Linux x86_64, X11 session | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linux-x11--wayland-experimental) |
 
 macOS is supported (the builds are ad-hoc signed, not notarized; see the macOS section). Linux is experimental. Linux arm64 tarballs are published since v0.11.0, but the table lists only the x86_64 X11 build.
 

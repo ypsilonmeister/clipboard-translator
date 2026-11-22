@@ -36,7 +36,7 @@ gh attestation verify <file> --repo ypsilonmeister/clipboard-translator
 | Windows 10/11 x64 | インストールスクリプト、Scoop、または `Portable-Clipboard-Translator-Windows-x64-<version>.zip` | [Windows](#インストールwindows-1011-x64) |
 | Apple シリコンの Mac(M1 以降) | `clipboard-translator-macos-arm64-<version>.zip` | [macOS](#macosmacos-13-以降) |
 | Intel プロセッサの Mac | `clipboard-translator-macos-amd64-<version>.zip` | [macOS](#macosmacos-13-以降) |
-| Linux x86_64(X11 セッション) | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linuxx11実験的対応) |
+| Linux x86_64(X11 セッション) | `clipboard-translator-linux-amd64-<version>.tar.gz` | [Linux](#linuxx11wayland実験的対応) |
 
 macOS は正式対応です(ビルドは ad-hoc 署名で、公証はされていません。macOS の項を参照)。Linux は実験的対応です。Linux arm64 の tar.gz は v0.11.0 から配布していますが、上の表に載せているのは x86_64・X11 用だけです。
 
